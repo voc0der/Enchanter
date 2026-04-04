@@ -21,7 +21,7 @@ lua tests/run.lua
 Run a syntax check before opening a PR:
 
 ```bash
-luac -p Enchanter.lua LibGPIOptions.lua LibGPIToolBox.lua Options.lua Tags.lua tests/run.lua
+luac -p Enchanter.lua Workbench.lua LibGPIOptions.lua LibGPIToolBox.lua Options.lua Tags.lua tests/run.lua
 ```
 
 If you change packaging or release behavior, verify the runtime-only package contents too:

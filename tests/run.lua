@@ -112,14 +112,28 @@ local function setup_env(opts)
             frame_level = parent and parent.frame_level and (parent.frame_level + 1) or 1,
         }
 
+        local function run_size_changed()
+            if frame.scripts["OnSizeChanged"] then
+                frame.scripts["OnSizeChanged"](frame, frame.width, frame.height)
+            end
+        end
+
         function frame:SetSize(width, height)
             self.width = width
             self.height = height
+            run_size_changed()
         end
-        function frame:SetWidth(width) self.width = width end
-        function frame:SetHeight(height) self.height = height end
+        function frame:SetWidth(width)
+            self.width = width
+            run_size_changed()
+        end
+        function frame:SetHeight(height)
+            self.height = height
+            run_size_changed()
+        end
         function frame:GetWidth() return self.width or 0 end
         function frame:GetHeight() return self.height or 0 end
+        function frame:GetName() return self.name end
         function frame:SetPoint(...) self.point = { ... } end
         function frame:GetPoint()
             if self.point then
@@ -129,6 +143,16 @@ local function setup_env(opts)
         end
         function frame:ClearAllPoints() self.point = nil end
         function frame:SetMovable(value) self.movable = value end
+        function frame:SetResizable(value) self.resizable = value end
+        function frame:SetResizeBounds(min_width, min_height, max_width, max_height)
+            self.resize_bounds = { min_width, min_height, max_width, max_height }
+        end
+        function frame:SetMinResize(min_width, min_height)
+            self.min_resize = { min_width, min_height }
+        end
+        function frame:SetMaxResize(max_width, max_height)
+            self.max_resize = { max_width, max_height }
+        end
         function frame:SetClampedToScreen(value) self.clamped = value end
         function frame:EnableMouse(value) self.mouse_enabled = value end
         function frame:RegisterForDrag(...) self.drag_buttons = { ... } end
@@ -153,6 +177,7 @@ local function setup_env(opts)
         function frame:SetShown(value) self.shown = value and true or false end
         function frame:SetParent(parent_frame) self.parent = parent_frame end
         function frame:StartMoving() self.started_moving = true end
+        function frame:StartSizing(point) self.started_sizing = point end
         function frame:StopMovingOrSizing() self.stopped_moving = true end
         function frame:RegisterForClicks(...) self.clicks = { ... } end
 
@@ -212,6 +237,38 @@ local function setup_env(opts)
         return new_frame(frame_type, name, parent, template)
     end
     _G.UIParent = new_frame("Frame", "UIParent", nil, nil)
+    if opts.elvui then
+        local skins = {}
+
+        function skins:HandleFrame(frame)
+            frame.elvui_frame_skinned = true
+        end
+
+        function skins:HandleButton(frame)
+            frame.elvui_button_skinned = true
+        end
+
+        function skins:HandleCheckBox(frame)
+            frame.elvui_checkbox_skinned = true
+        end
+
+        function skins:HandleScrollBar(frame)
+            frame.elvui_scrollbar_skinned = true
+        end
+
+        _G.ElvUI = {
+            {
+                GetModule = function(_, module_name)
+                    if module_name == "Skins" then
+                        return skins
+                    end
+                    return nil
+                end,
+            },
+        }
+    else
+        _G.ElvUI = nil
+    end
     _G.print = function(...)
         local parts = {}
         for i = 1, select("#", ...) do
@@ -435,9 +492,36 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
 
     assert_not_nil(frame, "workbench frame should be created when UI helpers exist")
     assert_equal(frame.frame_strata, "DIALOG", "workbench should use dialog strata so it stays interactable")
+    assert_true(frame.resizable, "workbench should allow resizing")
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+end
+
+local function test_workbench_resize_persists_saved_size_and_updates_layout()
+    local addon = setup_env()
+
+    local frame = addon.Workbench.CreateFrame()
+    frame:SetSize(640, 720)
+    frame.ResizeHandle.scripts["OnDragStop"]()
+
+    local state = addon.Workbench.EnsureState()
+
+    assert_equal(state.Size.Width, 640, "resizing should persist the frame width")
+    assert_equal(state.Size.Height, 720, "resizing should persist the frame height")
+    assert_true((frame.ListScroll:GetHeight() or 0) > 220, "queue area should grow when the frame is taller")
+end
+
+local function test_workbench_applies_elvui_skin_when_available()
+    local addon = setup_env({
+        elvui = true,
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_true(frame.elvui_frame_skinned, "main workbench frame should use the ElvUI frame template when available")
+    assert_true(frame.LockButton.elvui_button_skinned, "lock button should use the ElvUI button template when available")
+    assert_true(frame.ResizeHandle.elvui_button_skinned, "resize handle should use the ElvUI button template when available")
 end
 
 local function test_workbench_auto_completes_after_trade_cast()
@@ -604,6 +688,8 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_resize_persists_saved_size_and_updates_layout()
+test_workbench_applies_elvui_skin_when_available()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()

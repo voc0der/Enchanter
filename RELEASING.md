@@ -37,8 +37,8 @@ Before automated release can work end-to-end, configure:
 ### Troubleshooting
 
 - No new tag created:
-  - Check `## Version:` in `Enchanter.toc` is bumped (for example `2.1.1`)
-  - If the tag already exists (for example `v2.1.1`), the workflow skips by design
+  - Check `## Version:` in `Enchanter.toc` is bumped (for example `2.1.2`)
+  - If the tag already exists (for example `v2.1.2`), the workflow skips by design
 - Tag created but no CurseForge upload:
   - Confirm `CF_API_KEY` exists in repo secrets
   - Confirm `## X-Curse-Project-ID:` is set to a valid numeric project ID
@@ -69,6 +69,7 @@ For the current addon, the packaged game files are:
 - `LibGPIToolBox.lua`
 - `Tags.lua`
 - `Options.lua`
+- `Workbench.lua`
 - `Enchanter.lua`
 - `Enchanter.xml`
 
