@@ -55,11 +55,57 @@ local function GetRecipeApi()
 	return nil, nil, nil
 end
 
+local function GetRecipeReagentApi()
+	if GetNumCrafts and GetCraftInfo and GetCraftNumReagents and GetCraftReagentInfo then
+		return GetCraftNumReagents, GetCraftReagentInfo, GetCraftReagentItemLink
+	end
+	if GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillNumReagents and GetTradeSkillReagentInfo then
+		return GetTradeSkillNumReagents, GetTradeSkillReagentInfo, GetTradeSkillReagentItemLink
+	end
+	return nil, nil, nil
+end
+
+local function CaptureRecipeMaterials(recipeIndex)
+	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi()
+	local materials = {}
+
+	if not getNumReagents or not getReagentInfo then
+		return materials
+	end
+
+	for reagentIndex = 1, getNumReagents(recipeIndex) or 0 do
+		local reagentName, _, reagentCount = getReagentInfo(recipeIndex, reagentIndex)
+		if reagentName and reagentName ~= "" then
+			materials[#materials + 1] = {
+				Name = reagentName,
+				Count = tonumber(reagentCount) or 1,
+				Link = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil,
+			}
+		end
+	end
+
+	return materials
+end
+
 local function NormalizePhrase(value)
 	if not value then
 		return ""
 	end
 	return value:lower():gsub("[%W_]+", "")
+end
+
+function EC.GetMatchedRecipeNames(recipeMap)
+	local out = {}
+	if type(recipeMap) ~= "table" then
+		return out
+	end
+
+	for recipeName in pairs(recipeMap) do
+		out[#out + 1] = recipeName
+	end
+
+	table.sort(out)
+	return out
 end
 
 local function EnsureSavedVariables()
@@ -72,6 +118,7 @@ local function EnsureSavedVariables()
 	if not EC.DB.Custom then EC.DB.Custom = {} end
 	if not EC.DBChar.RecipeList then EC.DBChar.RecipeList = {} end
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
+	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
@@ -81,6 +128,7 @@ local function EnsureSavedVariables()
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
+	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
 end
 
 function EC.RefreshCompiledData()
@@ -109,6 +157,10 @@ function EC.RefreshCompiledData()
 			end
 		end
 	end
+
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
 end
 
 function EC.GetItems()
@@ -120,6 +172,7 @@ function EC.GetItems()
 
 	EC.DBChar.RecipeList = {}
 	EC.DBChar.RecipeLinks = {}
+	EC.DBChar.RecipeMats = {}
 
 	CastSpellByName("Enchanting")
 
@@ -127,6 +180,7 @@ function EC.GetItems()
 		local recipeName = getInfo(index)
 		if recipeName and EC.RecipeTags["enGB"][recipeName] then
 			EC.DBChar.RecipeLinks[recipeName] = getLink and getLink(index) or nil
+			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index)
 			EC.DBChar.RecipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
 		end
 	end
@@ -135,6 +189,7 @@ function EC.GetItems()
 		for _, recipeName in ipairs(EC.RecipesWithNether) do
 			EC.DBChar.RecipeList[recipeName] = nil
 			EC.DBChar.RecipeLinks[recipeName] = nil
+			EC.DBChar.RecipeMats[recipeName] = nil
 		end
 	end
 
@@ -153,6 +208,11 @@ function EC.Init()
 	EnsureSavedVariables()
 
 	EC.Tool.SlashCommand({"/ec", "/enchanter", "/e"}, {
+		{"", "Toggles the workbench queue.", function()
+			if EC.Workbench and EC.Workbench.Toggle then
+				EC.Workbench.Toggle()
+			end
+		end},
 		{"scan", "MUST BE RAN PRIOR TO /ec start. Scans and stores your enchanting recipes to be used when filtering requests. Rerun after learning new recipes.", function()
 			DoScan()
 		end},
@@ -176,6 +236,11 @@ function EC.Init()
 				EC.Options.Open(1)
 			end
 		end, 1},
+		{{"workbench", "bench"}, "Toggles the workbench queue.", function()
+			if EC.Workbench and EC.Workbench.Toggle then
+				EC.Workbench.Toggle()
+			end
+		end},
 		{"debug", "Enables/Disables debug messages", function()
 			EC.DBChar.Debug = not EC.DBChar.Debug
 			print("Debug mode is now " .. (EC.DBChar.Debug and "on" or "off"))
@@ -195,6 +260,9 @@ function EC.Init()
 
 	EC.OptionsInit()
 	EC.OptionsUpdate()
+	if EC.Workbench and EC.Workbench.SyncVisibility then
+		EC.Workbench.SyncVisibility()
+	end
 	EC.Initalized = true
 
 	print("|cFFFF1C1C Loaded: "
@@ -209,7 +277,7 @@ function EC.SendMsg(name)
 	end
 
 	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
-	for recipeName in pairs(EC.LfRecipeList[name]) do
+	for _, recipeName in ipairs(EC.GetMatchedRecipeNames(EC.LfRecipeList[name])) do
 		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
 	end
 
@@ -267,6 +335,10 @@ function EC.ParseMessage(msg, name)
 	end
 
 	if matchedRecipes then
+		if EC.Workbench and EC.Workbench.AddOrUpdateOrder then
+			EC.Workbench.AddOrUpdateOrder(name, msg, EC.LfRecipeList[name])
+		end
+
 		if EC.PlayerList[name] == nil then
 			EC.PlayerList[name] = 1
 

@@ -135,6 +135,7 @@ local function setup_env(opts)
 
     load_chunk("Tags.lua", "Enchanter", addon)
     load_chunk("Options.lua", "Enchanter", addon)
+    load_chunk("Workbench.lua", "Enchanter", addon)
     load_chunk("Enchanter.lua", "Enchanter", addon)
 
     addon.Init()
@@ -237,7 +238,67 @@ local function test_generic_lf_enchanter_whisper()
     assert_equal(state.timer_delays[1], 3, "generic whisper should honor whisper delay")
 end
 
+local function test_workbench_tracks_and_merges_orders()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+            },
+            RecipeMats = {
+                ["Enchant Weapon - Mongoose"] = {
+                    { Name = "Large Prismatic Shard", Count = 8, Link = "item:22449" },
+                    { Name = "Void Crystal", Count = 6, Link = "item:22450" },
+                },
+                ["Enchant Boots - Boar's Speed"] = {
+                    { Name = "Large Prismatic Shard", Count = 4, Link = "item:22449" },
+                    { Name = "Primal Air", Count = 8, Link = "item:22451" },
+                },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Queue")
+    addon.ParseMessage("lf boar speed now", "Buyer-Queue")
+
+    local state = addon.Workbench.EnsureState()
+    local order = addon.Workbench.GetSelectedOrder()
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    assert_equal(#state.Orders, 1, "repeat customer should update the same workbench order")
+    assert_equal(order.Customer, "Buyer-Queue", "workbench order should track the customer")
+    assert_equal(#order.Recipes, 2, "workbench order should merge recipes across repeat messages")
+    assert_equal(materials[1].Count, 12, "shared materials should aggregate counts across queued enchants")
+    assert_equal(materials[2].Name, "Primal Air", "other materials should remain in the snapshot")
+end
+
+local function test_workbench_remove_clears_player_gate()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Clear")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.RemoveOrder(order.Id)
+
+    assert_nil(addon.PlayerList["Buyer-Clear"], "removing a workbench order should clear the anti-spam player gate")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "removed orders should leave the queue")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
 test_generic_lf_enchanter_whisper()
+test_workbench_tracks_and_merges_orders()
+test_workbench_remove_clears_player_gate()

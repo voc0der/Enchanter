@@ -1,0 +1,894 @@
+local TOCNAME, EC = ...
+
+EC.Workbench = EC.Workbench or {}
+local Workbench = EC.Workbench
+
+local function TimestampText()
+	if date then
+		return date("%H:%M")
+	end
+	if os and os.date then
+		return os.date("%H:%M")
+	end
+	if GetTime then
+		local totalSeconds = math.floor(GetTime())
+		local minutes = math.floor(totalSeconds / 60)
+		local hours = math.floor(minutes / 60)
+		return string.format("%02d:%02d", hours % 24, minutes % 60)
+	end
+	return "--:--"
+end
+
+local function TrimText(value)
+	if not value then
+		return ""
+	end
+	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function CopyRecipeNames(recipeMapOrList)
+	local out = {}
+	local seen = {}
+
+	if type(recipeMapOrList) ~= "table" then
+		return out
+	end
+
+	for key, value in pairs(recipeMapOrList) do
+		local recipeName
+		if type(key) == "number" then
+			recipeName = value
+		else
+			recipeName = key
+		end
+
+		if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
+			seen[recipeName] = true
+			out[#out + 1] = recipeName
+		end
+	end
+
+	table.sort(out)
+	return out
+end
+
+local function FindOrderIndexById(orderId, state)
+	state = state or Workbench.EnsureState()
+	for index, order in ipairs(state.Orders) do
+		if order.Id == orderId then
+			return index
+		end
+	end
+	return nil
+end
+
+local function EnsureOrderFields(order)
+	order.Recipes = order.Recipes or {}
+	order.MaterialState = order.MaterialState or {}
+	order.Message = order.Message or ""
+	order.CreatedAt = order.CreatedAt or TimestampText()
+	order.UpdatedAt = order.UpdatedAt or order.CreatedAt
+	return order
+end
+
+local function MaterialKey(material)
+	if not material then
+		return ""
+	end
+	return material.Link or material.Name or ""
+end
+
+local function CreateFrameCompat(frameType, name, parent, template)
+	if not CreateFrame then
+		return nil
+	end
+
+	local backdropTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
+	if template and backdropTemplate then
+		return CreateFrame(frameType, name, parent, template .. "," .. backdropTemplate)
+	end
+	if template then
+		return CreateFrame(frameType, name, parent, template)
+	end
+	if backdropTemplate then
+		return CreateFrame(frameType, name, parent, backdropTemplate)
+	end
+	return CreateFrame(frameType, name, parent)
+end
+
+local function ApplyBackdrop(frame, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
+	if not frame or not frame.SetBackdrop then
+		return
+	end
+
+	if not frame._ECBackdropConfigured then
+		frame:SetBackdrop({
+			bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+			edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+			tile = true,
+			tileSize = 8,
+			edgeSize = 12,
+			insets = { left = 3, right = 3, top = 3, bottom = 3 },
+		})
+		frame._ECBackdropConfigured = true
+	end
+
+	frame:SetBackdropColor(bgR or 0.09, bgG or 0.08, bgB or 0.07, bgA or 0.96)
+	frame:SetBackdropBorderColor(borderR or 0.66, borderG or 0.46, borderB or 0.23, borderA or 1)
+end
+
+local function SaveFramePosition(frame)
+	local state = Workbench.EnsureState()
+	local point, _, relativePoint, xOfs, yOfs = frame:GetPoint()
+	state.Position.Point = point or "CENTER"
+	state.Position.RelativePoint = relativePoint or "CENTER"
+	state.Position.X = xOfs or 0
+	state.Position.Y = yOfs or 0
+end
+
+local function ApplyFramePosition(frame)
+	local state = Workbench.EnsureState()
+	local position = state.Position
+	frame:ClearAllPoints()
+	frame:SetPoint(position.Point or "CENTER", UIParent, position.RelativePoint or "CENTER", position.X or 0, position.Y or 0)
+end
+
+local function SortedOrders()
+	local state = Workbench.EnsureState()
+	return state.Orders
+end
+
+local function OrderSummary(order)
+	local recipeCount = #(order.Recipes or {})
+	if recipeCount == 0 then
+		return "Waiting for a recognized enchant"
+	end
+	if recipeCount == 1 then
+		return order.Recipes[1]
+	end
+	if recipeCount == 2 then
+		return order.Recipes[1] .. " + " .. order.Recipes[2]
+	end
+	return string.format("%s + %d more", order.Recipes[1], recipeCount - 1)
+end
+
+local function SetSelectedOrder(orderId)
+	local state = Workbench.EnsureState()
+	if orderId and FindOrderIndexById(orderId) then
+		state.SelectedOrderId = orderId
+	else
+		state.SelectedOrderId = state.Orders[1] and state.Orders[1].Id or nil
+	end
+end
+
+function Workbench.SelectOrder(orderId)
+	SetSelectedOrder(orderId)
+	Workbench.Refresh()
+end
+
+function Workbench.EnsureState()
+	if not EC.DBChar then
+		return {
+			Orders = {},
+			Position = { Point = "CENTER", RelativePoint = "CENTER", X = 0, Y = 0 },
+			Locked = true,
+			Visible = false,
+			NextOrderId = 1,
+		}
+	end
+
+	EC.DBChar.Workbench = EC.DBChar.Workbench or {}
+	local state = EC.DBChar.Workbench
+	state.Orders = state.Orders or {}
+	state.Position = state.Position or {}
+
+	if state.Locked == nil then
+		state.Locked = true
+	end
+	if state.Visible == nil then
+		state.Visible = false
+	end
+	if not state.NextOrderId or state.NextOrderId < 1 then
+		state.NextOrderId = 1
+	end
+	if not state.Position.Point then
+		state.Position.Point = "CENTER"
+	end
+	if not state.Position.RelativePoint then
+		state.Position.RelativePoint = "CENTER"
+	end
+	if state.Position.X == nil then
+		state.Position.X = 0
+	end
+	if state.Position.Y == nil then
+		state.Position.Y = 0
+	end
+
+	for index, order in ipairs(state.Orders) do
+		state.Orders[index] = EnsureOrderFields(order)
+		if order.Id and order.Id >= state.NextOrderId then
+			state.NextOrderId = order.Id + 1
+		end
+	end
+
+	if state.SelectedOrderId and not FindOrderIndexById(state.SelectedOrderId, state) then
+		state.SelectedOrderId = nil
+	end
+	if not state.SelectedOrderId and state.Orders[1] then
+		state.SelectedOrderId = state.Orders[1].Id
+	end
+
+	return state
+end
+
+function Workbench.GetSelectedOrder()
+	local state = Workbench.EnsureState()
+	for _, order in ipairs(state.Orders) do
+		if order.Id == state.SelectedOrderId then
+			return order
+		end
+	end
+	return nil
+end
+
+function Workbench.GetMaterialSnapshot(order)
+	local materials = {}
+	local byKey = {}
+	local missingRecipes = {}
+	local recipeMats = EC.DBChar and EC.DBChar.RecipeMats or {}
+	order = order or Workbench.GetSelectedOrder()
+
+	if not order then
+		return materials, missingRecipes
+	end
+
+	for _, recipeName in ipairs(order.Recipes or {}) do
+		local recipeMaterials = recipeMats and recipeMats[recipeName]
+		if not recipeMaterials or #recipeMaterials == 0 then
+			missingRecipes[#missingRecipes + 1] = recipeName
+		else
+			for _, material in ipairs(recipeMaterials) do
+				local key = MaterialKey(material)
+				if key ~= "" then
+					if not byKey[key] then
+						byKey[key] = {
+							Key = key,
+							Name = material.Name or material.Link or "Unknown Material",
+							Link = material.Link,
+							Count = 0,
+						}
+						materials[#materials + 1] = byKey[key]
+					end
+					byKey[key].Count = byKey[key].Count + (tonumber(material.Count) or 1)
+				end
+			end
+		end
+	end
+
+	table.sort(materials, function(left, right)
+		return (left.Name or "") < (right.Name or "")
+	end)
+
+	return materials, missingRecipes
+end
+
+function Workbench.GetMaterialProgress(order)
+	local materials = Workbench.GetMaterialSnapshot(order)
+	local checked = 0
+	local total = #materials
+
+	order = order or Workbench.GetSelectedOrder()
+	if not order then
+		return 0, 0
+	end
+
+	for _, material in ipairs(materials) do
+		if order.MaterialState and order.MaterialState[material.Key] then
+			checked = checked + 1
+		end
+	end
+
+	return checked, total
+end
+
+function Workbench.SetMaterialChecked(orderId, materialKey, checked)
+	local state = Workbench.EnsureState()
+	for _, order in ipairs(state.Orders) do
+		if order.Id == orderId then
+			order.MaterialState = order.MaterialState or {}
+			order.MaterialState[materialKey] = checked and true or nil
+			order.UpdatedAt = TimestampText()
+			break
+		end
+	end
+
+	Workbench.Refresh()
+end
+
+function Workbench.SetAllMaterials(orderId, checked)
+	local state = Workbench.EnsureState()
+	for _, order in ipairs(state.Orders) do
+		if order.Id == orderId then
+			order.MaterialState = order.MaterialState or {}
+			local materials = Workbench.GetMaterialSnapshot(order)
+			for _, material in ipairs(materials) do
+				order.MaterialState[material.Key] = checked and true or nil
+			end
+			order.UpdatedAt = TimestampText()
+			break
+		end
+	end
+
+	Workbench.Refresh()
+end
+
+function Workbench.RemoveOrder(orderId)
+	local state = Workbench.EnsureState()
+	local removedOrder
+
+	for index, order in ipairs(state.Orders) do
+		if order.Id == orderId then
+			removedOrder = order
+			table.remove(state.Orders, index)
+			break
+		end
+	end
+
+	if removedOrder then
+		EC.PlayerList[removedOrder.Customer] = nil
+		EC.LfRecipeList[removedOrder.Customer] = nil
+	end
+
+	if state.SelectedOrderId == orderId then
+		state.SelectedOrderId = state.Orders[1] and state.Orders[1].Id or nil
+	end
+
+	Workbench.Refresh()
+end
+
+function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
+	local state = Workbench.EnsureState()
+	local recipeNames = CopyRecipeNames(recipeMap)
+	local order
+
+	if not customer or customer == "" or #recipeNames == 0 then
+		return nil
+	end
+
+	for _, existing in ipairs(state.Orders) do
+		if existing.Customer == customer then
+			order = EnsureOrderFields(existing)
+			break
+		end
+	end
+
+	if not order then
+		order = EnsureOrderFields({
+			Id = state.NextOrderId,
+			Customer = customer,
+		})
+		state.NextOrderId = state.NextOrderId + 1
+		state.Orders[#state.Orders + 1] = order
+	end
+
+	local seen = {}
+	for _, recipeName in ipairs(order.Recipes) do
+		seen[recipeName] = true
+	end
+	for _, recipeName in ipairs(recipeNames) do
+		if not seen[recipeName] then
+			order.Recipes[#order.Recipes + 1] = recipeName
+			seen[recipeName] = true
+		end
+	end
+
+	table.sort(order.Recipes)
+	order.Message = TrimText(message)
+	order.UpdatedAt = TimestampText()
+
+	if not state.SelectedOrderId then
+		state.SelectedOrderId = order.Id
+	end
+
+	Workbench.Refresh()
+	return order
+end
+
+local function TryCastRecipe(recipeName)
+	if GetNumCrafts and GetCraftInfo and DoCraft then
+		for index = 1, GetNumCrafts() or 0 do
+			if GetCraftInfo(index) == recipeName then
+				DoCraft(index)
+				return true
+			end
+		end
+	end
+
+	if GetNumTradeSkills and GetTradeSkillInfo and DoTradeSkill then
+		for index = 1, GetNumTradeSkills() or 0 do
+			if GetTradeSkillInfo(index) == recipeName then
+				DoTradeSkill(index)
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+function Workbench.CastRecipe(recipeName)
+	if not recipeName or recipeName == "" then
+		return false
+	end
+
+	if TryCastRecipe(recipeName) then
+		return true
+	end
+
+	if CastSpellByName then
+		CastSpellByName("Enchanting")
+	end
+
+	if C_Timer and C_Timer.After then
+		C_Timer.After(0.2, function()
+			if not TryCastRecipe(recipeName) then
+				print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
+			end
+		end)
+	else
+		print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
+	end
+
+	return false
+end
+
+local function UpdateLockButtonText()
+	if not Workbench.Frame or not Workbench.Frame.LockButton then
+		return
+	end
+
+	local state = Workbench.EnsureState()
+	Workbench.Frame.LockButton:SetText(state.Locked and "Unlock" or "Lock")
+end
+
+local function CreateOrderRow(parent, index)
+	local row = CreateFrameCompat("Button", TOCNAME .. "WorkbenchOrder" .. index, parent)
+	row:SetHeight(58)
+	row:SetPoint("LEFT", parent, "LEFT", 4, 0)
+	row:SetPoint("RIGHT", parent, "RIGHT", -10, 0)
+	ApplyBackdrop(row, 0.16, 0.11, 0.08, 0.95, 0.58, 0.41, 0.22, 1)
+
+	row.NameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	row.NameText:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
+	row.NameText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.NameText:SetJustifyH("LEFT")
+
+	row.MetaText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	row.MetaText:SetPoint("TOPLEFT", row.NameText, "BOTTOMLEFT", 0, -4)
+	row.MetaText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.MetaText:SetJustifyH("LEFT")
+
+	row.SummaryText = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	row.SummaryText:SetPoint("TOPLEFT", row.MetaText, "BOTTOMLEFT", 0, -4)
+	row.SummaryText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.SummaryText:SetJustifyH("LEFT")
+
+	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelCloseButton")
+	row.RemoveButton:SetSize(18, 18)
+	row.RemoveButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -2)
+	row.RemoveButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.RemoveOrder(self.OrderId)
+		end
+	end)
+
+	row:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.SelectOrder(self.OrderId)
+		end
+	end)
+
+	return row
+end
+
+local function CreateRecipeLine(parent, index)
+	local line = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchRecipe" .. index, parent)
+	line:SetHeight(24)
+	line:SetPoint("LEFT", parent, "LEFT", 0, 0)
+	line:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+
+	line.NameText = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
+	line.NameText:SetPoint("RIGHT", line, "RIGHT", -68, 0)
+	line.NameText:SetJustifyH("LEFT")
+
+	line.CastButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
+	line.CastButton:SetSize(56, 20)
+	line.CastButton:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.CastButton:SetText("Cast")
+	line.CastButton:SetScript("OnClick", function(self)
+		if self.RecipeName then
+			Workbench.CastRecipe(self.RecipeName)
+		end
+	end)
+
+	return line
+end
+
+local function CreateMaterialLine(parent, index)
+	local line = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchMaterial" .. index, parent)
+	line:SetHeight(22)
+	line:SetPoint("LEFT", parent, "LEFT", 0, 0)
+	line:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+
+	line.Check = CreateFrame("CheckButton", nil, line, "UICheckButtonTemplate")
+	line.Check:SetPoint("LEFT", line, "LEFT", -4, 0)
+	line.Check:SetScript("OnClick", function(self)
+		if self.OrderId and self.MaterialKey then
+			Workbench.SetMaterialChecked(self.OrderId, self.MaterialKey, self:GetChecked())
+		end
+	end)
+
+	line.Text = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	line.Text:SetPoint("LEFT", line.Check, "RIGHT", -2, 0)
+	line.Text:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.Text:SetJustifyH("LEFT")
+
+	return line
+end
+
+function Workbench.CreateFrame()
+	if Workbench.Frame or not CreateFrame then
+		return Workbench.Frame
+	end
+
+	local frame = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchFrame", UIParent)
+	Workbench.Frame = frame
+	frame:SetSize(468, 520)
+	frame:SetMovable(true)
+	if frame.SetClampedToScreen then
+		frame:SetClampedToScreen(true)
+	end
+	frame:EnableMouse(true)
+	frame:RegisterForDrag("LeftButton")
+	frame:SetFrameStrata("MEDIUM")
+	if frame.SetToplevel then
+		frame:SetToplevel(true)
+	end
+	ApplyBackdrop(frame, 0.08, 0.06, 0.05, 0.97, 0.72, 0.52, 0.23, 1)
+	ApplyFramePosition(frame)
+
+	frame.Header = CreateFrameCompat("Frame", nil, frame)
+	frame.Header:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -8)
+	frame.Header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -8)
+	frame.Header:SetHeight(30)
+	ApplyBackdrop(frame.Header, 0.21, 0.12, 0.07, 0.98, 0.58, 0.39, 0.18, 1)
+	frame.Header:EnableMouse(true)
+	frame.Header:RegisterForDrag("LeftButton")
+	frame.Header:SetScript("OnDragStart", function()
+		if not Workbench.EnsureState().Locked then
+			frame:StartMoving()
+		end
+	end)
+	frame.Header:SetScript("OnDragStop", function()
+		frame:StopMovingOrSizing()
+		SaveFramePosition(frame)
+	end)
+
+	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
+	frame.TitleText:SetText("Enchanter Workbench")
+
+	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
+	frame.QueueCountText:SetText("0 orders")
+
+	frame.CloseButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+	frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+	frame.CloseButton:SetScript("OnClick", function()
+		Workbench.Hide()
+	end)
+
+	frame.LockButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	frame.LockButton:SetSize(60, 20)
+	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -8, -2)
+	frame.LockButton:SetScript("OnClick", function()
+		local state = Workbench.EnsureState()
+		state.Locked = not state.Locked
+		UpdateLockButtonText()
+	end)
+
+	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
+	frame.ListHeader:SetText("Queue")
+
+	frame.ListScroll = CreateFrame("ScrollFrame", TOCNAME .. "WorkbenchQueueScroll", frame, "UIPanelScrollFrameTemplate")
+	frame.ListScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -60)
+	frame.ListScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -32, -60)
+	frame.ListScroll:SetHeight(220)
+
+	frame.ListChild = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchQueueChild", frame.ListScroll)
+	frame.ListChild:SetSize(400, 1)
+	frame.ListScroll:SetScrollChild(frame.ListChild)
+
+	frame.EmptyQueueText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+	frame.EmptyQueueText:SetPoint("TOPLEFT", frame.ListScroll, "TOPLEFT", 8, -12)
+	frame.EmptyQueueText:SetPoint("RIGHT", frame.ListScroll, "RIGHT", -8, 0)
+	frame.EmptyQueueText:SetJustifyH("LEFT")
+	frame.EmptyQueueText:SetText("Orders that match your enchants will stack up here.")
+
+	frame.Detail = CreateFrameCompat("Frame", nil, frame)
+	frame.Detail:SetPoint("TOPLEFT", frame.ListScroll, "BOTTOMLEFT", 0, -18)
+	frame.Detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
+	ApplyBackdrop(frame.Detail, 0.14, 0.1, 0.07, 0.96, 0.54, 0.37, 0.19, 1)
+
+	frame.Detail.Title = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.Detail.Title:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 12, -12)
+	frame.Detail.Title:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Title:SetJustifyH("LEFT")
+
+	frame.Detail.Meta = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.Meta:SetPoint("TOPLEFT", frame.Detail.Title, "BOTTOMLEFT", 0, -4)
+	frame.Detail.Meta:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Meta:SetJustifyH("LEFT")
+
+	frame.Detail.Message = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	frame.Detail.Message:SetPoint("TOPLEFT", frame.Detail.Meta, "BOTTOMLEFT", 0, -8)
+	frame.Detail.Message:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Message:SetJustifyH("LEFT")
+	frame.Detail.Message:SetJustifyV("TOP")
+
+	frame.Detail.RecipesHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -14)
+	frame.Detail.RecipesHeader:SetText("Enchants")
+
+	frame.Detail.MatsHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.MatsHeader:SetText("Materials")
+
+	frame.Detail.AllMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.AllMatsButton:SetSize(72, 20)
+	frame.Detail.AllMatsButton:SetText("All Mats")
+	frame.Detail.AllMatsButton:SetScript("OnClick", function()
+		local order = Workbench.GetSelectedOrder()
+		if order then
+			Workbench.SetAllMaterials(order.Id, true)
+		end
+	end)
+
+	frame.Detail.ClearMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.ClearMatsButton:SetSize(60, 20)
+	frame.Detail.ClearMatsButton:SetText("Clear")
+	frame.Detail.ClearMatsButton:SetScript("OnClick", function()
+		local order = Workbench.GetSelectedOrder()
+		if order then
+			Workbench.SetAllMaterials(order.Id, false)
+		end
+	end)
+
+	frame.Detail.ReadyText = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.ReadyText:SetJustifyH("LEFT")
+
+	frame.Detail.Empty = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+	frame.Detail.Empty:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 12, -44)
+	frame.Detail.Empty:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Empty:SetJustifyH("LEFT")
+	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and a manual materials checklist.")
+
+	frame.OrderRows = {}
+	frame.Detail.RecipeLines = {}
+	frame.Detail.MaterialLines = {}
+
+	frame:SetScript("OnHide", function()
+		frame:StopMovingOrSizing()
+	end)
+
+	UpdateLockButtonText()
+	return frame
+end
+
+function Workbench.Refresh()
+	local frame = Workbench.Frame
+	local state = Workbench.EnsureState()
+	if not frame then
+		return
+	end
+
+	frame.QueueCountText:SetText(string.format("%d orders", #state.Orders))
+	frame.EmptyQueueText:SetShown(#state.Orders == 0)
+	UpdateLockButtonText()
+	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
+		local listWidth = frame.ListScroll:GetWidth()
+		if listWidth and listWidth > 0 then
+			frame.ListChild:SetWidth(listWidth - 24)
+		end
+	end
+
+	for index, order in ipairs(SortedOrders()) do
+		if not frame.OrderRows[index] then
+			frame.OrderRows[index] = CreateOrderRow(frame.ListChild, index)
+		end
+
+		local row = frame.OrderRows[index]
+		local checked, total = Workbench.GetMaterialProgress(order)
+		local readyText
+		if total > 0 and checked == total then
+			readyText = "Ready"
+		elseif total > 0 then
+			readyText = string.format("%d/%d mats", checked, total)
+		else
+			readyText = "No mats snapshot"
+		end
+
+		row.OrderId = order.Id
+		row.RemoveButton.OrderId = order.Id
+		row.NameText:SetText(order.Customer or "Unknown")
+		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
+		row.SummaryText:SetText(OrderSummary(order))
+		row:Show()
+
+		if state.SelectedOrderId == order.Id then
+			ApplyBackdrop(row, 0.24, 0.14, 0.08, 0.98, 0.9, 0.68, 0.28, 1)
+		else
+			ApplyBackdrop(row, 0.16, 0.11, 0.08, 0.95, 0.58, 0.41, 0.22, 1)
+		end
+
+		row:ClearAllPoints()
+		row:SetPoint("TOPLEFT", frame.ListChild, "TOPLEFT", 4, -((index - 1) * 62))
+	end
+
+	for index = #state.Orders + 1, #frame.OrderRows do
+		frame.OrderRows[index]:Hide()
+	end
+
+	frame.ListChild:SetHeight(math.max(220, (#state.Orders * 62)))
+
+	local order = Workbench.GetSelectedOrder()
+	if not order then
+		frame.Detail.Empty:Show()
+		frame.Detail.Title:SetText("No active order selected")
+		frame.Detail.Meta:SetText("")
+		frame.Detail.Message:SetText("")
+		frame.Detail.RecipesHeader:Hide()
+		frame.Detail.MatsHeader:Hide()
+		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.ClearMatsButton:Hide()
+		frame.Detail.ReadyText:Hide()
+		for _, line in ipairs(frame.Detail.RecipeLines) do
+			line:Hide()
+		end
+		for _, line in ipairs(frame.Detail.MaterialLines) do
+			line:Hide()
+		end
+		return
+	end
+
+	frame.Detail.Empty:Hide()
+	frame.Detail.Title:SetText(order.Customer or "Unknown")
+
+	local checked, total = Workbench.GetMaterialProgress(order)
+	local readyText = total > 0 and string.format("%d/%d materials checked", checked, total) or "No materials captured yet"
+	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
+	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
+	frame.Detail.RecipesHeader:Show()
+
+	local recipeAnchor = frame.Detail.RecipesHeader
+	for index, recipeName in ipairs(order.Recipes or {}) do
+		if not frame.Detail.RecipeLines[index] then
+			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail, index)
+		end
+		local line = frame.Detail.RecipeLines[index]
+		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
+		line.NameText:SetText(recipeLink or recipeName)
+		line.CastButton.RecipeName = recipeName
+		line:ClearAllPoints()
+		if index == 1 then
+			line:SetPoint("TOPLEFT", recipeAnchor, "BOTTOMLEFT", 0, -6)
+		else
+			line:SetPoint("TOPLEFT", frame.Detail.RecipeLines[index - 1], "BOTTOMLEFT", 0, -4)
+		end
+		line:Show()
+	end
+
+	for index = #(order.Recipes or {}) + 1, #frame.Detail.RecipeLines do
+		frame.Detail.RecipeLines[index]:Hide()
+	end
+
+	local materials, missingRecipes = Workbench.GetMaterialSnapshot(order)
+	local matsAnchor = #(order.Recipes or {}) > 0 and frame.Detail.RecipeLines[#order.Recipes] or frame.Detail.RecipesHeader
+	frame.Detail.MatsHeader:ClearAllPoints()
+	frame.Detail.MatsHeader:SetPoint("TOPLEFT", matsAnchor, "BOTTOMLEFT", 0, -14)
+	frame.Detail.MatsHeader:Show()
+
+	frame.Detail.AllMatsButton:ClearAllPoints()
+	frame.Detail.AllMatsButton:SetPoint("LEFT", frame.Detail.MatsHeader, "RIGHT", 12, 0)
+	frame.Detail.ClearMatsButton:ClearAllPoints()
+	frame.Detail.ClearMatsButton:SetPoint("LEFT", frame.Detail.AllMatsButton, "RIGHT", 6, 0)
+	frame.Detail.ReadyText:ClearAllPoints()
+	frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
+	frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+
+	if #materials > 0 then
+		frame.Detail.AllMatsButton:Show()
+		frame.Detail.ClearMatsButton:Show()
+		if checked == total then
+			frame.Detail.ReadyText:SetText("|cFF74D06CAll queued mats are checked off.|r")
+		else
+			frame.Detail.ReadyText:SetText("|cFFFFD26AUse the checklist as the customer hands you materials.|r")
+		end
+	else
+		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.ClearMatsButton:Hide()
+		frame.Detail.ReadyText:SetText("|cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+	end
+	frame.Detail.ReadyText:Show()
+
+	local materialAnchor = frame.Detail.ReadyText
+	for index, material in ipairs(materials) do
+		if not frame.Detail.MaterialLines[index] then
+			frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail, index)
+		end
+		local line = frame.Detail.MaterialLines[index]
+		line.Check.OrderId = order.Id
+		line.Check.MaterialKey = material.Key
+		line.Check:SetChecked(order.MaterialState and order.MaterialState[material.Key] or false)
+		line.Text:SetText(string.format("%dx %s", material.Count or 0, material.Link or material.Name or "Unknown Material"))
+		line:ClearAllPoints()
+		if index == 1 then
+			line:SetPoint("TOPLEFT", materialAnchor, "BOTTOMLEFT", 0, -4)
+		else
+			line:SetPoint("TOPLEFT", frame.Detail.MaterialLines[index - 1], "BOTTOMLEFT", 0, -2)
+		end
+		line:Show()
+	end
+
+	for index = #materials + 1, #frame.Detail.MaterialLines do
+		frame.Detail.MaterialLines[index]:Hide()
+	end
+
+	if #missingRecipes > 0 then
+		frame.Detail.ReadyText:SetText(frame.Detail.ReadyText:GetText() .. "  |cFFFF9F5AMissing mats: " .. table.concat(missingRecipes, ", ") .. "|r")
+	end
+end
+
+function Workbench.Show()
+	local state = Workbench.EnsureState()
+	local frame = Workbench.CreateFrame()
+	if not frame then
+		return
+	end
+
+	state.Visible = true
+	ApplyFramePosition(frame)
+	frame:Show()
+	Workbench.Refresh()
+end
+
+function Workbench.Hide()
+	local state = Workbench.EnsureState()
+	state.Visible = false
+	if Workbench.Frame then
+		Workbench.Frame:Hide()
+	end
+end
+
+function Workbench.Toggle()
+	local frame = Workbench.CreateFrame()
+	if not frame then
+		return
+	end
+
+	if frame:IsShown() then
+		Workbench.Hide()
+	else
+		Workbench.Show()
+	end
+end
+
+function Workbench.SyncVisibility()
+	local state = Workbench.EnsureState()
+	if state.Visible then
+		Workbench.Show()
+	elseif Workbench.Frame then
+		Workbench.Frame:Hide()
+	end
+end
