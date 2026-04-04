@@ -58,6 +58,25 @@ local function CopyRecipeNames(recipeMapOrList)
 	return out
 end
 
+local function NormalizeCustomerName(name)
+	if not name then
+		return "", ""
+	end
+
+	local cleaned = tostring(name)
+	cleaned = cleaned:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+
+	local full = cleaned:lower()
+	local short = full:match("^([^%-]+)") or full
+	return short, full
+end
+
+local function EnsureRuntime()
+	Workbench.Runtime = Workbench.Runtime or {}
+	return Workbench.Runtime
+end
+
 local function FindOrderIndexById(orderId, state)
 	state = state or Workbench.EnsureState()
 	for index, order in ipairs(state.Orders) do
@@ -242,6 +261,50 @@ function Workbench.GetSelectedOrder()
 	return nil
 end
 
+function Workbench.GetOrderById(orderId)
+	if not orderId then
+		return nil
+	end
+
+	for _, order in ipairs(Workbench.EnsureState().Orders) do
+		if order.Id == orderId then
+			return order
+		end
+	end
+
+	return nil
+end
+
+function Workbench.GetOrderByCustomer(customerName)
+	local targetShort, targetFull = NormalizeCustomerName(customerName)
+	if targetShort == "" then
+		return nil
+	end
+
+	for _, order in ipairs(Workbench.EnsureState().Orders) do
+		local orderShort, orderFull = NormalizeCustomerName(order.Customer)
+		if targetFull == orderFull or targetFull == orderShort or targetShort == orderFull or targetShort == orderShort then
+			return order
+		end
+	end
+
+	return nil
+end
+
+local function OrderHasRecipe(order, recipeName)
+	if not order or not recipeName then
+		return false
+	end
+
+	for _, candidate in ipairs(order.Recipes or {}) do
+		if candidate == recipeName then
+			return true
+		end
+	end
+
+	return false
+end
+
 function Workbench.GetMaterialSnapshot(order)
 	local materials = {}
 	local byKey = {}
@@ -300,6 +363,126 @@ function Workbench.GetMaterialProgress(order)
 	end
 
 	return checked, total
+end
+
+function Workbench.GetTradePartnerName()
+	local candidates = {
+		_G and _G.TradeFrameRecipientNameText,
+		_G and _G.TradeRecipientNameText,
+		_G and _G.TradeFrameRecipientNameText and _G.TradeFrameRecipientNameText.GetText and _G.TradeFrameRecipientNameText:GetText(),
+	}
+
+	for _, candidate in ipairs(candidates) do
+		local text = candidate
+		if type(candidate) == "table" and candidate.GetText then
+			text = candidate:GetText()
+		end
+		if type(text) == "string" and text ~= "" then
+			text = text:gsub("^%s+", ""):gsub("%s+$", "")
+			if text ~= "" then
+				return text
+			end
+		end
+	end
+
+	return nil
+end
+
+function Workbench.BeginTrade(customerName)
+	local runtime = EnsureRuntime()
+	local order = Workbench.GetOrderByCustomer(customerName)
+
+	if not order then
+		order = Workbench.GetSelectedOrder()
+	end
+
+	runtime.ActiveTrade = {
+		CustomerName = customerName or (order and order.Customer) or nil,
+		OrderId = order and order.Id or nil,
+		CastedRecipeName = nil,
+	}
+
+	if order then
+		WorkbenchDebug("trade opened for", order.Customer)
+	else
+		WorkbenchDebug("trade opened with no queued order match")
+	end
+
+	return order
+end
+
+function Workbench.NoteRecipeCast(recipeName)
+	local runtime = EnsureRuntime()
+	local activeTrade = runtime.ActiveTrade
+	local targetOrder = activeTrade and Workbench.GetOrderById(activeTrade.OrderId) or nil
+
+	if targetOrder and not OrderHasRecipe(targetOrder, recipeName) then
+		targetOrder = nil
+	end
+
+	if not targetOrder then
+		local selectedOrder = Workbench.GetSelectedOrder()
+		if selectedOrder and OrderHasRecipe(selectedOrder, recipeName) then
+			targetOrder = selectedOrder
+		end
+	end
+
+	if not targetOrder then
+		for _, order in ipairs(Workbench.EnsureState().Orders) do
+			if OrderHasRecipe(order, recipeName) then
+				targetOrder = order
+				break
+			end
+		end
+	end
+
+	if activeTrade and targetOrder then
+		activeTrade.OrderId = targetOrder.Id
+		activeTrade.CustomerName = targetOrder.Customer
+		activeTrade.CastedRecipeName = recipeName
+	end
+
+	if targetOrder then
+		WorkbenchDebug("noted cast for", recipeName, "on", targetOrder.Customer)
+	else
+		WorkbenchDebug("noted cast for", recipeName)
+	end
+
+	return targetOrder
+end
+
+function Workbench.FinishTrade(goldDelta)
+	local runtime = EnsureRuntime()
+	local activeTrade = runtime.ActiveTrade
+	local completedOrder = nil
+
+	runtime.ActiveTrade = nil
+
+	if not activeTrade or not activeTrade.OrderId then
+		WorkbenchDebug("trade closed with no tracked order")
+		return nil
+	end
+
+	local order = Workbench.GetOrderById(activeTrade.OrderId)
+	if not order then
+		WorkbenchDebug("trade closed but tracked order is gone")
+		return nil
+	end
+
+	local checked, total = Workbench.GetMaterialProgress(order)
+	local hasAllMats = total > 0 and checked == total
+	local gotPaid = (tonumber(goldDelta) or 0) > 0
+	local castedRecipe = activeTrade.CastedRecipeName
+
+	if gotPaid or castedRecipe or hasAllMats then
+		WorkbenchDebug("auto-completing", order.Customer, "(paid=" .. tostring(gotPaid) .. ", cast=" .. tostring(castedRecipe ~= nil) .. ", mats=" .. tostring(hasAllMats) .. ")")
+		completedOrder = order
+		Workbench.RemoveOrder(order.Id)
+	else
+		WorkbenchDebug("trade closed for", order.Customer, "but keeping the order queued")
+	end
+
+	return completedOrder
 end
 
 function Workbench.SetMaterialChecked(orderId, materialKey, checked)
@@ -444,6 +627,7 @@ function Workbench.CastRecipe(recipeName)
 	end
 
 	if TryCastRecipe(recipeName) then
+		Workbench.NoteRecipeCast(recipeName)
 		WorkbenchDebug("cast started for", recipeName)
 		return true
 	end
@@ -459,6 +643,7 @@ function Workbench.CastRecipe(recipeName)
 				WorkbenchDebug("cast retry still unavailable for", recipeName)
 				print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
 			else
+				Workbench.NoteRecipeCast(recipeName)
 				WorkbenchDebug("cast started for", recipeName, "after opening enchanting")
 			end
 		end)

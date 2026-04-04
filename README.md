@@ -16,6 +16,7 @@ Current version: `2.1.1`
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
+- Auto-complete queued orders when a trade closes with strong completion evidence such as a workbench cast, full mats checklist, or payment
 
 ## Install
 
@@ -41,6 +42,7 @@ Current version: `2.1.1`
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
+- When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 
 ## Contributing

@@ -6,6 +6,7 @@
 - Added a manual workbench queue that tracks matched customers, their requested enchants, and the last raw trade-chat message
 - Added slash toggles for the workbench via `/ec` and `/ec workbench`
 - Added best-effort `Cast` actions and a manual materials checklist for each queued order
+- Added automatic workbench completion on trade close when there is strong completion evidence such as payment, a workbench cast, or a fully checked mats list
 
 ### Changed
 - Store reagent snapshots during `/ec scan` so queued orders can show aggregated mats totals

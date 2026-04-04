@@ -16,6 +16,12 @@ local function assert_nil(value, message)
     end
 end
 
+local function assert_not_nil(value, message)
+    if value == nil then
+        error(message or "assert_not_nil failed")
+    end
+end
+
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
@@ -320,6 +326,48 @@ local function test_workbench_debug_output_is_printed()
     assert_true(found, "workbench queue actions should print through debug mode")
 end
 
+local function test_workbench_auto_completes_after_trade_cast()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Finish")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    assert_not_nil(order, "order should exist before trade completion")
+
+    addon.Workbench.BeginTrade("Buyer-Finish")
+    addon.Workbench.NoteRecipeCast("Enchant Weapon - Mongoose")
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "cast evidence during trade should auto-complete the order")
+    assert_nil(addon.PlayerList["Buyer-Finish"], "auto-completion should clear the anti-spam gate")
+end
+
+local function test_workbench_keeps_order_when_trade_has_no_completion_signal()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Stays")
+
+    addon.Workbench.BeginTrade("Buyer-Stays")
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "trade close without evidence should keep the order queued")
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Stays"), "the queued order should still exist")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
@@ -327,3 +375,5 @@ test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
+test_workbench_auto_completes_after_trade_cast()
+test_workbench_keeps_order_when_trade_has_no_completion_signal()

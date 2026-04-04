@@ -395,6 +395,9 @@ end
 
 local function Event_TRADE_SHOW()
 	preTradeGold = GetMoney()
+	if EC.Workbench and EC.Workbench.BeginTrade then
+		EC.Workbench.BeginTrade(EC.Workbench.GetTradePartnerName and EC.Workbench.GetTradePartnerName() or nil)
+	end
 end
 
 local function Event_TRADE_CLOSED()
@@ -406,7 +409,12 @@ local function Event_TRADE_CLOSED()
 			if delta > 0 then
 				EC.SessionGold = EC.SessionGold + delta
 			end
+			if EC.Workbench and EC.Workbench.FinishTrade then
+				EC.Workbench.FinishTrade(delta)
+			end
 		end)
+	elseif EC.Workbench and EC.Workbench.FinishTrade then
+		EC.Workbench.FinishTrade(0)
 	end
 end
 
