@@ -63,7 +63,105 @@ local function setup_env(opts)
         timer_delays = {},
         trade_skills = copy_table(opts.trade_skills or {}),
         whispers = {},
+        frames = {},
     }
+
+    local function new_font_string()
+        local font_string = {
+            shown = true,
+        }
+
+        function font_string:SetPoint(...) self.point = { ... } end
+        function font_string:ClearAllPoints() self.point = nil end
+        function font_string:SetText(text) self.text = text end
+        function font_string:GetText() return self.text end
+        function font_string:SetJustifyH(value) self.justify_h = value end
+        function font_string:SetJustifyV(value) self.justify_v = value end
+        function font_string:Show() self.shown = true end
+        function font_string:Hide() self.shown = false end
+        function font_string:SetShown(value) self.shown = value and true or false end
+
+        return font_string
+    end
+
+    local function new_texture()
+        local texture = {
+            shown = true,
+        }
+
+        function texture:SetAllPoints() end
+        function texture:SetPoint(...) self.point = { ... } end
+        function texture:SetTexture(value) self.texture = value end
+        function texture:SetColorTexture(...) self.color = { ... } end
+        function texture:Show() self.shown = true end
+        function texture:Hide() self.shown = false end
+
+        return texture
+    end
+
+    local function new_frame(frame_type, name, parent, template)
+        local frame = {
+            frame_type = frame_type,
+            name = name,
+            parent = parent,
+            template = template,
+            shown = true,
+            width = 0,
+            height = 0,
+            scripts = {},
+            frame_level = parent and parent.frame_level and (parent.frame_level + 1) or 1,
+        }
+
+        function frame:SetSize(width, height)
+            self.width = width
+            self.height = height
+        end
+        function frame:SetWidth(width) self.width = width end
+        function frame:SetHeight(height) self.height = height end
+        function frame:GetWidth() return self.width or 0 end
+        function frame:GetHeight() return self.height or 0 end
+        function frame:SetPoint(...) self.point = { ... } end
+        function frame:GetPoint()
+            if self.point then
+                return table.unpack(self.point)
+            end
+            return "CENTER", _G.UIParent, "CENTER", 0, 0
+        end
+        function frame:ClearAllPoints() self.point = nil end
+        function frame:SetMovable(value) self.movable = value end
+        function frame:SetClampedToScreen(value) self.clamped = value end
+        function frame:EnableMouse(value) self.mouse_enabled = value end
+        function frame:RegisterForDrag(...) self.drag_buttons = { ... } end
+        function frame:SetFrameStrata(value) self.frame_strata = value end
+        function frame:SetFrameLevel(value) self.frame_level = value end
+        function frame:GetFrameLevel() return self.frame_level or 1 end
+        function frame:SetToplevel(value) self.toplevel = value end
+        function frame:SetBackdrop(value) self.backdrop = value end
+        function frame:SetBackdropColor(...) self.backdrop_color = { ... } end
+        function frame:SetBackdropBorderColor(...) self.backdrop_border_color = { ... } end
+        function frame:SetScript(script_name, fn) self.scripts[script_name] = fn end
+        function frame:CreateFontString() return new_font_string() end
+        function frame:CreateTexture() return new_texture() end
+        function frame:SetScrollChild(child) self.scroll_child = child end
+        function frame:SetText(text) self.text = text end
+        function frame:GetText() return self.text end
+        function frame:SetChecked(value) self.checked = value and true or false end
+        function frame:GetChecked() return self.checked end
+        function frame:Show() self.shown = true end
+        function frame:Hide() self.shown = false end
+        function frame:IsShown() return self.shown end
+        function frame:SetShown(value) self.shown = value and true or false end
+        function frame:SetParent(parent_frame) self.parent = parent_frame end
+        function frame:StartMoving() self.started_moving = true end
+        function frame:StopMovingOrSizing() self.stopped_moving = true end
+        function frame:RegisterForClicks(...) self.clicks = { ... } end
+
+        state.frames[#state.frames + 1] = frame
+        if name then
+            _G[name] = frame
+        end
+        return frame
+    end
 
     _G.Enchanter_Addon = nil
     _G.EnchanterDB = copy_table(opts.db or {})
@@ -110,6 +208,10 @@ local function setup_env(opts)
     _G.GetTradeSkillRecipeLink = function(index)
         return state.trade_skills[index] and state.trade_skills[index].link or nil
     end
+    _G.CreateFrame = function(frame_type, name, parent, template)
+        return new_frame(frame_type, name, parent, template)
+    end
+    _G.UIParent = new_frame("Frame", "UIParent", nil, nil)
     _G.print = function(...)
         local parts = {}
         for i = 1, select("#", ...) do
@@ -326,6 +428,18 @@ local function test_workbench_debug_output_is_printed()
     assert_true(found, "workbench queue actions should print through debug mode")
 end
 
+local function test_workbench_frame_keeps_buttons_above_drag_header()
+    local addon = setup_env()
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_not_nil(frame, "workbench frame should be created when UI helpers exist")
+    assert_equal(frame.frame_strata, "DIALOG", "workbench should use dialog strata so it stays interactable")
+    assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
+    assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
+    assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+end
+
 local function test_workbench_auto_completes_after_trade_cast()
     local addon = setup_env({
         char_db = {
@@ -489,6 +603,7 @@ test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
+test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()

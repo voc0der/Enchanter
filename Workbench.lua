@@ -723,9 +723,10 @@ local function CreateOrderRow(parent, index)
 	row.SummaryText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.SummaryText:SetJustifyH("LEFT")
 
-	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelCloseButton")
-	row.RemoveButton:SetSize(18, 18)
-	row.RemoveButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -2)
+	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+	row.RemoveButton:SetSize(22, 18)
+	row.RemoveButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -6)
+	row.RemoveButton:SetText("X")
 	row.RemoveButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.RemoveOrder(self.OrderId)
@@ -822,7 +823,7 @@ function Workbench.CreateFrame()
 	end
 	frame:EnableMouse(true)
 	frame:RegisterForDrag("LeftButton")
-	frame:SetFrameStrata("MEDIUM")
+	frame:SetFrameStrata("DIALOG")
 	if frame.SetToplevel then
 		frame:SetToplevel(true)
 	end
@@ -833,6 +834,9 @@ function Workbench.CreateFrame()
 	frame.Header:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -8)
 	frame.Header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -8)
 	frame.Header:SetHeight(30)
+	if frame.Header.SetFrameLevel and frame.GetFrameLevel then
+		frame.Header:SetFrameLevel(frame:GetFrameLevel() + 1)
+	end
 	ApplyBackdrop(frame.Header, 0.21, 0.12, 0.07, 0.98, 0.58, 0.39, 0.18, 1)
 	frame.Header:EnableMouse(true)
 	frame.Header:RegisterForDrag("LeftButton")
@@ -847,29 +851,39 @@ function Workbench.CreateFrame()
 		SaveFramePosition(frame)
 	end)
 
-	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
-	frame.TitleText:SetText("Enchanter Workbench")
-
-	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
-	frame.QueueCountText:SetText("0 orders")
-
-	frame.CloseButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-	frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+	frame.CloseButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.CloseButton:SetSize(22, 20)
+	frame.CloseButton:SetPoint("RIGHT", frame.Header, "RIGHT", -6, 0)
+	frame.CloseButton:SetText("X")
+	if frame.CloseButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.CloseButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
 	frame.CloseButton:SetScript("OnClick", function()
 		Workbench.Hide()
 	end)
 
-	frame.LockButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	frame.LockButton:SetSize(60, 20)
-	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -8, -2)
+	frame.LockButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.LockButton:SetSize(66, 20)
+	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -6, 0)
+	if frame.LockButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
 	frame.LockButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
 		UpdateLockButtonText()
 		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
+
+	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
+	frame.TitleText:SetText("Enchanter Workbench")
+
+	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.LockButton, "LEFT", -10, 0)
+	frame.QueueCountText:SetJustifyH("LEFT")
+	frame.QueueCountText:SetText("0 orders")
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
