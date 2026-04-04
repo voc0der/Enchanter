@@ -96,12 +96,23 @@ end
 
 function EC.GetMatchedRecipeNames(recipeMap)
 	local out = {}
+	local seen = {}
 	if type(recipeMap) ~= "table" then
 		return out
 	end
 
-	for recipeName in pairs(recipeMap) do
-		out[#out + 1] = recipeName
+	for key, value in pairs(recipeMap) do
+		local recipeName
+		if type(key) == "number" then
+			recipeName = value
+		else
+			recipeName = key
+		end
+
+		if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
+			seen[recipeName] = true
+			out[#out + 1] = recipeName
+		end
 	end
 
 	table.sort(out)
@@ -119,6 +130,40 @@ function EC.DebugPrint(...)
 	end
 
 	print("Debug mode:", table.concat(parts, " "))
+end
+
+function EC.BuildRecipeWhisper(recipeNames)
+	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
+
+	for _, recipeName in ipairs(EC.GetMatchedRecipeNames(recipeNames)) do
+		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
+	end
+
+	return msg
+end
+
+function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel)
+	local msg = EC.BuildRecipeWhisper(recipeNames)
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would whisper") .. " to " .. name .. ": " .. msg)
+	else
+		SendChatMessage(msg, "WHISPER", nil, name)
+	end
+
+	return msg
+end
+
+function EC.InviteCustomer(name, sourceLabel)
+	if not name or name == "" then
+		return
+	end
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would invite") .. " " .. name)
+	else
+		InvitePlayer(name)
+	end
 end
 
 local function EnsureSavedVariables()
@@ -289,16 +334,7 @@ function EC.SendMsg(name)
 		return
 	end
 
-	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
-	for _, recipeName in ipairs(EC.GetMatchedRecipeNames(EC.LfRecipeList[name])) do
-		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
-	end
-
-	if EC.DBChar.Debug then
-		EC.DebugPrint("would whisper to " .. name .. ": " .. msg)
-	else
-		SendChatMessage(msg, "WHISPER", nil, name)
-	end
+	EC.SendRecipeWhisperTo(name, EC.LfRecipeList[name], "would whisper")
 
 	EC.LfRecipeList[name] = nil
 end
@@ -360,8 +396,8 @@ function EC.ParseMessage(msg, name)
 				EC.SendMsg(name)
 			else
 				if EC.DB.AutoInvite then
-					After(EC.DB.InviteTimeDelay, function()
-						InvitePlayer(name)
+				After(EC.DB.InviteTimeDelay, function()
+						EC.InviteCustomer(name)
 					end)
 				end
 				After(EC.DB.WhisperTimeDelay, function()

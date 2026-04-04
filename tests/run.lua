@@ -368,6 +368,39 @@ local function test_workbench_keeps_order_when_trade_has_no_completion_signal()
     assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Stays"), "the queued order should still exist")
 end
 
+local function test_workbench_manual_invite_and_whisper_actions()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Again")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Again")
+    assert_not_nil(order, "order should exist for manual resend actions")
+
+    addon.Workbench.InviteOrder(order.Id)
+    addon.Workbench.WhisperOrder(order.Id)
+
+    assert_equal(#state.invites, 2, "manual invite should bypass the anti-spam gate and send again")
+    assert_equal(state.invites[2], "Buyer-Again", "manual invite should target the queued customer")
+    assert_equal(#state.whispers, 2, "manual whisper should resend the recipe message")
+    assert_equal(state.whispers[2].target, "Buyer-Again", "manual whisper should target the queued customer")
+    assert_true(string.find(state.whispers[2].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "manual whisper should include the matched recipe links")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
@@ -377,3 +410,4 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
+test_workbench_manual_invite_and_whisper_actions()

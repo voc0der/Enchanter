@@ -42,6 +42,7 @@ Current version: `2.1.1`
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
+- Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 

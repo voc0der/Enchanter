@@ -7,6 +7,7 @@
 - Added slash toggles for the workbench via `/ec` and `/ec workbench`
 - Added best-effort `Cast` actions and a manual materials checklist for each queued order
 - Added automatic workbench completion on trade close when there is strong completion evidence such as payment, a workbench cast, or a fully checked mats list
+- Added row-level `Inv` and `Msg` workbench actions so queued customers can be manually re-invited or re-whispered from the UI
 
 ### Changed
 - Store reagent snapshots during `/ec scan` so queued orders can show aggregated mats totals

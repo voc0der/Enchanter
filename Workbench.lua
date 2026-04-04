@@ -543,6 +543,36 @@ function Workbench.RemoveOrder(orderId)
 	Workbench.Refresh()
 end
 
+function Workbench.InviteOrder(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not order then
+		return false
+	end
+
+	WorkbenchDebug("manual invite for", order.Customer)
+	if EC and EC.InviteCustomer then
+		EC.InviteCustomer(order.Customer, "[Workbench] invite")
+		return true
+	end
+
+	return false
+end
+
+function Workbench.WhisperOrder(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not order or not order.Customer or #(order.Recipes or {}) == 0 then
+		return false
+	end
+
+	WorkbenchDebug("manual whisper for", order.Customer)
+	if EC and EC.SendRecipeWhisperTo then
+		EC.SendRecipeWhisperTo(order.Customer, order.Recipes, "[Workbench] whisper")
+		return true
+	end
+
+	return false
+end
+
 function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 	local state = Workbench.EnsureState()
 	local recipeNames = CopyRecipeNames(recipeMap)
@@ -673,17 +703,17 @@ local function CreateOrderRow(parent, index)
 
 	row.NameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	row.NameText:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
-	row.NameText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.NameText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.NameText:SetJustifyH("LEFT")
 
 	row.MetaText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	row.MetaText:SetPoint("TOPLEFT", row.NameText, "BOTTOMLEFT", 0, -4)
-	row.MetaText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.MetaText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.MetaText:SetJustifyH("LEFT")
 
 	row.SummaryText = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	row.SummaryText:SetPoint("TOPLEFT", row.MetaText, "BOTTOMLEFT", 0, -4)
-	row.SummaryText:SetPoint("RIGHT", row, "RIGHT", -44, 0)
+	row.SummaryText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.SummaryText:SetJustifyH("LEFT")
 
 	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelCloseButton")
@@ -692,6 +722,26 @@ local function CreateOrderRow(parent, index)
 	row.RemoveButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.RemoveOrder(self.OrderId)
+		end
+	end)
+
+	row.InviteButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+	row.InviteButton:SetSize(42, 18)
+	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 6)
+	row.InviteButton:SetText("Inv")
+	row.InviteButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.InviteOrder(self.OrderId)
+		end
+	end)
+
+	row.WhisperButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+	row.WhisperButton:SetSize(42, 18)
+	row.WhisperButton:SetPoint("RIGHT", row.InviteButton, "LEFT", -4, 0)
+	row.WhisperButton:SetText("Msg")
+	row.WhisperButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.WhisperOrder(self.OrderId)
 		end
 	end)
 
@@ -937,6 +987,8 @@ function Workbench.Refresh()
 
 		row.OrderId = order.Id
 		row.RemoveButton.OrderId = order.Id
+		row.InviteButton.OrderId = order.Id
+		row.WhisperButton.OrderId = order.Id
 		row.NameText:SetText(order.Customer or "Unknown")
 		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 		row.SummaryText:SetText(OrderSummary(order))
