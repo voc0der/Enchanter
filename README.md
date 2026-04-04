@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.5`
+Current version: `2.1.6`
 
 ## What It Does
 
@@ -17,7 +17,7 @@ Current version: `2.1.5`
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
 - Resize the workbench to fit your screen or chat flow, with the layout saved per character
-- Auto-complete queued orders when a trade closes with strong completion evidence such as a workbench cast, full mats checklist, or payment
+- Keep queued orders visible through the full trade flow so you can verify each requested enchant before clearing the order
 
 ## Install
 

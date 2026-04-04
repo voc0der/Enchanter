@@ -1,8 +1,11 @@
-## [Unreleased]
+## [2.1.6] - 2026-04-04
 
 ### Added
 - Added a header control that switches between `Scan`, `Start`, and `Stop` based on whether the addon has recipe data and whether chat matching is paused
 - Added per-recipe verification checkboxes so you can explicitly mark each requested enchant as fully paid and finished
+- Added active-trade workbench guidance so matching recipe actions switch to `Apply` and explain the trade-slot enchant flow
+- Added a `Use Trade` action that copies mats currently offered in the trade window into the order checklist
+- Added live trade-mat detection so the workbench can compare the customer's current trade offer against the queued material list
 
 ### Changed
 - Multi-enchant orders now only show the green verified state when every requested enchant has been checked off
@@ -12,14 +15,11 @@
 
 ### Added
 - Added a header-level `Clear` action to wipe the queued orders and reset the selected detail pane when the workbench gets into a stale or noisy state
-- Added active-trade workbench guidance so matching recipe actions switch to `Apply` and explain the trade-slot enchant flow
-- Added a `Use Trade` action that copies mats currently offered in the trade window into the order checklist
 
 ### Fixed
 - Made `/ec simulate` tolerate clients that do not expose `math.randomseed` or `math.random`, falling back cleanly instead of throwing a Lua error
 - Gave refreshed queue rows an explicit width so workbench orders no longer disappear even while the queue count keeps increasing
 - Clamp stale queue scroll offsets during refresh so the list cannot stay scrolled into blank space after the queued order count changes
-- Detect mats currently offered by the customer during an active trade and surface that live progress in the workbench
 
 ## [2.1.4] - 2026-04-04
 
