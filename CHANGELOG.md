@@ -1,4 +1,4 @@
-## [Unreleased]
+## [2.1.5] - 2026-04-04
 
 ### Added
 - Added a header-level `Clear` action to wipe the queued orders and reset the selected detail pane when the workbench gets into a stale or noisy state
