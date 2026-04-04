@@ -21,6 +21,14 @@ EC.PendingInvites = {}
 local preTradeGold = nil
 local pendingInviteWindow = 10
 
+local function HasCraftRecipeApi()
+	return GetNumCrafts and GetCraftInfo and GetCraftRecipeLink
+end
+
+local function HasTradeSkillRecipeApi()
+	return GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillRecipeLink
+end
+
 local function GetAddOnMetadataCompat(addonName, field)
 	if C_AddOns and C_AddOns.GetAddOnMetadata then
 		return C_AddOns.GetAddOnMetadata(addonName, field)
@@ -49,13 +57,38 @@ local function InvitePlayer(name)
 end
 
 local function GetRecipeApi()
-	if GetNumCrafts and GetCraftInfo and GetCraftRecipeLink then
+	if HasCraftRecipeApi() then
 		return GetNumCrafts, GetCraftInfo, GetCraftRecipeLink
 	end
-	if GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillRecipeLink then
+	if HasTradeSkillRecipeApi() then
 		return GetNumTradeSkills, GetTradeSkillInfo, GetTradeSkillRecipeLink
 	end
 	return nil, nil, nil
+end
+
+local function GetRecipeSelectApi()
+	if HasCraftRecipeApi() and SelectCraft then
+		return SelectCraft
+	end
+	if HasTradeSkillRecipeApi() and SelectTradeSkill then
+		return SelectTradeSkill
+	end
+	return nil
+end
+
+local function GetRecipeEntryType(index)
+	if HasCraftRecipeApi() then
+		return select(3, GetCraftInfo(index))
+	end
+	if HasTradeSkillRecipeApi() then
+		return select(2, GetTradeSkillInfo(index))
+	end
+	return nil
+end
+
+local function IsRecipeHeader(index)
+	local entryType = GetRecipeEntryType(index)
+	return entryType == "header" or entryType == "subheader"
 end
 
 local function GetRecipeReagentApi()
@@ -372,6 +405,7 @@ end
 
 function EC.GetItems()
 	local getCount, getInfo, getLink = GetRecipeApi()
+	local selectRecipe = GetRecipeSelectApi()
 	if not getCount or not getInfo then
 		print("|cFFFF1C1CEnchanter|r could not find a supported enchanting scan API on this client.")
 		return false
@@ -385,7 +419,10 @@ function EC.GetItems()
 
 	for index = 1, getCount() or 0 do
 		local recipeName = getInfo(index)
-		if recipeName and EC.RecipeTags["enGB"][recipeName] then
+		if recipeName and not IsRecipeHeader(index) and EC.RecipeTags["enGB"][recipeName] then
+			if selectRecipe then
+				selectRecipe(index)
+			end
 			EC.DBChar.RecipeLinks[recipeName] = getLink and getLink(index) or nil
 			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index)
 			EC.DBChar.RecipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]

@@ -64,6 +64,7 @@ local function setup_env(opts)
         trade_skills = copy_table(opts.trade_skills or {}),
         whispers = {},
         frames = {},
+        selected_trade_skill = nil,
     }
 
     local function new_font_string()
@@ -228,10 +229,52 @@ local function setup_env(opts)
         return #state.trade_skills
     end
     _G.GetTradeSkillInfo = function(index)
-        return state.trade_skills[index] and state.trade_skills[index].name or nil
+        local skill = state.trade_skills[index]
+        if not skill then
+            return nil
+        end
+        return skill.name, skill.skill_type
     end
     _G.GetTradeSkillRecipeLink = function(index)
         return state.trade_skills[index] and state.trade_skills[index].link or nil
+    end
+    _G.SelectTradeSkill = function(index)
+        state.selected_trade_skill = index
+    end
+    _G.GetTradeSkillNumReagents = function(index)
+        local skill = state.trade_skills[index]
+        if not skill or not skill.reagents then
+            return 0
+        end
+        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+            return 0
+        end
+        return #skill.reagents
+    end
+    _G.GetTradeSkillReagentInfo = function(index, reagent_index)
+        local skill = state.trade_skills[index]
+        if not skill or not skill.reagents then
+            return nil
+        end
+        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+            return nil
+        end
+        local reagent = skill.reagents[reagent_index]
+        if not reagent then
+            return nil
+        end
+        return reagent.name, reagent.texture, reagent.count
+    end
+    _G.GetTradeSkillReagentItemLink = function(index, reagent_index)
+        local skill = state.trade_skills[index]
+        if not skill or not skill.reagents then
+            return nil
+        end
+        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+            return nil
+        end
+        local reagent = skill.reagents[reagent_index]
+        return reagent and reagent.link or nil
     end
     _G.CreateFrame = function(frame_type, name, parent, template)
         return new_frame(frame_type, name, parent, template)
@@ -496,6 +539,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+    assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 end
 
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
@@ -522,6 +566,31 @@ local function test_workbench_applies_elvui_skin_when_available()
     assert_true(frame.elvui_frame_skinned, "main workbench frame should use the ElvUI frame template when available")
     assert_true(frame.LockButton.elvui_button_skinned, "lock button should use the ElvUI button template when available")
     assert_true(frame.ResizeHandle.elvui_button_skinned, "resize handle should use the ElvUI button template when available")
+end
+
+local function test_scan_selects_trade_skill_before_capturing_materials()
+    local addon, state = setup_env({
+        require_trade_selection_for_reagents = true,
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                    { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local materials = EnchanterDBChar.RecipeMats["Enchant Boots - Minor Speed"]
+
+    assert_true(ok, "scan should still succeed when reagents require explicit recipe selection")
+    assert_equal(state.selected_trade_skill, 1, "scan should select each trade-skill recipe before reading reagents")
+    assert_not_nil(materials, "scan should store a mats snapshot for the selected recipe")
+    assert_equal(#materials, 2, "scan should capture reagent data after selecting the recipe")
+    assert_equal(materials[1].Name, "Soul Dust", "captured mats should include the first reagent")
 end
 
 local function test_workbench_auto_completes_after_trade_cast()
@@ -690,6 +759,7 @@ test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
+test_scan_selects_trade_skill_before_capturing_materials()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()

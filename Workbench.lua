@@ -1023,6 +1023,7 @@ function Workbench.CreateFrame()
 	frame.ListScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -32, -60)
 
 	frame.ListChild = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchQueueChild", frame.ListScroll)
+	frame.ListChild:SetPoint("TOPLEFT", frame.ListScroll, "TOPLEFT", 0, 0)
 	frame.ListChild:SetSize(400, 1)
 	frame.ListScroll:SetScrollChild(frame.ListChild)
 	frame.ListScroll.ScrollBar = frame.ListScroll.ScrollBar or _G[TOCNAME .. "WorkbenchQueueScrollScrollBar"]
