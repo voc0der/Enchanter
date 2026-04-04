@@ -79,18 +79,80 @@ local function ApplyElvUISkin(frame, frameType)
 end
 
 local function TimestampText()
-	if date then
-		return date("%H:%M")
+	local function FormatClockTime(hours, minutes)
+		hours = tonumber(hours) or 0
+		minutes = tonumber(minutes) or 0
+
+		if GetCVarBool and GetCVarBool("timeMgrUseMilitaryTime") then
+			local twentyFourHourTemplate = _G and _G.TIME_TWENTYFOURHOURS
+			if type(twentyFourHourTemplate) == "string" and twentyFourHourTemplate ~= "" then
+				local ok, formatted = pcall(string.format, twentyFourHourTemplate, hours, minutes)
+				if ok and type(formatted) == "string" and formatted ~= "" then
+					return formatted
+				end
+			end
+			return string.format("%02d:%02d", hours % 24, minutes % 60)
+		end
+
+		local isPM = hours >= 12
+		local displayHour = hours % 12
+		if displayHour == 0 then
+			displayHour = 12
+		end
+
+		local twelveHourTemplate = isPM and (_G and _G.TIME_TWELVEHOURPM) or (_G and _G.TIME_TWELVEHOURAM)
+		if type(twelveHourTemplate) == "string" and twelveHourTemplate ~= "" then
+			local ok, formatted = pcall(string.format, twelveHourTemplate, displayHour, minutes)
+			if ok and type(formatted) == "string" and formatted ~= "" then
+				return formatted
+			end
+		end
+
+		return string.format("%d:%02d %s", displayHour, minutes, isPM and "PM" or "AM")
 	end
-	if os and os.date then
-		return os.date("%H:%M")
+
+	local function GetLocalClockParts()
+		if date then
+			local ok, timeTable = pcall(date, "*t")
+			if ok and type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
+				return timeTable.hour, timeTable.min
+			end
+		end
+		if os and os.date then
+			local timeTable = os.date("*t")
+			if type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
+				return timeTable.hour, timeTable.min
+			end
+		end
+		return nil, nil
 	end
+
+	if GetCVarBool and GetCVarBool("timeMgrUseLocalTime") then
+		local localHours, localMinutes = GetLocalClockParts()
+		if localHours ~= nil and localMinutes ~= nil then
+			return FormatClockTime(localHours, localMinutes)
+		end
+	end
+
+	if GetGameTime then
+		local gameHours, gameMinutes = GetGameTime()
+		if gameHours ~= nil and gameMinutes ~= nil then
+			return FormatClockTime(gameHours, gameMinutes)
+		end
+	end
+
+	local localHours, localMinutes = GetLocalClockParts()
+	if localHours ~= nil and localMinutes ~= nil then
+		return FormatClockTime(localHours, localMinutes)
+	end
+
 	if GetTime then
 		local totalSeconds = math.floor(GetTime())
 		local minutes = math.floor(totalSeconds / 60)
 		local hours = math.floor(minutes / 60)
-		return string.format("%02d:%02d", hours % 24, minutes % 60)
+		return FormatClockTime(hours % 24, minutes % 60)
 	end
+
 	return "--:--"
 end
 

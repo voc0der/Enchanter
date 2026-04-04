@@ -14,6 +14,7 @@
 - Moved the workbench header controls onto the draggable header layer so `Unlock` and close buttons stay clickable on TBC Anniversary
 - Anchored the workbench queue scroll child so queued customers render reliably in the list instead of only appearing in the detail pane
 - Made `/ec scan` explicitly select each enchant before reading reagents so material snapshots are captured on Anniversary clients that require recipe selection
+- Changed workbench queued and updated timestamps to follow the in-game clock style instead of a fixed 24-hour format
 
 ## [2.1.1] - 2026-04-04
 

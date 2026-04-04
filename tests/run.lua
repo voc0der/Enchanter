@@ -276,6 +276,25 @@ local function setup_env(opts)
         local reagent = skill.reagents[reagent_index]
         return reagent and reagent.link or nil
     end
+    _G.GetGameTime = function()
+        if opts.game_time then
+            return opts.game_time.hour, opts.game_time.min
+        end
+        return 13, 11
+    end
+    _G.GetCVarBool = function(name)
+        if name == "timeMgrUseMilitaryTime" then
+            return opts.use_military_time and true or false
+        end
+        if name == "timeMgrUseLocalTime" then
+            return opts.use_local_time and true or false
+        end
+        return false
+    end
+    _G.TIME_TWENTYFOURHOURS = "%02d:%02d"
+    _G.TIME_TWELVEHOURAM = "%d:%02d AM"
+    _G.TIME_TWELVEHOURPM = "%d:%02d PM"
+    _G.date = opts.date_impl
     _G.CreateFrame = function(frame_type, name, parent, template)
         return new_frame(frame_type, name, parent, template)
     end
@@ -593,6 +612,54 @@ local function test_scan_selects_trade_skill_before_capturing_materials()
     assert_equal(materials[1].Name, "Soul Dust", "captured mats should include the first reagent")
 end
 
+local function test_workbench_timestamps_follow_clock_style()
+    local addon = setup_env({
+        game_time = {
+            hour = 13,
+            min = 11,
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Time", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Time")
+
+    assert_not_nil(order, "queued order should exist for timestamp checks")
+    assert_equal(order.CreatedAt, "1:11 PM", "workbench timestamps should use the in-game 12-hour clock style")
+    assert_equal(order.UpdatedAt, "1:11 PM", "updated timestamp should match the same clock style")
+end
+
+local function test_workbench_timestamps_honor_military_and_local_clock_settings()
+    local addon = setup_env({
+        use_military_time = true,
+        use_local_time = true,
+        date_impl = function(format_string)
+            if format_string == "*t" then
+                return {
+                    hour = 6,
+                    min = 5,
+                }
+            end
+            return nil
+        end,
+        game_time = {
+            hour = 22,
+            min = 44,
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Local-Time", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Local-Time")
+
+    assert_not_nil(order, "queued order should exist for local clock checks")
+    assert_equal(order.CreatedAt, "06:05", "timestamps should honor local clock and military time settings when enabled")
+end
+
 local function test_workbench_auto_completes_after_trade_cast()
     local addon = setup_env({
         char_db = {
@@ -760,6 +827,8 @@ test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
+test_workbench_timestamps_follow_clock_style()
+test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
