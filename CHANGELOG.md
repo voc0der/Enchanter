@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Added
+- Added a header control that switches between `Scan`, `Start`, and `Stop` based on whether the addon has recipe data and whether chat matching is paused
 - Added per-recipe verification checkboxes so you can explicitly mark each requested enchant as fully paid and finished
 
 ### Changed

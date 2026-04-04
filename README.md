@@ -43,6 +43,7 @@ Current version: `2.1.5`
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
+- Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - Use the header `Clear` button to wipe the current queue and reset the detail pane if you want to flush stale or finished orders quickly.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane explains the trade-slot flow.

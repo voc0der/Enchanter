@@ -1182,6 +1182,20 @@ local function UpdateLockButtonText()
 	Workbench.Frame.LockButton:SetText(state.Locked and "Unlock" or "Lock")
 end
 
+local function UpdateScanButtonText()
+	if not Workbench.Frame or not Workbench.Frame.ScanButton then
+		return
+	end
+
+	if EC and EC.NeedsRecipeScan and EC.NeedsRecipeScan() then
+		Workbench.Frame.ScanButton:SetText("Scan")
+	elseif EC and EC.IsChatScanningEnabled and EC.IsChatScanningEnabled() then
+		Workbench.Frame.ScanButton:SetText("Stop")
+	else
+		Workbench.Frame.ScanButton:SetText("Start")
+	end
+end
+
 local function CreateOrderRow(parent, index)
 	local row = CreateFrameCompat("Button", TOCNAME .. "WorkbenchOrder" .. index, parent)
 	row:SetHeight(58)
@@ -1396,13 +1410,30 @@ function Workbench.CreateFrame()
 		Workbench.ClearOrders()
 	end)
 
+	frame.ScanButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.ScanButton:SetSize(54, 20)
+	frame.ScanButton:SetPoint("RIGHT", frame.ClearButton, "LEFT", -6, 0)
+	if frame.ScanButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.ScanButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.ScanButton, "button")
+	frame.ScanButton:SetScript("OnClick", function()
+		if EC and EC.NeedsRecipeScan and EC.NeedsRecipeScan() then
+			if EC.RunRecipeScan then
+				EC.RunRecipeScan()
+			end
+		elseif EC and EC.ToggleChatScanning then
+			EC.ToggleChatScanning()
+		end
+	end)
+
 	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
 	frame.TitleText:SetText("Enchanter Workbench")
 
 	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
-	frame.QueueCountText:SetPoint("RIGHT", frame.ClearButton, "LEFT", -10, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.ScanButton, "LEFT", -10, 0)
 	frame.QueueCountText:SetJustifyH("LEFT")
 	frame.QueueCountText:SetText("0 orders")
 
@@ -1536,6 +1567,7 @@ function Workbench.CreateFrame()
 
 	ApplyFrameLayout(frame)
 	UpdateLockButtonText()
+	UpdateScanButtonText()
 	return frame
 end
 
@@ -1549,6 +1581,7 @@ function Workbench.Refresh()
 	frame.QueueCountText:SetText(string.format("%d orders", #state.Orders))
 	SetRegionShown(frame.EmptyQueueText, #state.Orders == 0)
 	UpdateLockButtonText()
+	UpdateScanButtonText()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
 		local listWidth = frame.ListScroll:GetWidth()

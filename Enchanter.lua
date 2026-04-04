@@ -694,10 +694,58 @@ function EC.ToggleSimulation()
 	return EC.StartSimulation()
 end
 
+function EC.IsChatScanningEnabled()
+	return EC.DBChar ~= nil and EC.DBChar.Stop ~= true
+end
+
+function EC.SetChatScanningEnabled(enabled)
+	if not EC.DBChar then
+		return false
+	end
+
+	enabled = enabled and true or false
+	EC.DBChar.Stop = not enabled
+
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
+
+	print(enabled and "Started..." or "Paused")
+	return enabled
+end
+
+function EC.ToggleChatScanning()
+	return EC.SetChatScanningEnabled(not EC.IsChatScanningEnabled())
+end
+
+function EC.NeedsRecipeScan()
+	if not EC.DBChar then
+		return true
+	end
+
+	local recipeList = EC.DBChar.RecipeList or {}
+	local recipeMats = EC.DBChar.RecipeMats or {}
+	local recipeCount = 0
+
+	for recipeName in pairs(recipeList) do
+		recipeCount = recipeCount + 1
+		if recipeMats[recipeName] == nil then
+			return true
+		end
+	end
+
+	return recipeCount == 0
+end
+
 local function DoScan()
 	if EC.GetItems() then
 		print("Scan Completed")
 	end
+end
+
+function EC.RunRecipeScan()
+	DoScan()
+	return not EC.NeedsRecipeScan()
 end
 
 function EC.Init()
@@ -710,15 +758,13 @@ function EC.Init()
 			end
 		end},
 		{"scan", "MUST BE RAN PRIOR TO /ec start. Scans and stores your enchanting recipes to be used when filtering requests. Rerun after learning new recipes.", function()
-			DoScan()
+			EC.RunRecipeScan()
 		end},
 		{{"stop", "pause"}, "Pauses addon scanning", function()
-			EC.DBChar.Stop = true
-			print("Paused")
+			EC.SetChatScanningEnabled(false)
 		end},
 		{"start", "Starts chat scanning", function()
-			EC.DBChar.Stop = false
-			print("Started...")
+			EC.SetChatScanningEnabled(true)
 		end},
 		{{"default", "reset"}, "Resets addon settings to defaults", function()
 			EC.Default()

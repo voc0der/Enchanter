@@ -610,8 +610,62 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
     assert_equal(frame.ClearButton.parent, frame.Header, "clear button should also live on the header so it stays clickable")
+    assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
+end
+
+local function test_workbench_header_button_scans_when_recipe_data_is_missing()
+    local addon, state = setup_env({
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                    { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+                },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_equal(frame.ScanButton.text, "Scan", "header button should prompt for a scan when recipe data is missing")
+
+    frame.ScanButton.scripts["OnClick"]()
+
+    assert_equal(state.last_cast, "Enchanting", "scan header button should perform a recipe scan")
+    assert_true(addon.NeedsRecipeScan() == false, "successful scan should satisfy the missing-data check")
+    assert_equal(frame.ScanButton.text, "Stop", "after scanning, the header button should fall back to the active scan-state toggle")
+end
+
+local function test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
+    local addon = setup_env({
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_equal(frame.ScanButton.text, "Stop", "header button should show Stop when chat matching is active and scan data exists")
+
+    frame.ScanButton.scripts["OnClick"]()
+    assert_true(addon.DBChar.Stop, "header stop button should pause chat matching")
+    assert_equal(frame.ScanButton.text, "Start", "paused chat matching should flip the header button to Start")
+
+    frame.ScanButton.scripts["OnClick"]()
+    assert_true(addon.DBChar.Stop == false, "header start button should resume chat matching")
+    assert_equal(frame.ScanButton.text, "Stop", "resumed chat matching should flip the header button back to Stop")
 end
 
 local function test_workbench_refresh_survives_without_fontstring_setshown()
@@ -1202,6 +1256,8 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_header_button_scans_when_recipe_data_is_missing()
+test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
