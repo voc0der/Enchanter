@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+- Made workbench refresh tolerate clients that do not expose `SetShown` on font strings, which could otherwise leave the queue count updated while the visible order rows never redraw
+- Reformat legacy stored workbench timestamps when loading saved orders so older `13:11` entries no longer stay burned in after switching to the in-game 12-hour clock style
+
 ## [2.1.3] - 2026-04-04
 
 ### Fixed

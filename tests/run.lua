@@ -80,7 +80,9 @@ local function setup_env(opts)
         function font_string:SetJustifyV(value) self.justify_v = value end
         function font_string:Show() self.shown = true end
         function font_string:Hide() self.shown = false end
-        function font_string:SetShown(value) self.shown = value and true or false end
+        if not opts.omit_fontstring_setshown then
+            function font_string:SetShown(value) self.shown = value and true or false end
+        end
 
         return font_string
     end
@@ -561,6 +563,26 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 end
 
+local function test_workbench_refresh_survives_without_fontstring_setshown()
+    local addon = setup_env({
+        omit_fontstring_setshown = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-NoSetShown")
+
+    assert_not_nil(frame.OrderRows[1], "queue row should still be created when font strings do not expose SetShown")
+    assert_true(frame.OrderRows[1].shown, "queue row should still be shown when refresh uses the compatibility visibility helper")
+    assert_equal(frame.OrderRows[1].NameText.text, "Buyer-NoSetShown", "visible queue row should match the newly queued customer")
+end
+
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
     local addon = setup_env()
 
@@ -658,6 +680,37 @@ local function test_workbench_timestamps_honor_military_and_local_clock_settings
 
     assert_not_nil(order, "queued order should exist for local clock checks")
     assert_equal(order.CreatedAt, "06:05", "timestamps should honor local clock and military time settings when enabled")
+end
+
+local function test_workbench_legacy_timestamps_are_reformatted_on_load()
+    local addon = setup_env({
+        char_db = {
+            Workbench = {
+                Orders = {
+                    {
+                        Id = 7,
+                        Customer = "Buyer-Legacy-Time",
+                        Recipes = { "Enchant Weapon - Mongoose" },
+                        Message = "LF mongoose pst",
+                        CreatedAt = "13:11",
+                        UpdatedAt = "13:11",
+                    },
+                },
+                SelectedOrderId = 7,
+                NextOrderId = 8,
+                Locked = true,
+                Visible = false,
+                Position = { Point = "CENTER", RelativePoint = "CENTER", X = 0, Y = 0 },
+                Size = { Width = 468, Height = 520 },
+            },
+        },
+    })
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Legacy-Time")
+
+    assert_not_nil(order, "legacy queued order should still load")
+    assert_equal(order.CreatedAt, "1:11 PM", "legacy 24-hour timestamps should be reformatted to the current clock style on load")
+    assert_equal(order.UpdatedAt, "1:11 PM", "legacy updated timestamps should also be reformatted on load")
 end
 
 local function test_workbench_auto_completes_after_trade_cast()
@@ -824,11 +877,13 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_refresh_survives_without_fontstring_setshown()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
+test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
