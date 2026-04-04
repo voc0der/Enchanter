@@ -61,6 +61,7 @@ local function setup_env(opts)
         prints = {},
         slash = nil,
         timer_delays = {},
+        timer_callbacks = {},
         trade_skills = copy_table(opts.trade_skills or {}),
         whispers = {},
         frames = {},
@@ -199,7 +200,10 @@ local function setup_env(opts)
     _G.C_Timer = {
         After = function(delay, callback)
             state.timer_delays[#state.timer_delays + 1] = delay
-            callback()
+            state.timer_callbacks[#state.timer_callbacks + 1] = callback
+            if not opts.defer_timers then
+                callback()
+            end
         end,
     }
     _G.GetAddOnMetadata = function(_, field)
@@ -370,6 +374,12 @@ local function setup_env(opts)
     addon.Init()
 
     return addon, state
+end
+
+local function run_timer(state, index)
+    local callback = state.timer_callbacks[index]
+    assert_not_nil(callback, "timer callback should exist")
+    callback()
 end
 
 local function test_scan_filters_unknown_and_nether_recipes()
@@ -869,6 +879,88 @@ local function test_trade_with_unmatched_partner_does_not_complete_selected_orde
     assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Queued"), "the queued order should remain after an unrelated trade")
 end
 
+local function test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
+    local addon, state = setup_env({
+        defer_timers = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+
+    local started = addon.StartSimulation()
+    local orders = addon.Workbench.EnsureState().Orders
+    local order = orders[1]
+
+    assert_true(started, "simulation should start when scanned recipes exist")
+    assert_true(addon.Simulation.Running, "simulation should stay marked as running")
+    assert_equal(#orders, 1, "starting simulation should queue one fake order immediately")
+    assert_true(string.find(order.Customer, "^Sim") ~= nil, "simulated customers should be clearly marked as fake")
+    assert_equal(state.timer_delays[3], 180, "simulation should schedule its next fake order three minutes later")
+    run_timer(state, 1)
+    run_timer(state, 2)
+    assert_equal(#state.invites, 0, "simulated customers should not receive real invites even when their callbacks fire")
+    assert_equal(#state.whispers, 0, "simulated customers should not receive real whispers even when their callbacks fire")
+end
+
+local function test_simulate_stop_invalidates_pending_tick()
+    local addon, state = setup_env({
+        defer_timers = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.StartSimulation()
+    addon.StopSimulation()
+    run_timer(state, 3)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "stopped simulation should ignore the already-scheduled tick")
+    assert_true(not addon.Simulation.Running, "simulation should stay stopped after toggling it off")
+end
+
+local function test_simulate_now_queues_extra_fake_order_without_starting_loop()
+    local addon, state = setup_env({
+        defer_timers = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+
+    local queued = addon.GenerateSimulatedOrder("manual")
+
+    assert_true(queued, "manual simulate should queue one fake order when scanned recipes exist")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "manual simulate should add a fake order to the workbench")
+    assert_nil(state.timer_delays[3], "manual simulate should not start the repeating three-minute timer by itself")
+end
+
+local function test_slash_commands_expose_simulate_entry()
+    local _, state = setup_env()
+    local found = false
+
+    for _, entry in ipairs(state.slash.entries or {}) do
+        if entry[1] == "simulate" then
+            found = true
+            break
+        end
+    end
+
+    assert_true(found, "slash command table should expose /ec simulate")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
@@ -890,3 +982,7 @@ test_workbench_manual_invite_and_whisper_actions()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
+test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
+test_simulate_stop_invalidates_pending_tick()
+test_simulate_now_queues_extra_fake_order_without_starting_loop()
+test_slash_commands_expose_simulate_entry()

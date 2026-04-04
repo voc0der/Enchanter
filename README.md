@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.3`
+Current version: `2.1.4`
 
 ## What It Does
 
@@ -34,6 +34,7 @@ Current version: `2.1.3`
 - `/ec stop` or `/ec pause`: Stop matching chat messages.
 - `/ec config`: Open the addon settings.
 - `/ec debug`: Toggle debug output.
+- `/ec simulate`: Toggle fake workbench orders for testing. It queues one right away, then one every 3 minutes.
 - `/ec summary`: Print session earnings from completed trades.
 - `/ec about`: Print usage help.
 
@@ -45,6 +46,7 @@ Current version: `2.1.3`
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
+- Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
 - When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.

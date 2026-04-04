@@ -17,9 +17,40 @@ EC.BlacklistCompiled = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
 EC.PendingInvites = {}
+EC.SimulatedPlayers = {}
+EC.Simulation = EC.Simulation or {}
 
 local preTradeGold = nil
 local pendingInviteWindow = 10
+local simulationInterval = 180
+local simulationSeeded = false
+local simulationNamePrefixes = {
+	"SimAldren",
+	"SimBrenna",
+	"SimCorin",
+	"SimDelia",
+	"SimEdrin",
+	"SimFiora",
+	"SimGarrik",
+	"SimHelia",
+	"SimIvor",
+	"SimJessa",
+}
+local simulationRealms = {
+	"Workbench",
+	"Tradesong",
+	"Spellbarter",
+	"Tipjar",
+	"Enchantdesk",
+	"Queueforge",
+}
+local simulationMessageTemplates = {
+	"%s %s ench in tb tipping well!",
+	"%s %s pst",
+	"%s %s have mats already",
+	"%s %s in shatt can come to you",
+	"%s %s if you're around",
+}
 
 local function HasCraftRecipeApi()
 	return GetNumCrafts and GetCraftInfo and GetCraftRecipeLink
@@ -130,6 +161,13 @@ local function NormalizePhrase(value)
 	return value:lower():gsub("[%W_]+", "")
 end
 
+local function TrimText(value)
+	if not value then
+		return ""
+	end
+	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
 local function Now()
 	if GetTime then
 		return GetTime()
@@ -144,6 +182,111 @@ local function NormalizeNameKey(name)
 	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
 	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
 	return cleaned:lower()
+end
+
+local function IsSimulatedCustomer(name)
+	local key = NormalizeNameKey(name)
+	return key ~= "" and EC.SimulatedPlayers[key] == true
+end
+
+local function MarkSimulatedCustomer(name)
+	local key = NormalizeNameKey(name)
+	if key ~= "" then
+		EC.SimulatedPlayers[key] = true
+	end
+end
+
+local function SeedSimulationRandom()
+	if simulationSeeded then
+		return
+	end
+
+	local seed = math.floor((Now() or 0) * 1000) + 1
+	if date then
+		local ok, timeStamp = pcall(date, "%Y%m%d%H%M%S")
+		if ok and tonumber(timeStamp) then
+			seed = seed + tonumber(timeStamp)
+		end
+	end
+
+	math.randomseed(seed)
+	math.random()
+	math.random()
+	math.random()
+	simulationSeeded = true
+end
+
+local function PickRandom(list)
+	if type(list) ~= "table" or #list == 0 then
+		return nil
+	end
+	SeedSimulationRandom()
+	return list[math.random(#list)]
+end
+
+local function GetSimulationRecipePool()
+	local pool = {}
+
+	for recipeName, tags in pairs(EC.DBChar and EC.DBChar.RecipeList or {}) do
+		local usableTags = {}
+		if type(tags) == "table" then
+			for _, tag in ipairs(tags) do
+				tag = TrimText(tag)
+				if tag ~= "" then
+					usableTags[#usableTags + 1] = tag
+				end
+			end
+		end
+
+		if type(recipeName) == "string" and recipeName ~= "" and #usableTags > 0 then
+			pool[#pool + 1] = {
+				Recipe = recipeName,
+				Tags = usableTags,
+			}
+		end
+	end
+
+	table.sort(pool, function(left, right)
+		return left.Recipe < right.Recipe
+	end)
+
+	return pool
+end
+
+local function BuildSimulatedCustomerName(simulationState)
+	local generation = (simulationState.GeneratedCount or 0) + 1
+	local prefixIndex = ((math.random(#simulationNamePrefixes) + generation - 2) % #simulationNamePrefixes) + 1
+	local realmIndex = ((math.random(#simulationRealms) + generation - 2) % #simulationRealms) + 1
+	return simulationNamePrefixes[prefixIndex] .. "-" .. simulationRealms[realmIndex]
+end
+
+local function BuildSimulatedMessage()
+	local recipePool = GetSimulationRecipePool()
+	if #recipePool == 0 then
+		return nil, nil
+	end
+
+	local prefixPool = (type(EC.PrefixTags) == "table" and #EC.PrefixTags > 0) and EC.PrefixTags or { "lf", "need" }
+	local selectedRecipe = PickRandom(recipePool)
+	local selectedTag = selectedRecipe and PickRandom(selectedRecipe.Tags) or nil
+	local selectedPrefix = PickRandom(prefixPool) or "lf"
+	local template = PickRandom(simulationMessageTemplates) or "%s %s pst"
+
+	if not selectedRecipe or not selectedTag or selectedTag == "" then
+		return nil, nil
+	end
+
+	return BuildSimulatedCustomerName(EC.Simulation), string.format(template, selectedPrefix, selectedTag)
+end
+
+local function ScheduleSimulationTick(token)
+	After(simulationInterval, function()
+		if not EC.Simulation or not EC.Simulation.Running or EC.Simulation.Token ~= token then
+			return
+		end
+		EC.GenerateSimulatedOrder("scheduled")
+		ScheduleSimulationTick(token)
+	end)
 end
 
 local function BuildGlobalStringPattern(template)
@@ -263,7 +406,9 @@ end
 function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel)
 	local msg = EC.BuildRecipeWhisper(recipeNames)
 
-	if EC.DBChar.Debug then
+	if IsSimulatedCustomer(name) then
+		EC.DebugPrint((sourceLabel or "simulated whisper") .. " to " .. name .. ": " .. msg)
+	elseif EC.DBChar.Debug then
 		EC.DebugPrint((sourceLabel or "would whisper") .. " to " .. name .. ": " .. msg)
 	else
 		SendChatMessage(msg, "WHISPER", nil, name)
@@ -275,7 +420,9 @@ end
 function EC.SendGroupedFollowUp(name, sourceLabel)
 	local msg = EC.DB.GroupedFollowUpMsg or EC.DefaultGroupedFollowUpMsg
 
-	if EC.DBChar.Debug then
+	if IsSimulatedCustomer(name) then
+		EC.DebugPrint((sourceLabel or "simulated grouped-followup") .. " to " .. name .. ": " .. msg)
+	elseif EC.DBChar.Debug then
 		EC.DebugPrint((sourceLabel or "would grouped-followup") .. " to " .. name .. ": " .. msg)
 	else
 		SendChatMessage(msg, "WHISPER", nil, name)
@@ -286,6 +433,11 @@ end
 
 function EC.InviteCustomer(name, sourceLabel)
 	if not name or name == "" then
+		return
+	end
+
+	if IsSimulatedCustomer(name) then
+		EC.DebugPrint((sourceLabel or "simulated invite") .. " " .. name)
 		return
 	end
 
@@ -442,6 +594,73 @@ function EC.GetItems()
 	return true
 end
 
+function EC.GenerateSimulatedOrder(sourceLabel)
+	local customerName, message = BuildSimulatedMessage()
+	if not customerName or not message then
+		print("|cFFFF1C1CEnchanter|r Run /ec scan before using /ec simulate so fake orders can target your known enchants.")
+		return false
+	end
+
+	MarkSimulatedCustomer(customerName)
+	EC.Simulation.GeneratedCount = (EC.Simulation.GeneratedCount or 0) + 1
+
+	local wasStopped = EC.DBChar and EC.DBChar.Stop
+	if EC.DBChar then
+		EC.DBChar.Stop = false
+	end
+	EC.ParseMessage(message, customerName)
+	if EC.DBChar then
+		EC.DBChar.Stop = wasStopped
+	end
+
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
+
+	print("|cFFFF1C1CEnchanter|r Simulated order from " .. customerName .. ": " .. message)
+	EC.DebugPrint("[Simulate] queued", customerName, "via", sourceLabel or "manual")
+	return true
+end
+
+function EC.StartSimulation()
+	if #GetSimulationRecipePool() == 0 then
+		print("|cFFFF1C1CEnchanter|r Run /ec scan before starting /ec simulate so fake orders can target your known enchants.")
+		return false
+	end
+
+	if EC.Simulation.Running then
+		print("|cFFFF1C1CEnchanter|r Workbench simulation is already running.")
+		return true
+	end
+
+	EC.Simulation.Running = true
+	EC.Simulation.Token = (EC.Simulation.Token or 0) + 1
+
+	print("|cFFFF1C1CEnchanter|r Workbench simulation started. One fake order will be generated every 3 minutes.")
+	EC.GenerateSimulatedOrder("start")
+	ScheduleSimulationTick(EC.Simulation.Token)
+	return true
+end
+
+function EC.StopSimulation()
+	if not EC.Simulation.Running then
+		print("|cFFFF1C1CEnchanter|r Workbench simulation is already stopped.")
+		return false
+	end
+
+	EC.Simulation.Running = false
+	EC.Simulation.Token = (EC.Simulation.Token or 0) + 1
+	print("|cFFFF1C1CEnchanter|r Workbench simulation stopped.")
+	return true
+end
+
+function EC.ToggleSimulation()
+	if EC.Simulation.Running then
+		return EC.StopSimulation()
+	end
+	return EC.StartSimulation()
+end
+
 local function DoScan()
 	if EC.GetItems() then
 		print("Scan Completed")
@@ -485,6 +704,17 @@ function EC.Init()
 				EC.Workbench.Toggle()
 			end
 		end},
+		{"simulate", "Toggle fake workbench orders for testing. Starts one now, then queues another every 3 minutes.", {
+			{"", "Starts or stops fake workbench orders.", function()
+				EC.ToggleSimulation()
+			end},
+			{{"now", "once"}, "Queues one fake order immediately without changing the running timer.", function()
+				EC.GenerateSimulatedOrder("manual")
+			end},
+			{"stop", "Stops fake workbench orders.", function()
+				EC.StopSimulation()
+			end},
+		}},
 		{"debug", "Enables/Disables debug messages", function()
 			EC.DBChar.Debug = not EC.DBChar.Debug
 			print("Debug mode is now " .. (EC.DBChar.Debug and "on" or "off"))
@@ -602,7 +832,9 @@ function EC.ParseMessage(msg, name)
 			if NormalizePhrase(tag) == normalizedMessage then
 				EC.PlayerList[name] = 1
 				local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
-				if EC.DBChar.Debug then
+				if IsSimulatedCustomer(name) then
+					EC.DebugPrint("suppressed generic whisper to " .. name .. ": " .. genericReply)
+				elseif EC.DBChar.Debug then
 					EC.DebugPrint("would whisper to " .. name .. ": " .. genericReply)
 				else
 					After(EC.DB.WhisperTimeDelay, function()
