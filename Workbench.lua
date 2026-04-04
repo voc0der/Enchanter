@@ -78,55 +78,55 @@ local function ApplyElvUISkin(frame, frameType)
 	frame._ECElvUISkinned[frameType] = true
 end
 
-local function TimestampText()
-	local function FormatClockTime(hours, minutes)
-		hours = tonumber(hours) or 0
-		minutes = tonumber(minutes) or 0
+local function FormatClockTime(hours, minutes)
+	hours = tonumber(hours) or 0
+	minutes = tonumber(minutes) or 0
 
-		if GetCVarBool and GetCVarBool("timeMgrUseMilitaryTime") then
-			local twentyFourHourTemplate = _G and _G.TIME_TWENTYFOURHOURS
-			if type(twentyFourHourTemplate) == "string" and twentyFourHourTemplate ~= "" then
-				local ok, formatted = pcall(string.format, twentyFourHourTemplate, hours, minutes)
-				if ok and type(formatted) == "string" and formatted ~= "" then
-					return formatted
-				end
-			end
-			return string.format("%02d:%02d", hours % 24, minutes % 60)
-		end
-
-		local isPM = hours >= 12
-		local displayHour = hours % 12
-		if displayHour == 0 then
-			displayHour = 12
-		end
-
-		local twelveHourTemplate = isPM and (_G and _G.TIME_TWELVEHOURPM) or (_G and _G.TIME_TWELVEHOURAM)
-		if type(twelveHourTemplate) == "string" and twelveHourTemplate ~= "" then
-			local ok, formatted = pcall(string.format, twelveHourTemplate, displayHour, minutes)
+	if GetCVarBool and GetCVarBool("timeMgrUseMilitaryTime") then
+		local twentyFourHourTemplate = _G and _G.TIME_TWENTYFOURHOURS
+		if type(twentyFourHourTemplate) == "string" and twentyFourHourTemplate ~= "" then
+			local ok, formatted = pcall(string.format, twentyFourHourTemplate, hours, minutes)
 			if ok and type(formatted) == "string" and formatted ~= "" then
 				return formatted
 			end
 		end
-
-		return string.format("%d:%02d %s", displayHour, minutes, isPM and "PM" or "AM")
+		return string.format("%02d:%02d", hours % 24, minutes % 60)
 	end
 
-	local function GetLocalClockParts()
-		if date then
-			local ok, timeTable = pcall(date, "*t")
-			if ok and type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
-				return timeTable.hour, timeTable.min
-			end
-		end
-		if os and os.date then
-			local timeTable = os.date("*t")
-			if type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
-				return timeTable.hour, timeTable.min
-			end
-		end
-		return nil, nil
+	local isPM = hours >= 12
+	local displayHour = hours % 12
+	if displayHour == 0 then
+		displayHour = 12
 	end
 
+	local twelveHourTemplate = isPM and (_G and _G.TIME_TWELVEHOURPM) or (_G and _G.TIME_TWELVEHOURAM)
+	if type(twelveHourTemplate) == "string" and twelveHourTemplate ~= "" then
+		local ok, formatted = pcall(string.format, twelveHourTemplate, displayHour, minutes)
+		if ok and type(formatted) == "string" and formatted ~= "" then
+			return formatted
+		end
+	end
+
+	return string.format("%d:%02d %s", displayHour, minutes, isPM and "PM" or "AM")
+end
+
+local function GetLocalClockParts()
+	if date then
+		local ok, timeTable = pcall(date, "*t")
+		if ok and type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
+			return timeTable.hour, timeTable.min
+		end
+	end
+	if os and os.date then
+		local timeTable = os.date("*t")
+		if type(timeTable) == "table" and timeTable.hour ~= nil and timeTable.min ~= nil then
+			return timeTable.hour, timeTable.min
+		end
+	end
+	return nil, nil
+end
+
+local function TimestampText()
 	if GetCVarBool and GetCVarBool("timeMgrUseLocalTime") then
 		local localHours, localMinutes = GetLocalClockParts()
 		if localHours ~= nil and localMinutes ~= nil then
@@ -154,6 +154,39 @@ local function TimestampText()
 	end
 
 	return "--:--"
+end
+
+local function NormalizeTimestampText(value)
+	if type(value) ~= "string" or value == "" then
+		return TimestampText()
+	end
+
+	local hours, minutes = value:match("^(%d%d?):(%d%d)$")
+	if hours and minutes then
+		hours = tonumber(hours)
+		minutes = tonumber(minutes)
+		if hours and minutes and hours >= 0 and hours <= 23 and minutes >= 0 and minutes <= 59 then
+			return FormatClockTime(hours, minutes)
+		end
+	end
+
+	return value
+end
+
+local function SetRegionShown(region, shouldShow)
+	if not region then
+		return
+	end
+
+	if region.SetShown then
+		region:SetShown(shouldShow and true or false)
+	elseif shouldShow then
+		if region.Show then
+			region:Show()
+		end
+	elseif region.Hide then
+		region:Hide()
+	end
 end
 
 local function TrimText(value)
@@ -222,8 +255,8 @@ local function EnsureOrderFields(order)
 	order.Recipes = order.Recipes or {}
 	order.MaterialState = order.MaterialState or {}
 	order.Message = order.Message or ""
-	order.CreatedAt = order.CreatedAt or TimestampText()
-	order.UpdatedAt = order.UpdatedAt or order.CreatedAt
+	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
+	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
 end
 
@@ -1200,7 +1233,7 @@ function Workbench.Refresh()
 	end
 
 	frame.QueueCountText:SetText(string.format("%d orders", #state.Orders))
-	frame.EmptyQueueText:SetShown(#state.Orders == 0)
+	SetRegionShown(frame.EmptyQueueText, #state.Orders == 0)
 	UpdateLockButtonText()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then

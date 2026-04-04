@@ -1,4 +1,13 @@
-## [Unreleased]
+## [2.1.4] - 2026-04-04
+
+### Added
+- Added `/ec simulate` and `/e simulate` so you can queue randomized fake customers for workbench testing, with one fake order generated immediately and another every 3 minutes while the simulation is running
+- Added simulation safeguards so fake customers never send real invites, recipe whispers, or grouped follow-up whispers
+
+### Fixed
+- Made workbench refresh tolerate clients that do not expose `SetShown` on font strings, which could otherwise leave the queue count updated while the visible order rows never redraw
+- Reformat legacy stored workbench timestamps when loading saved orders so older `13:11` entries no longer stay burned in after switching to the in-game 12-hour clock style
+- Expanded regression coverage for the workbench hotfixes and the new simulation flow
 
 ## [2.1.3] - 2026-04-04
 
