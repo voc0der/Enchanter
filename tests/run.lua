@@ -435,6 +435,53 @@ local function test_grouped_follow_up_whispers_after_invite_failure()
     assert_equal(state.timer_delays[3], 4, "grouped follow-up should honor its own delay")
 end
 
+local function test_grouped_follow_up_is_ignored_when_disabled()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = false,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-NoFollowUp")
+
+    local handled = addon.HandleInviteFailureMessage("Buyer-NoFollowUp is already in a group.")
+
+    assert_true(not handled, "grouped follow-up should ignore invite failures when the option is disabled")
+    assert_equal(#state.whispers, 1, "no follow-up whisper should be added when disabled")
+end
+
+local function test_trade_with_unmatched_partner_does_not_complete_selected_order()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Queued")
+
+    addon.Workbench.BeginTrade("Completely-Other")
+    addon.Workbench.NoteRecipeCast("Enchant Weapon - Mongoose")
+    addon.Workbench.FinishTrade(5000)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "an unrelated trade should not complete the selected queued order")
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Queued"), "the queued order should remain after an unrelated trade")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
@@ -446,3 +493,5 @@ test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
 test_grouped_follow_up_whispers_after_invite_failure()
+test_grouped_follow_up_is_ignored_when_disabled()
+test_trade_with_unmatched_partner_does_not_complete_selected_order()

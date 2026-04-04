@@ -392,12 +392,8 @@ function Workbench.BeginTrade(customerName)
 	local runtime = EnsureRuntime()
 	local order = Workbench.GetOrderByCustomer(customerName)
 
-	if not order then
-		order = Workbench.GetSelectedOrder()
-	end
-
 	runtime.ActiveTrade = {
-		CustomerName = customerName or (order and order.Customer) or nil,
+		CustomerName = customerName or nil,
 		OrderId = order and order.Id or nil,
 		CastedRecipeName = nil,
 	}
@@ -415,24 +411,35 @@ function Workbench.NoteRecipeCast(recipeName)
 	local runtime = EnsureRuntime()
 	local activeTrade = runtime.ActiveTrade
 	local targetOrder = activeTrade and Workbench.GetOrderById(activeTrade.OrderId) or nil
+	local activeTradeHasNamedPartner = activeTrade and activeTrade.CustomerName and activeTrade.CustomerName ~= ""
 
 	if targetOrder and not OrderHasRecipe(targetOrder, recipeName) then
 		targetOrder = nil
 	end
 
-	if not targetOrder then
+	if not targetOrder and (not activeTrade or not activeTradeHasNamedPartner) then
 		local selectedOrder = Workbench.GetSelectedOrder()
 		if selectedOrder and OrderHasRecipe(selectedOrder, recipeName) then
 			targetOrder = selectedOrder
 		end
 	end
 
-	if not targetOrder then
+	if not targetOrder and (not activeTrade or not activeTradeHasNamedPartner) then
+		local matchingOrder
+		local matchCount = 0
 		for _, order in ipairs(Workbench.EnsureState().Orders) do
 			if OrderHasRecipe(order, recipeName) then
-				targetOrder = order
-				break
+				matchCount = matchCount + 1
+				matchingOrder = order
+				if matchCount > 1 then
+					break
+				end
 			end
+		end
+		if matchCount == 1 then
+			targetOrder = matchingOrder
+		elseif matchCount > 1 then
+			WorkbenchDebug("cast for", recipeName, "was ambiguous across multiple queued orders")
 		end
 	end
 

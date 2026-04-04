@@ -14,6 +14,10 @@
 - Store reagent snapshots during `/ec scan` so queued orders can show aggregated mats totals
 - Cleaned up the XML load order so the main addon file is not loaded twice
 
+### Fixed
+- Made workbench trade completion ignore unrelated trade partners instead of falling back to the currently selected order
+- Expanded regression coverage around grouped follow-up handling and conservative trade/order matching
+
 ## [2.1.0] - 2026-04-04
 
 ### Changed
