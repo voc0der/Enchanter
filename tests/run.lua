@@ -765,7 +765,7 @@ local function test_workbench_legacy_timestamps_are_reformatted_on_load()
     assert_equal(order.UpdatedAt, "1:11 PM", "legacy updated timestamps should also be reformatted on load")
 end
 
-local function test_workbench_auto_completes_after_trade_cast()
+local function test_workbench_trade_cast_keeps_order_until_verified()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -784,8 +784,8 @@ local function test_workbench_auto_completes_after_trade_cast()
     addon.Workbench.NoteRecipeCast("Enchant Weapon - Mongoose")
     addon.Workbench.FinishTrade(0)
 
-    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "cast evidence during trade should auto-complete the order")
-    assert_nil(addon.PlayerList["Buyer-Finish"], "auto-completion should clear the anti-spam gate")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "a cast alone should not complete the whole order")
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Finish"), "cast-only orders should stay queued until manually verified")
 end
 
 local function test_workbench_keeps_order_when_trade_has_no_completion_signal()
@@ -957,6 +957,55 @@ local function test_trade_with_unmatched_partner_does_not_complete_selected_orde
 
     assert_equal(#addon.Workbench.EnsureState().Orders, 1, "an unrelated trade should not complete the selected queued order")
     assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Queued"), "the queued order should remain after an unrelated trade")
+end
+
+local function test_order_only_turns_verified_when_all_recipes_are_checked()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose and minor speed pst", "Buyer-Multi")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+
+    assert_true(string.find(frame.OrderRows[1].MetaText.text or "", "1/2 verified") ~= nil, "one verified recipe should not mark a multi-enchant order as fully complete")
+
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Boots - Minor Speed", true)
+
+    assert_true(string.find(frame.OrderRows[1].MetaText.text or "", "Verified") ~= nil, "the queue should only show the green verified state after every requested enchant is checked")
+    assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should also show the full-order verified state once all recipes are checked")
+end
+
+local function test_recipe_verify_checkbox_updates_order_state()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Check")
+
+    frame.Detail.RecipeLines[1].VerifyCheck:SetChecked(true)
+    frame.Detail.RecipeLines[1].VerifyCheck.scripts["OnClick"](frame.Detail.RecipeLines[1].VerifyCheck)
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
+
+    assert_equal(verified, 1, "recipe verify checkbox should persist the verified recipe count")
+    assert_equal(total, 1, "recipe verify progress should use the order recipe total")
 end
 
 local function test_trade_offer_marks_live_material_progress()
@@ -1160,7 +1209,7 @@ test_scan_selects_trade_skill_before_capturing_materials()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
-test_workbench_auto_completes_after_trade_cast()
+test_workbench_trade_cast_keeps_order_until_verified()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
 test_workbench_clear_button_empties_queue_and_resets_detail()
@@ -1168,6 +1217,8 @@ test_workbench_refresh_clamps_stale_scroll_offset()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
+test_order_only_turns_verified_when_all_recipes_are_checked()
+test_recipe_verify_checkbox_updates_order_state()
 test_trade_offer_marks_live_material_progress()
 test_use_trade_materials_copies_live_offer_into_checklist()
 test_active_trade_updates_recipe_button_to_apply()

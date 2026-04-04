@@ -47,11 +47,13 @@ Current version: `2.1.5`
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane explains the trade-slot flow.
 - Click `Apply`, then click the customer's item in the trade window to finish the enchant manually without over-automating it.
+- Check the green checkbox next to each requested enchant once you have verified that specific enchant is fully paid and done.
+- Multi-enchant orders only turn green once every requested enchant has been checked off.
 - The workbench now watches the customer's current trade offer for matching mats and can show live progress against the queued material list.
 - Click `Use Trade` to copy the mats currently offered in the trade window into the persistent checklist.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
-- When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
+- Closing the trade no longer retires the order by itself; the queue stays visible until you verify the whole order and clear it manually.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.

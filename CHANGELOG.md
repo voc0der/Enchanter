@@ -1,3 +1,12 @@
+## [Unreleased]
+
+### Added
+- Added per-recipe verification checkboxes so you can explicitly mark each requested enchant as fully paid and finished
+
+### Changed
+- Multi-enchant orders now only show the green verified state when every requested enchant has been checked off
+- Closing a trade no longer auto-removes the order after a single cast or payment hint; verified orders stay visible until you clear them yourself
+
 ## [2.1.5] - 2026-04-04
 
 ### Added

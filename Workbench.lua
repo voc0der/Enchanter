@@ -254,6 +254,7 @@ end
 local function EnsureOrderFields(order)
 	order.Recipes = order.Recipes or {}
 	order.MaterialState = order.MaterialState or {}
+	order.VerifiedRecipes = order.VerifiedRecipes or {}
 	order.Message = order.Message or ""
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
@@ -663,6 +664,30 @@ function Workbench.GetMaterialProgress(order)
 	return checked, total
 end
 
+function Workbench.GetRecipeVerificationProgress(order)
+	local checked = 0
+	local total = 0
+
+	order = order or Workbench.GetSelectedOrder()
+	if not order then
+		return 0, 0
+	end
+
+	total = #(order.Recipes or {})
+	for _, recipeName in ipairs(order.Recipes or {}) do
+		if order.VerifiedRecipes and order.VerifiedRecipes[recipeName] then
+			checked = checked + 1
+		end
+	end
+
+	return checked, total
+end
+
+function Workbench.IsOrderVerified(order)
+	local checked, total = Workbench.GetRecipeVerificationProgress(order)
+	return total > 0 and checked == total, checked, total
+end
+
 function Workbench.GetTradeMaterialProgress(order)
 	local materials = Workbench.GetMaterialSnapshot(order)
 	local total = #materials
@@ -867,16 +892,16 @@ function Workbench.FinishTrade(goldDelta)
 	local checked, total = Workbench.GetMaterialProgress(order)
 	local hasAllMats = total > 0 and checked == total
 	local gotPaid = (tonumber(goldDelta) or 0) > 0
-	local castedRecipe = activeTrade.CastedRecipeName
+	local isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
 
-	if gotPaid or castedRecipe or hasAllMats then
-		WorkbenchDebug("auto-completing", order.Customer, "(paid=" .. tostring(gotPaid) .. ", cast=" .. tostring(castedRecipe ~= nil) .. ", mats=" .. tostring(hasAllMats) .. ")")
+	if isVerified then
+		WorkbenchDebug("trade closed for", order.Customer, "with fully verified order (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ")")
 		completedOrder = order
-		Workbench.RemoveOrder(order.Id)
 	else
-		WorkbenchDebug("trade closed for", order.Customer, "but keeping the order queued")
+		WorkbenchDebug("trade closed for", order.Customer, "but keeping the order queued (paid=" .. tostring(gotPaid) .. ", mats=" .. tostring(hasAllMats) .. ", verified=" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ")")
 	end
 
+	Workbench.Refresh()
 	return completedOrder
 end
 
@@ -911,6 +936,21 @@ function Workbench.SetMaterialChecked(orderId, materialKey, checked)
 			order.MaterialState[materialKey] = checked and true or nil
 			order.UpdatedAt = TimestampText()
 			WorkbenchDebug((checked and "checked" or "cleared"), "material", materialKey, "for", order.Customer)
+			break
+		end
+	end
+
+	Workbench.Refresh()
+end
+
+function Workbench.SetRecipeVerified(orderId, recipeName, verified)
+	local state = Workbench.EnsureState()
+	for _, order in ipairs(state.Orders) do
+		if order.Id == orderId then
+			order.VerifiedRecipes = order.VerifiedRecipes or {}
+			order.VerifiedRecipes[recipeName] = verified and true or nil
+			order.UpdatedAt = TimestampText()
+			WorkbenchDebug((verified and "verified" or "cleared verification for"), recipeName, "on", order.Customer)
 			break
 		end
 	end
@@ -1214,12 +1254,20 @@ local function CreateRecipeLine(parent, index)
 
 	line.NameText = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
-	line.NameText:SetPoint("RIGHT", line, "RIGHT", -68, 0)
 	line.NameText:SetJustifyH("LEFT")
+
+	line.VerifyCheck = CreateFrame("CheckButton", nil, line, "UICheckButtonTemplate")
+	line.VerifyCheck:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	ApplyElvUISkin(line.VerifyCheck, "checkbox")
+	line.VerifyCheck:SetScript("OnClick", function(self)
+		if self.OrderId and self.RecipeName then
+			Workbench.SetRecipeVerified(self.OrderId, self.RecipeName, self:GetChecked())
+		end
+	end)
 
 	line.CastButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.CastButton:SetSize(56, 20)
-	line.CastButton:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.CastButton:SetPoint("RIGHT", line.VerifyCheck, "LEFT", -4, 0)
 	line.CastButton:SetText("Cast")
 	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
@@ -1227,6 +1275,7 @@ local function CreateRecipeLine(parent, index)
 			Workbench.CastRecipe(self.RecipeName)
 		end
 	end)
+	line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
 
 	return line
 end
@@ -1515,8 +1564,13 @@ function Workbench.Refresh()
 
 		local row = frame.OrderRows[index]
 		local checked, total = Workbench.GetMaterialProgress(order)
+		local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 		local readyText
-		if total > 0 and checked == total then
+		if recipeTotal > 0 and verifiedCount == recipeTotal then
+			readyText = "|cFF74D06CVerified|r"
+		elseif recipeTotal > 0 then
+			readyText = string.format("%d/%d verified", verifiedCount, recipeTotal)
+		elseif total > 0 and checked == total then
 			readyText = "Ready"
 		elseif total > 0 then
 			readyText = string.format("%d/%d mats", checked, total)
@@ -1533,7 +1587,11 @@ function Workbench.Refresh()
 		row.SummaryText:SetText(OrderSummary(order))
 		row:Show()
 
-		if state.SelectedOrderId == order.Id then
+		if recipeTotal > 0 and verifiedCount == recipeTotal and state.SelectedOrderId == order.Id then
+			ApplyBackdrop(row, 0.12, 0.2, 0.12, 0.98, 0.34, 0.78, 0.34, 1)
+		elseif recipeTotal > 0 and verifiedCount == recipeTotal then
+			ApplyBackdrop(row, 0.09, 0.16, 0.09, 0.95, 0.28, 0.62, 0.28, 1)
+		elseif state.SelectedOrderId == order.Id then
 			ApplyBackdrop(row, 0.24, 0.14, 0.08, 0.98, 0.9, 0.68, 0.28, 1)
 		else
 			ApplyBackdrop(row, 0.16, 0.11, 0.08, 0.95, 0.58, 0.41, 0.22, 1)
@@ -1578,9 +1636,14 @@ function Workbench.Refresh()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
 
 	local checked, total, offeredState, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
+	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
 	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
-	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
+	local verificationText = recipeTotal > 0 and string.format("%d/%d verified", verifiedCount, recipeTotal) or "No enchants queued"
+	if recipeTotal > 0 and verifiedCount == recipeTotal then
+		verificationText = "|cFF74D06CVerified|r"
+	end
+	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", verificationText, readyText))
 	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
 	if activeTrade then
 		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Click Apply, then click the customer's item in the trade window.|r")
@@ -1599,8 +1662,13 @@ function Workbench.Refresh()
 		end
 		local line = frame.Detail.RecipeLines[index]
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
-		line.NameText:SetText(recipeLink or recipeName)
+		local isVerified = order.VerifiedRecipes and order.VerifiedRecipes[recipeName]
+		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
 		line.CastButton.RecipeName = recipeName
+		line.VerifyCheck.OrderId = order.Id
+		line.VerifyCheck.RecipeName = recipeName
+		line.VerifyCheck:SetChecked(isVerified and true or false)
+		line.VerifyCheck:Show()
 		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line:ClearAllPoints()
 		if index == 1 then
@@ -1639,20 +1707,36 @@ function Workbench.Refresh()
 			frame.Detail.UseTradeButton:Hide()
 		end
 		frame.Detail.ClearMatsButton:Show()
-		if manualChecked == total then
-			frame.Detail.ReadyText:SetText("|cFF74D06CAll queued mats are checked off.|r")
-		elseif offeredChecked == total and total > 0 then
-			frame.Detail.ReadyText:SetText("|cFF74D06CTrade currently has all queued mats. Click Use Trade to keep them checked.|r")
-		elseif offeredChecked > 0 then
-			frame.Detail.ReadyText:SetText("|cFFFFD26ATrade currently has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r")
+		local statusBits = {}
+		if recipeTotal > 0 and verifiedCount == recipeTotal then
+			statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified.|r"
+		elseif recipeTotal > 0 and verifiedCount > 0 then
+			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r"
 		else
-			frame.Detail.ReadyText:SetText("|cFFFFD26AUse the checklist as the customer hands you materials.|r")
+			statusBits[#statusBits + 1] = "|cFFFFD26ACheck each recipe when the payment is settled.|r"
 		end
+
+		if manualChecked == total then
+			statusBits[#statusBits + 1] = "|cFF74D06CAll queued mats are checked off.|r"
+		elseif offeredChecked == total and total > 0 then
+			statusBits[#statusBits + 1] = "|cFF74D06CTrade currently has all queued mats. Click Use Trade to keep them checked.|r"
+		elseif offeredChecked > 0 then
+			statusBits[#statusBits + 1] = "|cFFFFD26ATrade currently has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r"
+		elseif total > 0 then
+			statusBits[#statusBits + 1] = "|cFFFFD26AUse the checklist as the customer hands you materials.|r"
+		end
+		frame.Detail.ReadyText:SetText(table.concat(statusBits, "  "))
 	else
 		frame.Detail.AllMatsButton:Hide()
 		frame.Detail.UseTradeButton:Hide()
 		frame.Detail.ClearMatsButton:Hide()
-		frame.Detail.ReadyText:SetText("|cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+		if recipeTotal > 0 and verifiedCount == recipeTotal then
+			frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+		elseif recipeTotal > 0 then
+			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+		else
+			frame.Detail.ReadyText:SetText("|cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+		end
 	end
 	frame.Detail.ReadyText:Show()
 
