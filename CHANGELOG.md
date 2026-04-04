@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+## [2.1.2] - 2026-04-04
+
+### Added
+- Added a resizable workbench frame with saved per-character size so the queue can be scaled for busier trade-chat sessions
+- Added ElvUI skin support for the workbench frame and its interactive controls when ElvUI is loaded
+
+### Changed
+- Let the queue and detail panes grow and shrink with the main workbench window instead of staying at a fixed size
+- Updated contributor and release docs so their validation and packaged-file examples include `Workbench.lua`
+
+### Fixed
+- Moved the workbench header controls onto the draggable header layer so `Unlock` and close buttons stay clickable on TBC Anniversary
+
 ## [2.1.1] - 2026-04-04
 
 ### Added

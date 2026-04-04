@@ -3,10 +3,79 @@ local TOCNAME, EC = ...
 EC.Workbench = EC.Workbench or {}
 local Workbench = EC.Workbench
 
+local DEFAULT_FRAME_WIDTH = 468
+local DEFAULT_FRAME_HEIGHT = 520
+local MIN_FRAME_WIDTH = 440
+local MIN_FRAME_HEIGHT = 420
+local MAX_FRAME_WIDTH = 960
+local MAX_FRAME_HEIGHT = 960
+local MIN_QUEUE_HEIGHT = 160
+local DETAIL_RESERVED_HEIGHT = 220
+
+local ElvUIEngine, ElvUISkins
+
 local function WorkbenchDebug(...)
 	if EC and EC.DebugPrint then
 		EC.DebugPrint("[Workbench]", ...)
 	end
+end
+
+local function ClampNumber(value, minimumValue, maximumValue)
+	value = tonumber(value) or minimumValue
+	if minimumValue and value < minimumValue then
+		value = minimumValue
+	end
+	if maximumValue and value > maximumValue then
+		value = maximumValue
+	end
+	return value
+end
+
+local function IsElvUILoaded()
+	if not ElvUI then
+		return false
+	end
+
+	local unpackTable = unpack or table.unpack
+	if not unpackTable then
+		return false
+	end
+
+	local ok, engine = pcall(function()
+		return unpackTable(ElvUI)
+	end)
+	if not ok or not engine or not engine.GetModule then
+		return false
+	end
+
+	ElvUIEngine = engine
+	ElvUISkins = ElvUIEngine:GetModule("Skins", true)
+	return ElvUISkins ~= nil
+end
+
+local function ApplyElvUISkin(frame, frameType)
+	if not frame or not IsElvUILoaded() then
+		return
+	end
+
+	frame._ECElvUISkinned = frame._ECElvUISkinned or {}
+	if frame._ECElvUISkinned[frameType] then
+		return
+	end
+
+	if frameType == "frame" and ElvUISkins.HandleFrame then
+		ElvUISkins:HandleFrame(frame, true)
+	elseif frameType == "button" and ElvUISkins.HandleButton then
+		ElvUISkins:HandleButton(frame)
+	elseif frameType == "checkbox" and ElvUISkins.HandleCheckBox then
+		ElvUISkins:HandleCheckBox(frame)
+	elseif frameType == "scrollbar" and ElvUISkins.HandleScrollBar then
+		ElvUISkins:HandleScrollBar(frame)
+	else
+		return
+	end
+
+	frame._ECElvUISkinned[frameType] = true
 end
 
 local function TimestampText()
@@ -152,11 +221,42 @@ local function SaveFramePosition(frame)
 	WorkbenchDebug("saved position", state.Position.Point, string.format("(%.0f, %.0f)", state.Position.X, state.Position.Y))
 end
 
+local function SaveFrameSize(frame)
+	local state = Workbench.EnsureState()
+	state.Size.Width = ClampNumber(math.floor((frame:GetWidth() or DEFAULT_FRAME_WIDTH) + 0.5), MIN_FRAME_WIDTH, MAX_FRAME_WIDTH)
+	state.Size.Height = ClampNumber(math.floor((frame:GetHeight() or DEFAULT_FRAME_HEIGHT) + 0.5), MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
+	WorkbenchDebug("saved size", string.format("%dx%d", state.Size.Width, state.Size.Height))
+end
+
 local function ApplyFramePosition(frame)
 	local state = Workbench.EnsureState()
 	local position = state.Position
 	frame:ClearAllPoints()
 	frame:SetPoint(position.Point or "CENTER", UIParent, position.RelativePoint or "CENTER", position.X or 0, position.Y or 0)
+end
+
+local function ApplyFrameSize(frame)
+	local state = Workbench.EnsureState()
+	local size = state.Size or {}
+	frame:SetSize(
+		ClampNumber(size.Width or DEFAULT_FRAME_WIDTH, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH),
+		ClampNumber(size.Height or DEFAULT_FRAME_HEIGHT, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
+	)
+end
+
+local function GetQueueHeight(frame)
+	local frameHeight = ClampNumber(frame and frame.GetHeight and frame:GetHeight() or DEFAULT_FRAME_HEIGHT, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
+	local maximumQueueHeight = math.max(MIN_QUEUE_HEIGHT, frameHeight - DETAIL_RESERVED_HEIGHT)
+	local suggestedQueueHeight = math.floor(frameHeight * 0.42)
+	return ClampNumber(suggestedQueueHeight, MIN_QUEUE_HEIGHT, maximumQueueHeight)
+end
+
+local function ApplyFrameLayout(frame)
+	if not frame or not frame.ListScroll then
+		return
+	end
+
+	frame.ListScroll:SetHeight(GetQueueHeight(frame))
 end
 
 local function SortedOrders()
@@ -201,6 +301,7 @@ function Workbench.EnsureState()
 		return {
 			Orders = {},
 			Position = { Point = "CENTER", RelativePoint = "CENTER", X = 0, Y = 0 },
+			Size = { Width = DEFAULT_FRAME_WIDTH, Height = DEFAULT_FRAME_HEIGHT },
 			Locked = true,
 			Visible = false,
 			NextOrderId = 1,
@@ -211,6 +312,7 @@ function Workbench.EnsureState()
 	local state = EC.DBChar.Workbench
 	state.Orders = state.Orders or {}
 	state.Position = state.Position or {}
+	state.Size = state.Size or {}
 
 	if state.Locked == nil then
 		state.Locked = true
@@ -233,6 +335,14 @@ function Workbench.EnsureState()
 	if state.Position.Y == nil then
 		state.Position.Y = 0
 	end
+	if state.Size.Width == nil then
+		state.Size.Width = DEFAULT_FRAME_WIDTH
+	end
+	if state.Size.Height == nil then
+		state.Size.Height = DEFAULT_FRAME_HEIGHT
+	end
+	state.Size.Width = ClampNumber(state.Size.Width, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH)
+	state.Size.Height = ClampNumber(state.Size.Height, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
 
 	for index, order in ipairs(state.Orders) do
 		state.Orders[index] = EnsureOrderFields(order)
@@ -723,9 +833,11 @@ local function CreateOrderRow(parent, index)
 	row.SummaryText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.SummaryText:SetJustifyH("LEFT")
 
-	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelCloseButton")
-	row.RemoveButton:SetSize(18, 18)
-	row.RemoveButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -2)
+	row.RemoveButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+	row.RemoveButton:SetSize(22, 18)
+	row.RemoveButton:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -6)
+	row.RemoveButton:SetText("X")
+	ApplyElvUISkin(row.RemoveButton, "button")
 	row.RemoveButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.RemoveOrder(self.OrderId)
@@ -736,6 +848,7 @@ local function CreateOrderRow(parent, index)
 	row.InviteButton:SetSize(42, 18)
 	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 6)
 	row.InviteButton:SetText("Inv")
+	ApplyElvUISkin(row.InviteButton, "button")
 	row.InviteButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.InviteOrder(self.OrderId)
@@ -746,6 +859,7 @@ local function CreateOrderRow(parent, index)
 	row.WhisperButton:SetSize(42, 18)
 	row.WhisperButton:SetPoint("RIGHT", row.InviteButton, "LEFT", -4, 0)
 	row.WhisperButton:SetText("Msg")
+	ApplyElvUISkin(row.WhisperButton, "button")
 	row.WhisperButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.WhisperOrder(self.OrderId)
@@ -776,6 +890,7 @@ local function CreateRecipeLine(parent, index)
 	line.CastButton:SetSize(56, 20)
 	line.CastButton:SetPoint("RIGHT", line, "RIGHT", 0, 0)
 	line.CastButton:SetText("Cast")
+	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
 		if self.RecipeName then
 			Workbench.CastRecipe(self.RecipeName)
@@ -793,6 +908,7 @@ local function CreateMaterialLine(parent, index)
 
 	line.Check = CreateFrame("CheckButton", nil, line, "UICheckButtonTemplate")
 	line.Check:SetPoint("LEFT", line, "LEFT", -4, 0)
+	ApplyElvUISkin(line.Check, "checkbox")
 	line.Check:SetScript("OnClick", function(self)
 		if self.OrderId and self.MaterialKey then
 			Workbench.SetMaterialChecked(self.OrderId, self.MaterialKey, self:GetChecked())
@@ -815,24 +931,39 @@ function Workbench.CreateFrame()
 	local frame = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchFrame", UIParent)
 	Workbench.Frame = frame
 	WorkbenchDebug("created workbench frame")
-	frame:SetSize(468, 520)
+	ApplyFrameSize(frame)
 	frame:SetMovable(true)
+	if frame.SetResizable then
+		frame:SetResizable(true)
+	end
+	if frame.SetResizeBounds then
+		frame:SetResizeBounds(MIN_FRAME_WIDTH, MIN_FRAME_HEIGHT, MAX_FRAME_WIDTH, MAX_FRAME_HEIGHT)
+	elseif frame.SetMinResize then
+		frame:SetMinResize(MIN_FRAME_WIDTH, MIN_FRAME_HEIGHT)
+		if frame.SetMaxResize then
+			frame:SetMaxResize(MAX_FRAME_WIDTH, MAX_FRAME_HEIGHT)
+		end
+	end
 	if frame.SetClampedToScreen then
 		frame:SetClampedToScreen(true)
 	end
 	frame:EnableMouse(true)
 	frame:RegisterForDrag("LeftButton")
-	frame:SetFrameStrata("MEDIUM")
+	frame:SetFrameStrata("DIALOG")
 	if frame.SetToplevel then
 		frame:SetToplevel(true)
 	end
 	ApplyBackdrop(frame, 0.08, 0.06, 0.05, 0.97, 0.72, 0.52, 0.23, 1)
+	ApplyElvUISkin(frame, "frame")
 	ApplyFramePosition(frame)
 
 	frame.Header = CreateFrameCompat("Frame", nil, frame)
 	frame.Header:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -8)
 	frame.Header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -8)
 	frame.Header:SetHeight(30)
+	if frame.Header.SetFrameLevel and frame.GetFrameLevel then
+		frame.Header:SetFrameLevel(frame:GetFrameLevel() + 1)
+	end
 	ApplyBackdrop(frame.Header, 0.21, 0.12, 0.07, 0.98, 0.58, 0.39, 0.18, 1)
 	frame.Header:EnableMouse(true)
 	frame.Header:RegisterForDrag("LeftButton")
@@ -847,29 +978,41 @@ function Workbench.CreateFrame()
 		SaveFramePosition(frame)
 	end)
 
-	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
-	frame.TitleText:SetText("Enchanter Workbench")
-
-	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
-	frame.QueueCountText:SetText("0 orders")
-
-	frame.CloseButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-	frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+	frame.CloseButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.CloseButton:SetSize(22, 20)
+	frame.CloseButton:SetPoint("RIGHT", frame.Header, "RIGHT", -6, 0)
+	frame.CloseButton:SetText("X")
+	if frame.CloseButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.CloseButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.CloseButton, "button")
 	frame.CloseButton:SetScript("OnClick", function()
 		Workbench.Hide()
 	end)
 
-	frame.LockButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	frame.LockButton:SetSize(60, 20)
-	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -8, -2)
+	frame.LockButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.LockButton:SetSize(66, 20)
+	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -6, 0)
+	if frame.LockButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.LockButton, "button")
 	frame.LockButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
 		UpdateLockButtonText()
 		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
+
+	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
+	frame.TitleText:SetText("Enchanter Workbench")
+
+	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.LockButton, "LEFT", -10, 0)
+	frame.QueueCountText:SetJustifyH("LEFT")
+	frame.QueueCountText:SetText("0 orders")
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
@@ -878,11 +1021,12 @@ function Workbench.CreateFrame()
 	frame.ListScroll = CreateFrame("ScrollFrame", TOCNAME .. "WorkbenchQueueScroll", frame, "UIPanelScrollFrameTemplate")
 	frame.ListScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -60)
 	frame.ListScroll:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -32, -60)
-	frame.ListScroll:SetHeight(220)
 
 	frame.ListChild = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchQueueChild", frame.ListScroll)
 	frame.ListChild:SetSize(400, 1)
 	frame.ListScroll:SetScrollChild(frame.ListChild)
+	frame.ListScroll.ScrollBar = frame.ListScroll.ScrollBar or _G[TOCNAME .. "WorkbenchQueueScrollScrollBar"]
+	ApplyElvUISkin(frame.ListScroll.ScrollBar, "scrollbar")
 
 	frame.EmptyQueueText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 	frame.EmptyQueueText:SetPoint("TOPLEFT", frame.ListScroll, "TOPLEFT", 8, -12)
@@ -894,6 +1038,7 @@ function Workbench.CreateFrame()
 	frame.Detail:SetPoint("TOPLEFT", frame.ListScroll, "BOTTOMLEFT", 0, -18)
 	frame.Detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
 	ApplyBackdrop(frame.Detail, 0.14, 0.1, 0.07, 0.96, 0.54, 0.37, 0.19, 1)
+	ApplyElvUISkin(frame.Detail, "frame")
 
 	frame.Detail.Title = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.Detail.Title:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 12, -12)
@@ -921,6 +1066,7 @@ function Workbench.CreateFrame()
 	frame.Detail.AllMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
 	frame.Detail.AllMatsButton:SetSize(72, 20)
 	frame.Detail.AllMatsButton:SetText("All Mats")
+	ApplyElvUISkin(frame.Detail.AllMatsButton, "button")
 	frame.Detail.AllMatsButton:SetScript("OnClick", function()
 		local order = Workbench.GetSelectedOrder()
 		if order then
@@ -931,6 +1077,7 @@ function Workbench.CreateFrame()
 	frame.Detail.ClearMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
 	frame.Detail.ClearMatsButton:SetSize(60, 20)
 	frame.Detail.ClearMatsButton:SetText("Clear")
+	ApplyElvUISkin(frame.Detail.ClearMatsButton, "button")
 	frame.Detail.ClearMatsButton:SetScript("OnClick", function()
 		local order = Workbench.GetSelectedOrder()
 		if order then
@@ -947,14 +1094,37 @@ function Workbench.CreateFrame()
 	frame.Detail.Empty:SetJustifyH("LEFT")
 	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and a manual materials checklist.")
 
+	frame.ResizeHandle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	frame.ResizeHandle:SetSize(54, 18)
+	frame.ResizeHandle:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
+	frame.ResizeHandle:SetText("Resize")
+	frame.ResizeHandle:RegisterForDrag("LeftButton")
+	ApplyElvUISkin(frame.ResizeHandle, "button")
+	frame.ResizeHandle:SetScript("OnDragStart", function()
+		WorkbenchDebug("resize start")
+		if frame.StartSizing then
+			frame:StartSizing("BOTTOMRIGHT")
+		end
+	end)
+	frame.ResizeHandle:SetScript("OnDragStop", function()
+		frame:StopMovingOrSizing()
+		SaveFrameSize(frame)
+		ApplyFrameLayout(frame)
+		Workbench.Refresh()
+	end)
+
 	frame.OrderRows = {}
 	frame.Detail.RecipeLines = {}
 	frame.Detail.MaterialLines = {}
 
+	frame:SetScript("OnSizeChanged", function(self)
+		ApplyFrameLayout(self)
+	end)
 	frame:SetScript("OnHide", function()
 		frame:StopMovingOrSizing()
 	end)
 
+	ApplyFrameLayout(frame)
 	UpdateLockButtonText()
 	return frame
 end
@@ -969,6 +1139,7 @@ function Workbench.Refresh()
 	frame.QueueCountText:SetText(string.format("%d orders", #state.Orders))
 	frame.EmptyQueueText:SetShown(#state.Orders == 0)
 	UpdateLockButtonText()
+	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
 		local listWidth = frame.ListScroll:GetWidth()
 		if listWidth and listWidth > 0 then
@@ -1015,7 +1186,8 @@ function Workbench.Refresh()
 		frame.OrderRows[index]:Hide()
 	end
 
-	frame.ListChild:SetHeight(math.max(220, (#state.Orders * 62)))
+	local listHeight = frame.ListScroll and frame.ListScroll.GetHeight and frame.ListScroll:GetHeight() or MIN_QUEUE_HEIGHT
+	frame.ListChild:SetHeight(math.max(listHeight, (#state.Orders * 62)))
 
 	local order = Workbench.GetSelectedOrder()
 	if not order then

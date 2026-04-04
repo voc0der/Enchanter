@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.1`
+Current version: `2.1.2`
 
 ## What It Does
 
@@ -16,6 +16,7 @@ Current version: `2.1.1`
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
+- Resize the workbench to fit your screen or chat flow, with the layout saved per character
 - Auto-complete queued orders when a trade closes with strong completion evidence such as a workbench cast, full mats checklist, or payment
 
 ## Install
@@ -41,11 +42,13 @@ Current version: `2.1.1`
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
+- Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
+- If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing
 
