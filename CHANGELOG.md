@@ -4,6 +4,7 @@
 - Added a header-level `Clear` action to wipe the queued orders and reset the selected detail pane when the workbench gets into a stale or noisy state
 
 ### Fixed
+- Made `/ec simulate` tolerate clients that do not expose `math.randomseed` or `math.random`, falling back cleanly instead of throwing a Lua error
 - Gave refreshed queue rows an explicit width so workbench orders no longer disappear even while the queue count keeps increasing
 - Clamp stale queue scroll offsets during refresh so the list cannot stay scrolled into blank space after the queued order count changes
 

@@ -53,6 +53,11 @@ local function load_chunk(path, ...)
     return chunk(...)
 end
 
+local original_math_random = math.random
+local original_math_randomseed = math.randomseed
+local original_global_random = _G.random
+local original_global_randomseed = _G.randomseed
+
 local function setup_env(opts)
     opts = opts or {}
 
@@ -197,6 +202,26 @@ local function setup_env(opts)
     _G.Enchanter_Addon = nil
     _G.EnchanterDB = copy_table(opts.db or {})
     _G.EnchanterDBChar = copy_table(opts.char_db or {})
+    math.random = original_math_random
+    math.randomseed = original_math_randomseed
+    if opts.omit_math_random then
+        math.random = nil
+    end
+    if opts.omit_math_randomseed then
+        math.randomseed = nil
+    end
+    _G.random = original_global_random
+    _G.randomseed = original_global_randomseed
+    if opts.omit_global_random then
+        _G.random = nil
+    elseif opts.global_random ~= nil then
+        _G.random = opts.global_random
+    end
+    if opts.omit_global_randomseed then
+        _G.randomseed = nil
+    elseif opts.global_randomseed ~= nil then
+        _G.randomseed = opts.global_randomseed
+    end
     _G.C_AddOns = nil
     _G.C_PartyInfo = nil
     _G.C_Timer = {
@@ -989,6 +1014,29 @@ local function test_simulate_now_queues_extra_fake_order_without_starting_loop()
     assert_nil(state.timer_delays[3], "manual simulate should not start the repeating three-minute timer by itself")
 end
 
+local function test_simulate_survives_without_math_random_helpers()
+    local addon = setup_env({
+        omit_math_random = true,
+        omit_math_randomseed = true,
+        omit_global_random = true,
+        omit_global_randomseed = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+
+    local queued = addon.GenerateSimulatedOrder("manual")
+    local order = addon.Workbench.GetSelectedOrder()
+
+    assert_true(queued, "manual simulate should still queue an order when the client does not expose math random helpers")
+    assert_not_nil(order, "simulation should still produce a selected fake order without random helpers")
+    assert_true(string.find(order.Customer, "^Sim") ~= nil, "fallback simulation should still mark the generated customer as fake")
+end
+
 local function test_slash_commands_expose_simulate_entry()
     local _, state = setup_env()
     local found = false
@@ -1029,4 +1077,5 @@ test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
 test_simulate_stop_invalidates_pending_tick()
 test_simulate_now_queues_extra_fake_order_without_starting_loop()
+test_simulate_survives_without_math_random_helpers()
 test_slash_commands_expose_simulate_entry()

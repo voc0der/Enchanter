@@ -24,6 +24,7 @@ local preTradeGold = nil
 local pendingInviteWindow = 10
 local simulationInterval = 180
 local simulationSeeded = false
+local simulationFallbackCounter = 0
 local simulationNamePrefixes = {
 	"SimAldren",
 	"SimBrenna",
@@ -209,19 +210,51 @@ local function SeedSimulationRandom()
 		end
 	end
 
-	math.randomseed(seed)
-	math.random()
-	math.random()
-	math.random()
+	local randomSeed = (math and math.randomseed) or randomseed
+	local randomFn = (math and math.random) or random
+
+	if type(randomSeed) == "function" then
+		pcall(randomSeed, seed)
+	end
+	if type(randomFn) == "function" then
+		pcall(randomFn)
+		pcall(randomFn)
+		pcall(randomFn)
+	end
 	simulationSeeded = true
 end
 
-local function PickRandom(list)
+local function PickRandomIndex(list)
 	if type(list) ~= "table" or #list == 0 then
 		return nil
 	end
+
 	SeedSimulationRandom()
-	return list[math.random(#list)]
+
+	local randomFn = (math and math.random) or random
+	local index
+
+	if type(randomFn) == "function" then
+		local ok, value = pcall(randomFn, #list)
+		if ok then
+			index = tonumber(value)
+		end
+	end
+
+	if not index or index < 1 or index > #list then
+		simulationFallbackCounter = simulationFallbackCounter + 1
+		index = ((simulationFallbackCounter - 1) % #list) + 1
+	end
+
+	return math.floor(index)
+end
+
+local function PickRandom(list)
+	local index = PickRandomIndex(list)
+	if not index then
+		return nil
+	end
+	return list[index]
 end
 
 local function GetSimulationRecipePool()
@@ -255,8 +288,8 @@ end
 
 local function BuildSimulatedCustomerName(simulationState)
 	local generation = (simulationState.GeneratedCount or 0) + 1
-	local prefixIndex = ((math.random(#simulationNamePrefixes) + generation - 2) % #simulationNamePrefixes) + 1
-	local realmIndex = ((math.random(#simulationRealms) + generation - 2) % #simulationRealms) + 1
+	local prefixIndex = ((PickRandomIndex(simulationNamePrefixes) or 1) + generation - 2) % #simulationNamePrefixes + 1
+	local realmIndex = ((PickRandomIndex(simulationRealms) or 1) + generation - 2) % #simulationRealms + 1
 	return simulationNamePrefixes[prefixIndex] .. "-" .. simulationRealms[realmIndex]
 end
 
