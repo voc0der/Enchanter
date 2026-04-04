@@ -296,9 +296,34 @@ local function test_workbench_remove_clears_player_gate()
     assert_equal(#addon.Workbench.EnsureState().Orders, 0, "removed orders should leave the queue")
 end
 
+local function test_workbench_debug_output_is_printed()
+    local addon, state = setup_env({
+        char_db = {
+            Debug = true,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Debug")
+
+    local found = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "%[Workbench%] queued order for Buyer%-Debug") then
+            found = true
+            break
+        end
+    end
+
+    assert_true(found, "workbench queue actions should print through debug mode")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
 test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
+test_workbench_debug_output_is_printed()

@@ -3,6 +3,12 @@ local TOCNAME, EC = ...
 EC.Workbench = EC.Workbench or {}
 local Workbench = EC.Workbench
 
+local function WorkbenchDebug(...)
+	if EC and EC.DebugPrint then
+		EC.DebugPrint("[Workbench]", ...)
+	end
+end
+
 local function TimestampText()
 	if date then
 		return date("%H:%M")
@@ -124,6 +130,7 @@ local function SaveFramePosition(frame)
 	state.Position.RelativePoint = relativePoint or "CENTER"
 	state.Position.X = xOfs or 0
 	state.Position.Y = yOfs or 0
+	WorkbenchDebug("saved position", state.Position.Point, string.format("(%.0f, %.0f)", state.Position.X, state.Position.Y))
 end
 
 local function ApplyFramePosition(frame)
@@ -163,6 +170,10 @@ end
 
 function Workbench.SelectOrder(orderId)
 	SetSelectedOrder(orderId)
+	local order = Workbench.GetSelectedOrder()
+	if order then
+		WorkbenchDebug("selected order for", order.Customer, "(" .. tostring(#(order.Recipes or {})) .. " enchants)")
+	end
 	Workbench.Refresh()
 end
 
@@ -298,6 +309,7 @@ function Workbench.SetMaterialChecked(orderId, materialKey, checked)
 			order.MaterialState = order.MaterialState or {}
 			order.MaterialState[materialKey] = checked and true or nil
 			order.UpdatedAt = TimestampText()
+			WorkbenchDebug((checked and "checked" or "cleared"), "material", materialKey, "for", order.Customer)
 			break
 		end
 	end
@@ -315,6 +327,7 @@ function Workbench.SetAllMaterials(orderId, checked)
 				order.MaterialState[material.Key] = checked and true or nil
 			end
 			order.UpdatedAt = TimestampText()
+			WorkbenchDebug((checked and "checked" or "cleared"), "all mats for", order.Customer, "(" .. tostring(#materials) .. " items)")
 			break
 		end
 	end
@@ -337,6 +350,7 @@ function Workbench.RemoveOrder(orderId)
 	if removedOrder then
 		EC.PlayerList[removedOrder.Customer] = nil
 		EC.LfRecipeList[removedOrder.Customer] = nil
+		WorkbenchDebug("removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
 	end
 
 	if state.SelectedOrderId == orderId then
@@ -350,6 +364,7 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 	local state = Workbench.EnsureState()
 	local recipeNames = CopyRecipeNames(recipeMap)
 	local order
+	local isNewOrder = false
 
 	if not customer or customer == "" or #recipeNames == 0 then
 		return nil
@@ -369,6 +384,7 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 		})
 		state.NextOrderId = state.NextOrderId + 1
 		state.Orders[#state.Orders + 1] = order
+		isNewOrder = true
 	end
 
 	local seen = {}
@@ -388,6 +404,12 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 
 	if not state.SelectedOrderId then
 		state.SelectedOrderId = order.Id
+	end
+
+	if isNewOrder then
+		WorkbenchDebug("queued order for", customer, "(" .. tostring(#order.Recipes) .. " enchants)")
+	else
+		WorkbenchDebug("updated order for", customer, "(" .. tostring(#order.Recipes) .. " enchants)")
 	end
 
 	Workbench.Refresh()
@@ -422,20 +444,26 @@ function Workbench.CastRecipe(recipeName)
 	end
 
 	if TryCastRecipe(recipeName) then
+		WorkbenchDebug("cast started for", recipeName)
 		return true
 	end
 
 	if CastSpellByName then
+		WorkbenchDebug("opening enchanting before cast for", recipeName)
 		CastSpellByName("Enchanting")
 	end
 
 	if C_Timer and C_Timer.After then
 		C_Timer.After(0.2, function()
 			if not TryCastRecipe(recipeName) then
+				WorkbenchDebug("cast retry still unavailable for", recipeName)
 				print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
+			else
+				WorkbenchDebug("cast started for", recipeName, "after opening enchanting")
 			end
 		end)
 	else
+		WorkbenchDebug("cast retry unavailable for", recipeName)
 		print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
 	end
 
@@ -544,6 +572,7 @@ function Workbench.CreateFrame()
 
 	local frame = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchFrame", UIParent)
 	Workbench.Frame = frame
+	WorkbenchDebug("created workbench frame")
 	frame:SetSize(468, 520)
 	frame:SetMovable(true)
 	if frame.SetClampedToScreen then
@@ -567,6 +596,7 @@ function Workbench.CreateFrame()
 	frame.Header:RegisterForDrag("LeftButton")
 	frame.Header:SetScript("OnDragStart", function()
 		if not Workbench.EnsureState().Locked then
+			WorkbenchDebug("drag start")
 			frame:StartMoving()
 		end
 	end)
@@ -596,6 +626,7 @@ function Workbench.CreateFrame()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
 		UpdateLockButtonText()
+		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -860,6 +891,7 @@ function Workbench.Show()
 	state.Visible = true
 	ApplyFramePosition(frame)
 	frame:Show()
+	WorkbenchDebug("shown")
 	Workbench.Refresh()
 end
 
@@ -868,6 +900,7 @@ function Workbench.Hide()
 	state.Visible = false
 	if Workbench.Frame then
 		Workbench.Frame:Hide()
+		WorkbenchDebug("hidden")
 	end
 end
 

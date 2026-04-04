@@ -108,6 +108,19 @@ function EC.GetMatchedRecipeNames(recipeMap)
 	return out
 end
 
+function EC.DebugPrint(...)
+	if not EC.DBChar or not EC.DBChar.Debug then
+		return
+	end
+
+	local parts = {}
+	for index = 1, select("#", ...) do
+		parts[#parts + 1] = tostring(select(index, ...))
+	end
+
+	print("Debug mode:", table.concat(parts, " "))
+end
+
 local function EnsureSavedVariables()
 	if not EnchanterDB then EnchanterDB = {} end
 	if not EnchanterDBChar then EnchanterDBChar = {} end
@@ -282,7 +295,7 @@ function EC.SendMsg(name)
 	end
 
 	if EC.DBChar.Debug then
-		print("Debug mode: would whisper to " .. name .. ": " .. msg)
+		EC.DebugPrint("would whisper to " .. name .. ": " .. msg)
 	else
 		SendChatMessage(msg, "WHISPER", nil, name)
 	end
@@ -312,7 +325,7 @@ function EC.ParseMessage(msg, name)
 	for _, pattern in ipairs(EC.BlacklistCompiled) do
 		if string.find(parsedMessage, pattern) then
 			if EC.DBChar.Debug then
-				print("Request: " .. msg .. " is being blacklisted due to pattern: " .. pattern)
+				EC.DebugPrint("Request:", msg, "is being blacklisted due to pattern:", pattern)
 			end
 			return
 		end
@@ -327,8 +340,8 @@ function EC.ParseMessage(msg, name)
 				EC.LfRecipeList[name][recipeName] = tag
 				matchedRecipes = true
 				if EC.DBChar.Debug then
-					print("User should be invited for msg: " .. msg)
-					print("Due to tag: " .. tag .. " -> recipe " .. tostring(recipeName))
+					EC.DebugPrint("User should be invited for msg:", msg)
+					EC.DebugPrint("Due to tag:", tag, "-> recipe", tostring(recipeName))
 				end
 			end
 		end
@@ -343,7 +356,7 @@ function EC.ParseMessage(msg, name)
 			EC.PlayerList[name] = 1
 
 			if EC.DBChar.Debug then
-				print("Debug mode: suppressed invite/whisper to " .. name)
+				EC.DebugPrint("suppressed invite/whisper to " .. name)
 				EC.SendMsg(name)
 			else
 				if EC.DB.AutoInvite then
@@ -368,7 +381,7 @@ function EC.ParseMessage(msg, name)
 				EC.PlayerList[name] = 1
 				local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
 				if EC.DBChar.Debug then
-					print("Debug mode: would whisper to " .. name .. ": " .. genericReply)
+					EC.DebugPrint("would whisper to " .. name .. ": " .. genericReply)
 				else
 					After(EC.DB.WhisperTimeDelay, function()
 						SendChatMessage(genericReply, "WHISPER", nil, name)
