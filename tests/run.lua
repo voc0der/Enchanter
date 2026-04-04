@@ -689,6 +689,32 @@ local function test_workbench_refresh_survives_without_fontstring_setshown()
     assert_true((frame.OrderRows[1]:GetWidth() or 0) > 0, "queue row should keep a positive width after refresh so it does not disappear")
 end
 
+local function test_workbench_detail_lines_keep_a_usable_width_after_refresh()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Detail")
+
+    assert_not_nil(frame.Detail.RecipeLines[1], "detail recipe line should be created for the selected order")
+    assert_not_nil(frame.Detail.MaterialLines[1], "detail material lines should be created when a mats snapshot exists")
+    assert_true((frame.Detail.RecipeLines[1]:GetWidth() or 0) > 100, "detail recipe rows should keep enough width to render their text and buttons")
+    assert_true((frame.Detail.MaterialLines[1]:GetWidth() or 0) > 100, "detail material rows should keep enough width to render the checklist")
+    assert_equal(frame.Detail.MatsHeader.shown, true, "materials header should stay visible when the selected order has queued mats")
+end
+
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
     local addon = setup_env()
 
@@ -1093,6 +1119,47 @@ local function test_trade_offer_marks_live_material_progress()
     assert_equal(total, 2, "live trade mats progress should use the order's material total")
 end
 
+local function test_trade_sync_recovers_partner_name_after_trade_show()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            { name = "Soul Dust", count = 6, link = "item:11083" },
+            { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-LateTradeName")
+
+    addon.Workbench.BeginTrade(nil)
+    _G.TradeFrameRecipientNameText = {
+        GetText = function()
+            return "Buyer-LateTradeName"
+        end,
+    }
+    addon.Workbench.SyncActiveTrade()
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local checked, total = addon.Workbench.GetTradeMaterialProgress(order)
+
+    assert_not_nil(order, "trade sync should recover the matching queued order once the recipient name becomes available")
+    assert_equal(order.Customer, "Buyer-LateTradeName", "late trade-name recovery should select the matching queued order")
+    assert_equal(checked, 2, "recovered trade partner should still enable live mats tracking")
+    assert_equal(total, 2, "recovered trade partner should preserve the queued mats total")
+    assert_equal(frame.Detail.UseTradeButton.shown, true, "recovered trade partner should expose the Use Trade shortcut in the detail pane")
+end
+
 local function test_use_trade_materials_copies_live_offer_into_checklist()
     local addon = setup_env({
         char_db = {
@@ -1259,6 +1326,7 @@ test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
+test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
@@ -1276,6 +1344,7 @@ test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_verify_checkbox_updates_order_state()
 test_trade_offer_marks_live_material_progress()
+test_trade_sync_recovers_partner_name_after_trade_show()
 test_use_trade_materials_copies_live_offer_into_checklist()
 test_active_trade_updates_recipe_button_to_apply()
 test_simulate_generates_safe_fake_orders_and_schedules_next_tick()

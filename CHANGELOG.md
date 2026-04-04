@@ -1,3 +1,10 @@
+## [2.1.7] - 2026-04-04
+
+### Fixed
+- Restored usable widths for workbench detail recipe and material rows so the selected order no longer shows a blank checklist area even when recipe and mats data exist
+- Let active-trade syncing retry the recipient lookup after the trade window opens so live `Use Trade` tracking can recover when the client populates the partner name late
+- Expanded local regression coverage around the detail checklist rendering and delayed trade-partner detection path
+
 ## [2.1.6] - 2026-04-04
 
 ### Added

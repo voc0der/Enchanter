@@ -408,6 +408,19 @@ local function GetQueueListWidth(frame)
 	return math.max(320, math.floor(listWidth))
 end
 
+local function GetDetailContentWidth(frame)
+	if not frame or not frame.Detail or not frame.Detail.GetWidth then
+		return DEFAULT_FRAME_WIDTH - 40
+	end
+
+	local detailWidth = tonumber(frame.Detail:GetWidth()) or 0
+	if detailWidth <= 0 and frame.GetWidth then
+		detailWidth = (tonumber(frame:GetWidth()) or DEFAULT_FRAME_WIDTH) - 28
+	end
+
+	return math.max(160, math.floor(detailWidth - 24))
+end
+
 local function ClampQueueScroll(frame)
 	if not frame or not frame.ListScroll or not frame.ListScroll.SetVerticalScroll then
 		return
@@ -744,11 +757,24 @@ local function GetDisplayedMaterialProgress(order)
 end
 
 function Workbench.GetTradePartnerName()
-	local candidates = {
-		_G and _G.TradeFrameRecipientNameText,
-		_G and _G.TradeRecipientNameText,
-		_G and _G.TradeFrameRecipientNameText and _G.TradeFrameRecipientNameText.GetText and _G.TradeFrameRecipientNameText:GetText(),
-	}
+	local candidates = {}
+
+	local function AddCandidate(value)
+		if value ~= nil then
+			candidates[#candidates + 1] = value
+		end
+	end
+
+	if GetUnitName then
+		AddCandidate(GetUnitName("NPC", true))
+	end
+	if UnitName then
+		AddCandidate(UnitName("NPC"))
+	end
+	AddCandidate(_G and _G.TradeFrameRecipientNameText or nil)
+	AddCandidate(_G and _G.TradeRecipientNameText or nil)
+	AddCandidate(_G and _G.TradeFrameRecipientNameText and _G.TradeFrameRecipientNameText.GetText and _G.TradeFrameRecipientNameText:GetText() or nil)
+	AddCandidate(_G and _G.TradeRecipientNameText and _G.TradeRecipientNameText.GetText and _G.TradeRecipientNameText:GetText() or nil)
 
 	for _, candidate in ipairs(candidates) do
 		local text = candidate
@@ -794,6 +820,10 @@ function Workbench.SyncActiveTrade()
 
 	if not activeTrade then
 		return nil
+	end
+
+	if not activeTrade.CustomerName or activeTrade.CustomerName == "" then
+		activeTrade.CustomerName = Workbench.GetTradePartnerName and Workbench.GetTradePartnerName() or nil
 	end
 
 	if activeTrade.OrderId then
@@ -1689,6 +1719,7 @@ function Workbench.Refresh()
 	frame.Detail.RecipesHeader:Show()
 
 	local recipeAnchor = frame.Detail.RecipesHeader
+	local detailContentWidth = GetDetailContentWidth(frame)
 	for index, recipeName in ipairs(order.Recipes or {}) do
 		if not frame.Detail.RecipeLines[index] then
 			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail, index)
@@ -1709,6 +1740,7 @@ function Workbench.Refresh()
 		else
 			line:SetPoint("TOPLEFT", frame.Detail.RecipeLines[index - 1], "BOTTOMLEFT", 0, -4)
 		end
+		line:SetWidth(detailContentWidth)
 		line:Show()
 	end
 
@@ -1789,6 +1821,7 @@ function Workbench.Refresh()
 		else
 			line:SetPoint("TOPLEFT", frame.Detail.MaterialLines[index - 1], "BOTTOMLEFT", 0, -2)
 		end
+		line:SetWidth(detailContentWidth)
 		line:Show()
 	end
 
