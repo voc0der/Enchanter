@@ -354,6 +354,40 @@ local function ApplyFrameLayout(frame)
 	frame.ListScroll:SetHeight(GetQueueHeight(frame))
 end
 
+local function GetTradeSlotLimit()
+	if _G then
+		if tonumber(_G.MAX_TRADE_ITEMS) and tonumber(_G.MAX_TRADE_ITEMS) > 0 then
+			return tonumber(_G.MAX_TRADE_ITEMS)
+		end
+		if tonumber(_G.NUM_TRADE_ITEMS) and tonumber(_G.NUM_TRADE_ITEMS) > 0 then
+			return tonumber(_G.NUM_TRADE_ITEMS)
+		end
+	end
+	return 6
+end
+
+local function CaptureTradeTargetCounts()
+	local counts = {}
+	if not GetTradeTargetItemInfo then
+		return counts
+	end
+
+	for index = 1, GetTradeSlotLimit() do
+		local itemName, _, itemCount = GetTradeTargetItemInfo(index)
+		itemName = TrimText(itemName)
+		if itemName ~= "" then
+			itemCount = tonumber(itemCount) or 1
+			local itemLink = GetTradeTargetItemLink and GetTradeTargetItemLink(index) or nil
+			if type(itemLink) == "string" and itemLink ~= "" then
+				counts[itemLink] = (counts[itemLink] or 0) + itemCount
+			end
+			counts[itemName] = (counts[itemName] or 0) + itemCount
+		end
+	end
+
+	return counts
+end
+
 local function GetQueueListWidth(frame)
 	if not frame then
 		return DEFAULT_FRAME_WIDTH - 56
@@ -393,6 +427,29 @@ end
 local function SortedOrders()
 	local state = Workbench.EnsureState()
 	return state.Orders
+end
+
+local function GetActiveTradeForOrder(order)
+	local runtime = EnsureRuntime()
+	local activeTrade = runtime.ActiveTrade
+
+	if not order or not activeTrade then
+		return nil
+	end
+
+	if activeTrade.OrderId and activeTrade.OrderId == order.Id then
+		return activeTrade
+	end
+
+	if activeTrade.CustomerName and activeTrade.CustomerName ~= "" then
+		local matchedOrder = Workbench.GetOrderByCustomer(activeTrade.CustomerName)
+		if matchedOrder and matchedOrder.Id == order.Id then
+			activeTrade.OrderId = order.Id
+			return activeTrade
+		end
+	end
+
+	return nil
 end
 
 local function OrderSummary(order)
@@ -606,6 +663,61 @@ function Workbench.GetMaterialProgress(order)
 	return checked, total
 end
 
+function Workbench.GetTradeMaterialProgress(order)
+	local materials = Workbench.GetMaterialSnapshot(order)
+	local total = #materials
+	local checked = 0
+	local offeredState = {}
+	local activeTrade = GetActiveTradeForOrder(order)
+
+	order = order or Workbench.GetSelectedOrder()
+	if not order or not activeTrade or total == 0 then
+		return 0, total, offeredState
+	end
+
+	local offeredCounts = CaptureTradeTargetCounts()
+	for _, material in ipairs(materials) do
+		local offeredCount = offeredCounts[material.Key] or offeredCounts[material.Link or ""] or offeredCounts[material.Name or ""] or 0
+		if offeredCount >= (tonumber(material.Count) or 1) then
+			offeredState[material.Key] = true
+			checked = checked + 1
+		end
+	end
+
+	activeTrade.OfferedMaterialState = offeredState
+	activeTrade.OfferedCounts = offeredCounts
+	activeTrade.OfferedChecked = checked
+	activeTrade.OfferedTotal = total
+
+	return checked, total, offeredState
+end
+
+local function GetDisplayedMaterialProgress(order)
+	local materials = Workbench.GetMaterialSnapshot(order)
+	local total = #materials
+	local manualChecked = 0
+	local combinedChecked = 0
+	local offeredChecked, _, offeredState = Workbench.GetTradeMaterialProgress(order)
+
+	order = order or Workbench.GetSelectedOrder()
+	if not order then
+		return 0, total, offeredState, 0, offeredChecked
+	end
+
+	for _, material in ipairs(materials) do
+		local hasManual = order.MaterialState and order.MaterialState[material.Key]
+		local hasOffered = offeredState[material.Key]
+		if hasManual then
+			manualChecked = manualChecked + 1
+		end
+		if hasManual or hasOffered then
+			combinedChecked = combinedChecked + 1
+		end
+	end
+
+	return combinedChecked, total, offeredState, manualChecked, offeredChecked
+end
+
 function Workbench.GetTradePartnerName()
 	local candidates = {
 		_G and _G.TradeFrameRecipientNameText,
@@ -640,11 +752,46 @@ function Workbench.BeginTrade(customerName)
 	}
 
 	if order then
+		SetSelectedOrder(order.Id)
 		WorkbenchDebug("trade opened for", order.Customer)
 	else
 		WorkbenchDebug("trade opened with no queued order match")
 	end
 
+	Workbench.SyncActiveTrade()
+	return order
+end
+
+function Workbench.SyncActiveTrade()
+	local runtime = EnsureRuntime()
+	local activeTrade = runtime.ActiveTrade
+	local order
+
+	if not activeTrade then
+		return nil
+	end
+
+	if activeTrade.OrderId then
+		order = Workbench.GetOrderById(activeTrade.OrderId)
+	end
+	if not order and activeTrade.CustomerName and activeTrade.CustomerName ~= "" then
+		order = Workbench.GetOrderByCustomer(activeTrade.CustomerName)
+		if order then
+			activeTrade.OrderId = order.Id
+		end
+	end
+
+	if order then
+		SetSelectedOrder(order.Id)
+		Workbench.GetTradeMaterialProgress(order)
+	else
+		activeTrade.OfferedMaterialState = {}
+		activeTrade.OfferedCounts = {}
+		activeTrade.OfferedChecked = 0
+		activeTrade.OfferedTotal = 0
+	end
+
+	Workbench.Refresh()
 	return order
 end
 
@@ -731,6 +878,29 @@ function Workbench.FinishTrade(goldDelta)
 	end
 
 	return completedOrder
+end
+
+function Workbench.UseTradeMaterials(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not order then
+		return false
+	end
+
+	local offeredChecked, total, offeredState = Workbench.GetTradeMaterialProgress(order)
+	if total == 0 or offeredChecked == 0 then
+		return false
+	end
+
+	order.MaterialState = order.MaterialState or {}
+	for materialKey, isOffered in pairs(offeredState) do
+		if isOffered then
+			order.MaterialState[materialKey] = true
+		end
+	end
+	order.UpdatedAt = TimestampText()
+	WorkbenchDebug("copied trade mats for", order.Customer, "(" .. tostring(offeredChecked) .. "/" .. tostring(total) .. ")")
+	Workbench.Refresh()
+	return true
 end
 
 function Workbench.SetMaterialChecked(orderId, materialKey, checked)
@@ -918,6 +1088,15 @@ local function TryCastRecipe(recipeName)
 	return false
 end
 
+local function PrintTradeApplyHint(recipeName)
+	local activeTrade = EnsureRuntime().ActiveTrade
+	if not activeTrade then
+		return
+	end
+
+	print("|cFFFF1C1CEnchanter|r Click the customer's item in the trade window to apply " .. tostring(recipeName) .. ".")
+end
+
 function Workbench.CastRecipe(recipeName)
 	if not recipeName or recipeName == "" then
 		return false
@@ -925,6 +1104,7 @@ function Workbench.CastRecipe(recipeName)
 
 	if TryCastRecipe(recipeName) then
 		Workbench.NoteRecipeCast(recipeName)
+		PrintTradeApplyHint(recipeName)
 		WorkbenchDebug("cast started for", recipeName)
 		return true
 	end
@@ -941,6 +1121,7 @@ function Workbench.CastRecipe(recipeName)
 				print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
 			else
 				Workbench.NoteRecipeCast(recipeName)
+				PrintTradeApplyHint(recipeName)
 				WorkbenchDebug("cast started for", recipeName, "after opening enchanting")
 			end
 		end)
@@ -1219,8 +1400,14 @@ function Workbench.CreateFrame()
 	frame.Detail.Message:SetJustifyH("LEFT")
 	frame.Detail.Message:SetJustifyV("TOP")
 
+	frame.Detail.TradeHint = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.TradeHint:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -8)
+	frame.Detail.TradeHint:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.TradeHint:SetJustifyH("LEFT")
+	frame.Detail.TradeHint:SetJustifyV("TOP")
+	frame.Detail.TradeHint:Hide()
+
 	frame.Detail.RecipesHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -14)
 	frame.Detail.RecipesHeader:SetText("Enchants")
 
 	frame.Detail.MatsHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1234,6 +1421,17 @@ function Workbench.CreateFrame()
 		local order = Workbench.GetSelectedOrder()
 		if order then
 			Workbench.SetAllMaterials(order.Id, true)
+		end
+	end)
+
+	frame.Detail.UseTradeButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.UseTradeButton:SetSize(78, 20)
+	frame.Detail.UseTradeButton:SetText("Use Trade")
+	ApplyElvUISkin(frame.Detail.UseTradeButton, "button")
+	frame.Detail.UseTradeButton:SetScript("OnClick", function()
+		local order = Workbench.GetSelectedOrder()
+		if order then
+			Workbench.UseTradeMaterials(order.Id)
 		end
 	end)
 
@@ -1360,9 +1558,11 @@ function Workbench.Refresh()
 		frame.Detail.Title:SetText("No active order selected")
 		frame.Detail.Meta:SetText("")
 		frame.Detail.Message:SetText("")
+		frame.Detail.TradeHint:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
 		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.UseTradeButton:Hide()
 		frame.Detail.ClearMatsButton:Hide()
 		frame.Detail.ReadyText:Hide()
 		for _, line in ipairs(frame.Detail.RecipeLines) do
@@ -1377,10 +1577,19 @@ function Workbench.Refresh()
 	frame.Detail.Empty:Hide()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
 
-	local checked, total = Workbench.GetMaterialProgress(order)
-	local readyText = total > 0 and string.format("%d/%d materials checked", checked, total) or "No materials captured yet"
+	local checked, total, offeredState, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
+	local activeTrade = GetActiveTradeForOrder(order)
+	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
 	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
+	if activeTrade then
+		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Click Apply, then click the customer's item in the trade window.|r")
+		frame.Detail.TradeHint:Show()
+	else
+		frame.Detail.TradeHint:Hide()
+	end
+	frame.Detail.RecipesHeader:ClearAllPoints()
+	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", activeTrade and frame.Detail.TradeHint or frame.Detail.Message, "BOTTOMLEFT", 0, activeTrade and -10 or -14)
 	frame.Detail.RecipesHeader:Show()
 
 	local recipeAnchor = frame.Detail.RecipesHeader
@@ -1392,6 +1601,7 @@ function Workbench.Refresh()
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
 		line.NameText:SetText(recipeLink or recipeName)
 		line.CastButton.RecipeName = recipeName
+		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line:ClearAllPoints()
 		if index == 1 then
 			line:SetPoint("TOPLEFT", recipeAnchor, "BOTTOMLEFT", 0, -6)
@@ -1413,22 +1623,34 @@ function Workbench.Refresh()
 
 	frame.Detail.AllMatsButton:ClearAllPoints()
 	frame.Detail.AllMatsButton:SetPoint("LEFT", frame.Detail.MatsHeader, "RIGHT", 12, 0)
+	frame.Detail.UseTradeButton:ClearAllPoints()
+	frame.Detail.UseTradeButton:SetPoint("LEFT", frame.Detail.AllMatsButton, "RIGHT", 6, 0)
 	frame.Detail.ClearMatsButton:ClearAllPoints()
-	frame.Detail.ClearMatsButton:SetPoint("LEFT", frame.Detail.AllMatsButton, "RIGHT", 6, 0)
+	frame.Detail.ClearMatsButton:SetPoint("LEFT", frame.Detail.UseTradeButton, "RIGHT", 6, 0)
 	frame.Detail.ReadyText:ClearAllPoints()
 	frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
 	frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
 
 	if #materials > 0 then
 		frame.Detail.AllMatsButton:Show()
+		if activeTrade and offeredChecked > 0 then
+			frame.Detail.UseTradeButton:Show()
+		else
+			frame.Detail.UseTradeButton:Hide()
+		end
 		frame.Detail.ClearMatsButton:Show()
-		if checked == total then
+		if manualChecked == total then
 			frame.Detail.ReadyText:SetText("|cFF74D06CAll queued mats are checked off.|r")
+		elseif offeredChecked == total and total > 0 then
+			frame.Detail.ReadyText:SetText("|cFF74D06CTrade currently has all queued mats. Click Use Trade to keep them checked.|r")
+		elseif offeredChecked > 0 then
+			frame.Detail.ReadyText:SetText("|cFFFFD26ATrade currently has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r")
 		else
 			frame.Detail.ReadyText:SetText("|cFFFFD26AUse the checklist as the customer hands you materials.|r")
 		end
 	else
 		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.UseTradeButton:Hide()
 		frame.Detail.ClearMatsButton:Hide()
 		frame.Detail.ReadyText:SetText("|cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 	end
@@ -1442,7 +1664,7 @@ function Workbench.Refresh()
 		local line = frame.Detail.MaterialLines[index]
 		line.Check.OrderId = order.Id
 		line.Check.MaterialKey = material.Key
-		line.Check:SetChecked(order.MaterialState and order.MaterialState[material.Key] or false)
+		line.Check:SetChecked((order.MaterialState and order.MaterialState[material.Key]) or offeredState[material.Key] or false)
 		line.Text:SetText(string.format("%dx %s", material.Count or 0, material.Link or material.Name or "Unknown Material"))
 		line:ClearAllPoints()
 		if index == 1 then

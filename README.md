@@ -45,7 +45,10 @@ Current version: `2.1.5`
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Clear` button to wipe the current queue and reset the detail pane if you want to flush stale or finished orders quickly.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
-- Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
+- When a matching trade is open, the recipe action changes to `Apply` and the detail pane explains the trade-slot flow.
+- Click `Apply`, then click the customer's item in the trade window to finish the enchant manually without over-automating it.
+- The workbench now watches the customer's current trade offer for matching mats and can show live progress against the queued material list.
+- Click `Use Trade` to copy the mats currently offered in the trade window into the persistent checklist.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
 - When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.

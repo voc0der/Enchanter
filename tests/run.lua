@@ -68,6 +68,7 @@ local function setup_env(opts)
         timer_delays = {},
         timer_callbacks = {},
         trade_skills = copy_table(opts.trade_skills or {}),
+        trade_target_items = copy_table(opts.trade_target_items or {}),
         whispers = {},
         frames = {},
         selected_trade_skill = nil,
@@ -308,6 +309,18 @@ local function setup_env(opts)
         end
         local reagent = skill.reagents[reagent_index]
         return reagent and reagent.link or nil
+    end
+    _G.MAX_TRADE_ITEMS = 6
+    _G.GetTradeTargetItemInfo = function(index)
+        local item = state.trade_target_items[index]
+        if not item then
+            return nil
+        end
+        return item.name, item.texture, item.count
+    end
+    _G.GetTradeTargetItemLink = function(index)
+        local item = state.trade_target_items[index]
+        return item and item.link or nil
     end
     _G.GetGameTime = function()
         if opts.game_time then
@@ -946,6 +959,87 @@ local function test_trade_with_unmatched_partner_does_not_complete_selected_orde
     assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Queued"), "the queued order should remain after an unrelated trade")
 end
 
+local function test_trade_offer_marks_live_material_progress()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            { name = "Soul Dust", count = 6, link = "item:11083" },
+            { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-TradeMats")
+    addon.Workbench.BeginTrade("Buyer-TradeMats")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local checked, total = addon.Workbench.GetTradeMaterialProgress(order)
+
+    assert_equal(order.Customer, "Buyer-TradeMats", "trade open should select the matching queued order")
+    assert_equal(checked, 2, "live trade offer should satisfy both queued materials")
+    assert_equal(total, 2, "live trade mats progress should use the order's material total")
+end
+
+local function test_use_trade_materials_copies_live_offer_into_checklist()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            { name = "Soul Dust", count = 6, link = "item:11083" },
+            { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-TradeCopy")
+    addon.Workbench.BeginTrade("Buyer-TradeCopy")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local copied = addon.Workbench.UseTradeMaterials(order.Id)
+    local checked, total = addon.Workbench.GetMaterialProgress(order)
+
+    assert_true(copied, "use trade should copy the currently offered mats into the manual checklist")
+    assert_equal(checked, 2, "copied trade mats should become persisted checklist progress")
+    assert_equal(total, 2, "manual mats progress should still reflect the full material total")
+end
+
+local function test_active_trade_updates_recipe_button_to_apply()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Apply")
+    addon.Workbench.BeginTrade("Buyer-Apply")
+
+    assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Apply", "active trade recipe actions should read Apply so the trade-slot flow is more obvious")
+    assert_true(string.find(frame.Detail.TradeHint.text or "", "Trade active") ~= nil, "detail pane should explain the trade apply flow when a matching trade is open")
+end
+
 local function test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
     local addon, state = setup_env({
         defer_timers = true,
@@ -1074,6 +1168,9 @@ test_workbench_refresh_clamps_stale_scroll_offset()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
+test_trade_offer_marks_live_material_progress()
+test_use_trade_materials_copies_live_offer_into_checklist()
+test_active_trade_updates_recipe_button_to_apply()
 test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
 test_simulate_stop_invalidates_pending_tick()
 test_simulate_now_queues_extra_fake_order_without_starting_loop()
