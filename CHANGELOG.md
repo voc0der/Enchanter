@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## [2.1.1] - 2026-04-04
+
+### Added
+- Added a manual workbench queue that tracks matched customers, their requested enchants, and the last raw trade-chat message
+- Added slash toggles for the workbench via `/ec`, `/ec workbench`, and `/e workbench`
+- Added row-level `Inv`, `Msg`, and `X` actions plus best-effort `Cast` actions and a manual materials checklist for each queued order
+- Added workbench debug logging so `/ec debug` also reports queue and UI activity
+- Added automatic workbench completion on trade close when there is strong completion evidence such as payment, a workbench cast, or a fully checked mats list
+- Added an optional already-grouped follow-up whisper with its own delay and configurable message when an invite fails because the customer is already grouped
+
+### Changed
+- Store reagent snapshots during `/ec scan` so queued orders can show aggregated mats totals
+- Cleaned up the XML load order so the main addon file is not loaded twice
+- Expanded local regression coverage around the workbench flow, grouped follow-up handling, and conservative trade/order matching
+
+### Fixed
+- Made workbench trade completion ignore unrelated trade partners instead of falling back to the currently selected order
+
 ## [2.1.0] - 2026-04-04
 
 ### Changed

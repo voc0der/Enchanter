@@ -16,6 +16,12 @@ local function assert_nil(value, message)
     end
 end
 
+local function assert_not_nil(value, message)
+    if value == nil then
+        error(message or "assert_not_nil failed")
+    end
+end
+
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
@@ -135,6 +141,7 @@ local function setup_env(opts)
 
     load_chunk("Tags.lua", "Enchanter", addon)
     load_chunk("Options.lua", "Enchanter", addon)
+    load_chunk("Workbench.lua", "Enchanter", addon)
     load_chunk("Enchanter.lua", "Enchanter", addon)
 
     addon.Init()
@@ -237,7 +244,254 @@ local function test_generic_lf_enchanter_whisper()
     assert_equal(state.timer_delays[1], 3, "generic whisper should honor whisper delay")
 end
 
+local function test_workbench_tracks_and_merges_orders()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+            },
+            RecipeMats = {
+                ["Enchant Weapon - Mongoose"] = {
+                    { Name = "Large Prismatic Shard", Count = 8, Link = "item:22449" },
+                    { Name = "Void Crystal", Count = 6, Link = "item:22450" },
+                },
+                ["Enchant Boots - Boar's Speed"] = {
+                    { Name = "Large Prismatic Shard", Count = 4, Link = "item:22449" },
+                    { Name = "Primal Air", Count = 8, Link = "item:22451" },
+                },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Queue")
+    addon.ParseMessage("lf boar speed now", "Buyer-Queue")
+
+    local state = addon.Workbench.EnsureState()
+    local order = addon.Workbench.GetSelectedOrder()
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    assert_equal(#state.Orders, 1, "repeat customer should update the same workbench order")
+    assert_equal(order.Customer, "Buyer-Queue", "workbench order should track the customer")
+    assert_equal(#order.Recipes, 2, "workbench order should merge recipes across repeat messages")
+    assert_equal(materials[1].Count, 12, "shared materials should aggregate counts across queued enchants")
+    assert_equal(materials[2].Name, "Primal Air", "other materials should remain in the snapshot")
+end
+
+local function test_workbench_remove_clears_player_gate()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Clear")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.RemoveOrder(order.Id)
+
+    assert_nil(addon.PlayerList["Buyer-Clear"], "removing a workbench order should clear the anti-spam player gate")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "removed orders should leave the queue")
+end
+
+local function test_workbench_debug_output_is_printed()
+    local addon, state = setup_env({
+        char_db = {
+            Debug = true,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Debug")
+
+    local found = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "%[Workbench%] queued order for Buyer%-Debug") then
+            found = true
+            break
+        end
+    end
+
+    assert_true(found, "workbench queue actions should print through debug mode")
+end
+
+local function test_workbench_auto_completes_after_trade_cast()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Finish")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    assert_not_nil(order, "order should exist before trade completion")
+
+    addon.Workbench.BeginTrade("Buyer-Finish")
+    addon.Workbench.NoteRecipeCast("Enchant Weapon - Mongoose")
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "cast evidence during trade should auto-complete the order")
+    assert_nil(addon.PlayerList["Buyer-Finish"], "auto-completion should clear the anti-spam gate")
+end
+
+local function test_workbench_keeps_order_when_trade_has_no_completion_signal()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Stays")
+
+    addon.Workbench.BeginTrade("Buyer-Stays")
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "trade close without evidence should keep the order queued")
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Stays"), "the queued order should still exist")
+end
+
+local function test_workbench_manual_invite_and_whisper_actions()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Again")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Again")
+    assert_not_nil(order, "order should exist for manual resend actions")
+
+    addon.Workbench.InviteOrder(order.Id)
+    addon.Workbench.WhisperOrder(order.Id)
+
+    assert_equal(#state.invites, 2, "manual invite should bypass the anti-spam gate and send again")
+    assert_equal(state.invites[2], "Buyer-Again", "manual invite should target the queued customer")
+    assert_equal(#state.whispers, 2, "manual whisper should resend the recipe message")
+    assert_equal(state.whispers[2].target, "Buyer-Again", "manual whisper should target the queued customer")
+    assert_true(string.find(state.whispers[2].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "manual whisper should include the matched recipe links")
+end
+
+local function test_grouped_follow_up_whispers_after_invite_failure()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = true,
+            GroupedFollowUpDelay = 4,
+            GroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.',
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Grouped")
+
+    local handled = addon.HandleInviteFailureMessage("Buyer-Grouped is already in a group.")
+
+    assert_true(handled, "already-grouped invite failures should be recognized")
+    assert_equal(#state.invites, 1, "initial invite should still be attempted once")
+    assert_equal(#state.whispers, 2, "grouped follow-up should add a second whisper")
+    assert_equal(state.whispers[2].target, "Buyer-Grouped", "grouped follow-up should target the failed invite customer")
+    assert_equal(state.whispers[2].message, 'You were in a group, but if you still need, please whisper "inv"! Thanks.', "grouped follow-up should use the configured message")
+    assert_equal(state.timer_delays[3], 4, "grouped follow-up should honor its own delay")
+end
+
+local function test_grouped_follow_up_is_ignored_when_disabled()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = false,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-NoFollowUp")
+
+    local handled = addon.HandleInviteFailureMessage("Buyer-NoFollowUp is already in a group.")
+
+    assert_true(not handled, "grouped follow-up should ignore invite failures when the option is disabled")
+    assert_equal(#state.whispers, 1, "no follow-up whisper should be added when disabled")
+end
+
+local function test_trade_with_unmatched_partner_does_not_complete_selected_order()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Queued")
+
+    addon.Workbench.BeginTrade("Completely-Other")
+    addon.Workbench.NoteRecipeCast("Enchant Weapon - Mongoose")
+    addon.Workbench.FinishTrade(5000)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "an unrelated trade should not complete the selected queued order")
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Queued"), "the queued order should remain after an unrelated trade")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
 test_generic_lf_enchanter_whisper()
+test_workbench_tracks_and_merges_orders()
+test_workbench_remove_clears_player_gate()
+test_workbench_debug_output_is_printed()
+test_workbench_auto_completes_after_trade_cast()
+test_workbench_keeps_order_when_trade_has_no_completion_signal()
+test_workbench_manual_invite_and_whisper_actions()
+test_grouped_follow_up_whispers_after_invite_failure()
+test_grouped_follow_up_is_ignored_when_disabled()
+test_trade_with_unmatched_partner_does_not_complete_selected_order()

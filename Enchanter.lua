@@ -7,6 +7,7 @@ EC.LfRecipeList = {}
 EC.SessionGold = 0
 EC.DefaultMsg = "I can do "
 EC.DefaultLfWhisperMsg = "What you looking for?"
+EC.DefaultGroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.'
 EC.EnchanterTags = EC.DefaultEnchanterTags or {}
 EC.PrefixTags = EC.DefaultPrefixTags or {}
 EC.RecipeTags = EC.DefaultRecipeTags or {}
@@ -15,8 +16,10 @@ EC.PrefixTagsCompiled = {}
 EC.BlacklistCompiled = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
+EC.PendingInvites = {}
 
 local preTradeGold = nil
+local pendingInviteWindow = 10
 
 local function GetAddOnMetadataCompat(addonName, field)
 	if C_AddOns and C_AddOns.GetAddOnMetadata then
@@ -55,11 +58,258 @@ local function GetRecipeApi()
 	return nil, nil, nil
 end
 
+local function GetRecipeReagentApi()
+	if GetNumCrafts and GetCraftInfo and GetCraftNumReagents and GetCraftReagentInfo then
+		return GetCraftNumReagents, GetCraftReagentInfo, GetCraftReagentItemLink
+	end
+	if GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillNumReagents and GetTradeSkillReagentInfo then
+		return GetTradeSkillNumReagents, GetTradeSkillReagentInfo, GetTradeSkillReagentItemLink
+	end
+	return nil, nil, nil
+end
+
+local function CaptureRecipeMaterials(recipeIndex)
+	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi()
+	local materials = {}
+
+	if not getNumReagents or not getReagentInfo then
+		return materials
+	end
+
+	for reagentIndex = 1, getNumReagents(recipeIndex) or 0 do
+		local reagentName, _, reagentCount = getReagentInfo(recipeIndex, reagentIndex)
+		if reagentName and reagentName ~= "" then
+			materials[#materials + 1] = {
+				Name = reagentName,
+				Count = tonumber(reagentCount) or 1,
+				Link = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil,
+			}
+		end
+	end
+
+	return materials
+end
+
 local function NormalizePhrase(value)
 	if not value then
 		return ""
 	end
 	return value:lower():gsub("[%W_]+", "")
+end
+
+local function Now()
+	if GetTime then
+		return GetTime()
+	end
+	return 0
+end
+
+local function NormalizeNameKey(name)
+	if not name then
+		return ""
+	end
+	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+	return cleaned:lower()
+end
+
+local function BuildGlobalStringPattern(template)
+	if type(template) ~= "string" or template == "" then
+		return nil
+	end
+
+	local pattern = template:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+	pattern = pattern:gsub("%%%d%$s", "(.+)")
+	pattern = pattern:gsub("%%s", "(.+)")
+	return "^" .. pattern .. "$"
+end
+
+local function MessageMatchesGroupedTemplate(message, customerName)
+	local templates = {
+		_G and _G.ERR_ALREADY_IN_GROUP_S,
+		_G and _G.ERR_ALREADY_IN_GROUP_SS,
+		_G and _G.ERR_ALREADY_IN_GROUP_GUID_S,
+	}
+	local normalizedCustomer = NormalizeNameKey(customerName)
+
+	for _, template in ipairs(templates) do
+		local pattern = BuildGlobalStringPattern(template)
+		if pattern then
+			local captures = { string.match(message, pattern) }
+			if #captures == 0 and message == template then
+				return true
+			end
+			for _, capture in ipairs(captures) do
+				if NormalizeNameKey(capture) == normalizedCustomer then
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function IsAlreadyGroupedMessage(message, customerName)
+	local normalizedMessage = NormalizePhrase(message)
+	if normalizedMessage == "" then
+		return false
+	end
+
+	if MessageMatchesGroupedTemplate(message, customerName) then
+		return true
+	end
+
+	if string.find(normalizedMessage, "alreadyinagroup", 1, true) then
+		local normalizedCustomer = NormalizePhrase(customerName)
+		if normalizedCustomer == "" or string.find(normalizedMessage, normalizedCustomer, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function PrunePendingInvites()
+	local cutoff = Now() - pendingInviteWindow
+	for key, pending in pairs(EC.PendingInvites) do
+		if not pending or (pending.Timestamp or 0) < cutoff then
+			EC.PendingInvites[key] = nil
+		end
+	end
+end
+
+function EC.GetMatchedRecipeNames(recipeMap)
+	local out = {}
+	local seen = {}
+	if type(recipeMap) ~= "table" then
+		return out
+	end
+
+	for key, value in pairs(recipeMap) do
+		local recipeName
+		if type(key) == "number" then
+			recipeName = value
+		else
+			recipeName = key
+		end
+
+		if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
+			seen[recipeName] = true
+			out[#out + 1] = recipeName
+		end
+	end
+
+	table.sort(out)
+	return out
+end
+
+function EC.DebugPrint(...)
+	if not EC.DBChar or not EC.DBChar.Debug then
+		return
+	end
+
+	local parts = {}
+	for index = 1, select("#", ...) do
+		parts[#parts + 1] = tostring(select(index, ...))
+	end
+
+	print("Debug mode:", table.concat(parts, " "))
+end
+
+function EC.BuildRecipeWhisper(recipeNames)
+	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
+
+	for _, recipeName in ipairs(EC.GetMatchedRecipeNames(recipeNames)) do
+		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
+	end
+
+	return msg
+end
+
+function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel)
+	local msg = EC.BuildRecipeWhisper(recipeNames)
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would whisper") .. " to " .. name .. ": " .. msg)
+	else
+		SendChatMessage(msg, "WHISPER", nil, name)
+	end
+
+	return msg
+end
+
+function EC.SendGroupedFollowUp(name, sourceLabel)
+	local msg = EC.DB.GroupedFollowUpMsg or EC.DefaultGroupedFollowUpMsg
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would grouped-followup") .. " to " .. name .. ": " .. msg)
+	else
+		SendChatMessage(msg, "WHISPER", nil, name)
+	end
+
+	return msg
+end
+
+function EC.InviteCustomer(name, sourceLabel)
+	if not name or name == "" then
+		return
+	end
+
+	PrunePendingInvites()
+	EC.PendingInvites[NormalizeNameKey(name)] = {
+		Name = name,
+		Timestamp = Now(),
+	}
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would invite") .. " " .. name)
+	else
+		InvitePlayer(name)
+	end
+end
+
+function EC.HandleInviteFailureMessage(message)
+	if not EC.DB or not EC.DB.GroupedFollowUp then
+		return false
+	end
+	if type(message) ~= "string" or message == "" then
+		return false
+	end
+
+	PrunePendingInvites()
+
+	local matchedPending
+	local pendingCount = 0
+	local latestPending
+
+	for _, pending in pairs(EC.PendingInvites) do
+		if pending and pending.Name then
+			pendingCount = pendingCount + 1
+			if not latestPending or (pending.Timestamp or 0) > (latestPending.Timestamp or 0) then
+				latestPending = pending
+			end
+			if IsAlreadyGroupedMessage(message, pending.Name) then
+				matchedPending = pending
+				break
+			end
+		end
+	end
+
+	if not matchedPending and pendingCount == 1 and latestPending and IsAlreadyGroupedMessage(message, nil) then
+		matchedPending = latestPending
+	end
+
+	if not matchedPending then
+		return false
+	end
+
+	EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
+	EC.DebugPrint("detected already-grouped invite failure for", matchedPending.Name)
+	After(EC.DB.GroupedFollowUpDelay, function()
+		EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
+	end)
+	return true
 end
 
 local function EnsureSavedVariables()
@@ -72,15 +322,20 @@ local function EnsureSavedVariables()
 	if not EC.DB.Custom then EC.DB.Custom = {} end
 	if not EC.DBChar.RecipeList then EC.DBChar.RecipeList = {} end
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
+	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
 	if EC.DB.NetherRecipes == nil then EC.DB.NetherRecipes = false end
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
+	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
+	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
+	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
+	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
 end
 
 function EC.RefreshCompiledData()
@@ -109,6 +364,10 @@ function EC.RefreshCompiledData()
 			end
 		end
 	end
+
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
 end
 
 function EC.GetItems()
@@ -120,6 +379,7 @@ function EC.GetItems()
 
 	EC.DBChar.RecipeList = {}
 	EC.DBChar.RecipeLinks = {}
+	EC.DBChar.RecipeMats = {}
 
 	CastSpellByName("Enchanting")
 
@@ -127,6 +387,7 @@ function EC.GetItems()
 		local recipeName = getInfo(index)
 		if recipeName and EC.RecipeTags["enGB"][recipeName] then
 			EC.DBChar.RecipeLinks[recipeName] = getLink and getLink(index) or nil
+			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index)
 			EC.DBChar.RecipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
 		end
 	end
@@ -135,6 +396,7 @@ function EC.GetItems()
 		for _, recipeName in ipairs(EC.RecipesWithNether) do
 			EC.DBChar.RecipeList[recipeName] = nil
 			EC.DBChar.RecipeLinks[recipeName] = nil
+			EC.DBChar.RecipeMats[recipeName] = nil
 		end
 	end
 
@@ -153,6 +415,11 @@ function EC.Init()
 	EnsureSavedVariables()
 
 	EC.Tool.SlashCommand({"/ec", "/enchanter", "/e"}, {
+		{"", "Toggles the workbench queue.", function()
+			if EC.Workbench and EC.Workbench.Toggle then
+				EC.Workbench.Toggle()
+			end
+		end},
 		{"scan", "MUST BE RAN PRIOR TO /ec start. Scans and stores your enchanting recipes to be used when filtering requests. Rerun after learning new recipes.", function()
 			DoScan()
 		end},
@@ -176,6 +443,11 @@ function EC.Init()
 				EC.Options.Open(1)
 			end
 		end, 1},
+		{{"workbench", "bench"}, "Toggles the workbench queue.", function()
+			if EC.Workbench and EC.Workbench.Toggle then
+				EC.Workbench.Toggle()
+			end
+		end},
 		{"debug", "Enables/Disables debug messages", function()
 			EC.DBChar.Debug = not EC.DBChar.Debug
 			print("Debug mode is now " .. (EC.DBChar.Debug and "on" or "off"))
@@ -195,6 +467,9 @@ function EC.Init()
 
 	EC.OptionsInit()
 	EC.OptionsUpdate()
+	if EC.Workbench and EC.Workbench.SyncVisibility then
+		EC.Workbench.SyncVisibility()
+	end
 	EC.Initalized = true
 
 	print("|cFFFF1C1C Loaded: "
@@ -208,16 +483,7 @@ function EC.SendMsg(name)
 		return
 	end
 
-	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
-	for recipeName in pairs(EC.LfRecipeList[name]) do
-		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
-	end
-
-	if EC.DBChar.Debug then
-		print("Debug mode: would whisper to " .. name .. ": " .. msg)
-	else
-		SendChatMessage(msg, "WHISPER", nil, name)
-	end
+	EC.SendRecipeWhisperTo(name, EC.LfRecipeList[name], "would whisper")
 
 	EC.LfRecipeList[name] = nil
 end
@@ -244,7 +510,7 @@ function EC.ParseMessage(msg, name)
 	for _, pattern in ipairs(EC.BlacklistCompiled) do
 		if string.find(parsedMessage, pattern) then
 			if EC.DBChar.Debug then
-				print("Request: " .. msg .. " is being blacklisted due to pattern: " .. pattern)
+				EC.DebugPrint("Request:", msg, "is being blacklisted due to pattern:", pattern)
 			end
 			return
 		end
@@ -259,24 +525,28 @@ function EC.ParseMessage(msg, name)
 				EC.LfRecipeList[name][recipeName] = tag
 				matchedRecipes = true
 				if EC.DBChar.Debug then
-					print("User should be invited for msg: " .. msg)
-					print("Due to tag: " .. tag .. " -> recipe " .. tostring(recipeName))
+					EC.DebugPrint("User should be invited for msg:", msg)
+					EC.DebugPrint("Due to tag:", tag, "-> recipe", tostring(recipeName))
 				end
 			end
 		end
 	end
 
 	if matchedRecipes then
+		if EC.Workbench and EC.Workbench.AddOrUpdateOrder then
+			EC.Workbench.AddOrUpdateOrder(name, msg, EC.LfRecipeList[name])
+		end
+
 		if EC.PlayerList[name] == nil then
 			EC.PlayerList[name] = 1
 
 			if EC.DBChar.Debug then
-				print("Debug mode: suppressed invite/whisper to " .. name)
+				EC.DebugPrint("suppressed invite/whisper to " .. name)
 				EC.SendMsg(name)
 			else
 				if EC.DB.AutoInvite then
-					After(EC.DB.InviteTimeDelay, function()
-						InvitePlayer(name)
+				After(EC.DB.InviteTimeDelay, function()
+						EC.InviteCustomer(name)
 					end)
 				end
 				After(EC.DB.WhisperTimeDelay, function()
@@ -296,7 +566,7 @@ function EC.ParseMessage(msg, name)
 				EC.PlayerList[name] = 1
 				local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
 				if EC.DBChar.Debug then
-					print("Debug mode: would whisper to " .. name .. ": " .. genericReply)
+					EC.DebugPrint("would whisper to " .. name .. ": " .. genericReply)
 				else
 					After(EC.DB.WhisperTimeDelay, function()
 						SendChatMessage(genericReply, "WHISPER", nil, name)
@@ -310,6 +580,9 @@ end
 
 local function Event_TRADE_SHOW()
 	preTradeGold = GetMoney()
+	if EC.Workbench and EC.Workbench.BeginTrade then
+		EC.Workbench.BeginTrade(EC.Workbench.GetTradePartnerName and EC.Workbench.GetTradePartnerName() or nil)
+	end
 end
 
 local function Event_TRADE_CLOSED()
@@ -321,7 +594,12 @@ local function Event_TRADE_CLOSED()
 			if delta > 0 then
 				EC.SessionGold = EC.SessionGold + delta
 			end
+			if EC.Workbench and EC.Workbench.FinishTrade then
+				EC.Workbench.FinishTrade(delta)
+			end
 		end)
+	elseif EC.Workbench and EC.Workbench.FinishTrade then
+		EC.Workbench.FinishTrade(0)
 	end
 end
 
@@ -330,6 +608,22 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 		return
 	end
 	EC.ParseMessage(msg, name)
+end
+
+local function Event_CHAT_MSG_SYSTEM(msg)
+	EC.HandleInviteFailureMessage(msg)
+end
+
+local function Event_UI_ERROR_MESSAGE(arg1, arg2, arg3)
+	local message
+	if type(arg1) == "string" then
+		message = arg1
+	elseif type(arg2) == "string" then
+		message = arg2
+	elseif type(arg3) == "string" then
+		message = arg3
+	end
+	EC.HandleInviteFailureMessage(message)
 end
 
 local function Event_ADDON_LOADED(arg1)
@@ -345,6 +639,8 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("CHAT_MSG_YELL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_GUILD", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_OFFICER", Event_CHAT_MSG_CHANNEL)
+	EC.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
+	EC.Tool.RegisterEvent("UI_ERROR_MESSAGE", Event_UI_ERROR_MESSAGE)
 	EC.Tool.RegisterEvent("TRADE_SHOW", Event_TRADE_SHOW)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
 end

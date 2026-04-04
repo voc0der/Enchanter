@@ -3,9 +3,10 @@
 - Helps enchanters catch trade-chat requests that match recipes they actually know
 - Scans your known enchanting recipes and stores match tags per character
 - Can auto-invite matched players and whisper recipe links for the enchants you can perform
+- Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.0`
+Current version: `2.1.1`
 
 ## What It Does
 
@@ -14,6 +15,8 @@ Current version: `2.1.0`
 - Auto-invite matched players when `Auto Invite` is enabled
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
+- Queue matched customers into a workbench window with per-order recipe and materials snapshots
+- Auto-complete queued orders when a trade closes with strong completion evidence such as a workbench cast, full mats checklist, or payment
 
 ## Install
 
@@ -25,12 +28,24 @@ Current version: `2.1.0`
 ## Usage
 
 - `/ec scan`: Scan and store your known enchanting recipes. Run this before `/ec start` and any time you learn a new recipe.
+- `/ec` or `/ec workbench`: Toggle the workbench queue window.
 - `/ec start`: Start matching chat messages.
 - `/ec stop` or `/ec pause`: Stop matching chat messages.
 - `/ec config`: Open the addon settings.
 - `/ec debug`: Toggle debug output.
 - `/ec summary`: Print session earnings from completed trades.
 - `/ec about`: Print usage help.
+
+## Workbench
+
+- New matched orders are added to a queue instead of being lost in chat spam.
+- Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
+- Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
+- Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
+- Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
+- When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
+- Click the per-order `X` when the order is done or you want to clear it from the queue.
+- In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 
 ## Contributing
 
