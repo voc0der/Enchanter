@@ -38,10 +38,13 @@ function EC.Default()
 	EC.DB.AutoInvite = true
 	EC.DB.NetherRecipes = false
 	EC.DB.WhisperLfRequests = false
+	EC.DB.GroupedFollowUp = false
 	EC.DB.InviteTimeDelay = 0
 	EC.DB.WhisperTimeDelay = 0
+	EC.DB.GroupedFollowUpDelay = 1
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
+	EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
 	EC.DB.Custom.BlackList = ""
 	EC.DB.Custom.SearchPrefix = Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = Combine(EC.DefaultEnchanterTags)
@@ -58,6 +61,9 @@ function EC.OptionsUpdate()
 	end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then
 		EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
+	end
+	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then
+		EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
 	end
 
 	EC.BlackList = SplitCSV(EC.DB.Custom.BlackList)
@@ -155,12 +161,14 @@ function EC.OptionsInit()
 	AddSavedCheckBox(EC.DB, "AutoInvite", true, "Auto Invite")
 	AddSavedCheckBox(EC.DB, "NetherRecipes", false, "Disable Nether Recipes")
 	AddSavedCheckBox(EC.DB, "WhisperLfRequests", false, "Reply to LF Enchanter requests")
+	AddSavedCheckBox(EC.DB, "GroupedFollowUp", false, "Follow up if target already grouped")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.Indent(-10)
 	EC.OptionsBuilder.AddSpacerToPanel()
 
 	MakeSavedEditBox(EC.DB, "WhisperTimeDelay", 0, "Whisper Delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "InviteTimeDelay", 0, "Invite Delay (seconds)", 60, nil, true)
+	MakeSavedEditBox(EC.DB, "GroupedFollowUpDelay", 1, "Grouped follow-up delay (seconds)", 60, nil, true)
 
 	EC.OptionsBuilder.AddHeaderToCurrentPanel("Search Patterns")
 	EC.OptionsBuilder.Indent(10)
@@ -169,6 +177,7 @@ function EC.OptionsInit()
 
 	MakeSavedEditBox(EC.DB, "MsgPrefix", EC.DefaultMsg, "Message Prefix", 445, 200, false)
 	MakeSavedEditBox(EC.DB, "LfWhisperMsg", EC.DefaultLfWhisperMsg, "Generic request whisper", 445, 200, false)
+	MakeSavedEditBox(EC.DB, "GroupedFollowUpMsg", EC.DefaultGroupedFollowUpMsg, "Already grouped follow-up", 445, 200, false)
 	EC.OptionsBuilder.AddSpacerToPanel()
 
 	MakeSavedEditBox(EC.DB.Custom, "SearchPrefix", Combine(EC.PrefixTags), "Prefix to search for", 445, 200, false)

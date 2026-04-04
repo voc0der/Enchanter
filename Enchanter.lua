@@ -7,6 +7,7 @@ EC.LfRecipeList = {}
 EC.SessionGold = 0
 EC.DefaultMsg = "I can do "
 EC.DefaultLfWhisperMsg = "What you looking for?"
+EC.DefaultGroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.'
 EC.EnchanterTags = EC.DefaultEnchanterTags or {}
 EC.PrefixTags = EC.DefaultPrefixTags or {}
 EC.RecipeTags = EC.DefaultRecipeTags or {}
@@ -15,8 +16,10 @@ EC.PrefixTagsCompiled = {}
 EC.BlacklistCompiled = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
+EC.PendingInvites = {}
 
 local preTradeGold = nil
+local pendingInviteWindow = 10
 
 local function GetAddOnMetadataCompat(addonName, field)
 	if C_AddOns and C_AddOns.GetAddOnMetadata then
@@ -94,6 +97,88 @@ local function NormalizePhrase(value)
 	return value:lower():gsub("[%W_]+", "")
 end
 
+local function Now()
+	if GetTime then
+		return GetTime()
+	end
+	return 0
+end
+
+local function NormalizeNameKey(name)
+	if not name then
+		return ""
+	end
+	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+	return cleaned:lower()
+end
+
+local function BuildGlobalStringPattern(template)
+	if type(template) ~= "string" or template == "" then
+		return nil
+	end
+
+	local pattern = template:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+	pattern = pattern:gsub("%%%d%$s", "(.+)")
+	pattern = pattern:gsub("%%s", "(.+)")
+	return "^" .. pattern .. "$"
+end
+
+local function MessageMatchesGroupedTemplate(message, customerName)
+	local templates = {
+		_G and _G.ERR_ALREADY_IN_GROUP_S,
+		_G and _G.ERR_ALREADY_IN_GROUP_SS,
+		_G and _G.ERR_ALREADY_IN_GROUP_GUID_S,
+	}
+	local normalizedCustomer = NormalizeNameKey(customerName)
+
+	for _, template in ipairs(templates) do
+		local pattern = BuildGlobalStringPattern(template)
+		if pattern then
+			local captures = { string.match(message, pattern) }
+			if #captures == 0 and message == template then
+				return true
+			end
+			for _, capture in ipairs(captures) do
+				if NormalizeNameKey(capture) == normalizedCustomer then
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function IsAlreadyGroupedMessage(message, customerName)
+	local normalizedMessage = NormalizePhrase(message)
+	if normalizedMessage == "" then
+		return false
+	end
+
+	if MessageMatchesGroupedTemplate(message, customerName) then
+		return true
+	end
+
+	if string.find(normalizedMessage, "alreadyinagroup", 1, true) then
+		local normalizedCustomer = NormalizePhrase(customerName)
+		if normalizedCustomer == "" or string.find(normalizedMessage, normalizedCustomer, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function PrunePendingInvites()
+	local cutoff = Now() - pendingInviteWindow
+	for key, pending in pairs(EC.PendingInvites) do
+		if not pending or (pending.Timestamp or 0) < cutoff then
+			EC.PendingInvites[key] = nil
+		end
+	end
+end
+
 function EC.GetMatchedRecipeNames(recipeMap)
 	local out = {}
 	local seen = {}
@@ -154,16 +239,77 @@ function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel)
 	return msg
 end
 
+function EC.SendGroupedFollowUp(name, sourceLabel)
+	local msg = EC.DB.GroupedFollowUpMsg or EC.DefaultGroupedFollowUpMsg
+
+	if EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would grouped-followup") .. " to " .. name .. ": " .. msg)
+	else
+		SendChatMessage(msg, "WHISPER", nil, name)
+	end
+
+	return msg
+end
+
 function EC.InviteCustomer(name, sourceLabel)
 	if not name or name == "" then
 		return
 	end
+
+	PrunePendingInvites()
+	EC.PendingInvites[NormalizeNameKey(name)] = {
+		Name = name,
+		Timestamp = Now(),
+	}
 
 	if EC.DBChar.Debug then
 		EC.DebugPrint((sourceLabel or "would invite") .. " " .. name)
 	else
 		InvitePlayer(name)
 	end
+end
+
+function EC.HandleInviteFailureMessage(message)
+	if not EC.DB or not EC.DB.GroupedFollowUp then
+		return false
+	end
+	if type(message) ~= "string" or message == "" then
+		return false
+	end
+
+	PrunePendingInvites()
+
+	local matchedPending
+	local pendingCount = 0
+	local latestPending
+
+	for _, pending in pairs(EC.PendingInvites) do
+		if pending and pending.Name then
+			pendingCount = pendingCount + 1
+			if not latestPending or (pending.Timestamp or 0) > (latestPending.Timestamp or 0) then
+				latestPending = pending
+			end
+			if IsAlreadyGroupedMessage(message, pending.Name) then
+				matchedPending = pending
+				break
+			end
+		end
+	end
+
+	if not matchedPending and pendingCount == 1 and latestPending and IsAlreadyGroupedMessage(message, nil) then
+		matchedPending = latestPending
+	end
+
+	if not matchedPending then
+		return false
+	end
+
+	EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
+	EC.DebugPrint("detected already-grouped invite failure for", matchedPending.Name)
+	After(EC.DB.GroupedFollowUpDelay, function()
+		EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
+	end)
+	return true
 end
 
 local function EnsureSavedVariables()
@@ -182,10 +328,13 @@ local function EnsureSavedVariables()
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
 	if EC.DB.NetherRecipes == nil then EC.DB.NetherRecipes = false end
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
+	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
+	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
+	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
 	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
 end
 
@@ -461,6 +610,22 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 	EC.ParseMessage(msg, name)
 end
 
+local function Event_CHAT_MSG_SYSTEM(msg)
+	EC.HandleInviteFailureMessage(msg)
+end
+
+local function Event_UI_ERROR_MESSAGE(arg1, arg2, arg3)
+	local message
+	if type(arg1) == "string" then
+		message = arg1
+	elseif type(arg2) == "string" then
+		message = arg2
+	elseif type(arg3) == "string" then
+		message = arg3
+	end
+	EC.HandleInviteFailureMessage(message)
+end
+
 local function Event_ADDON_LOADED(arg1)
 	if arg1 == TOCNAME then
 		EC.Init()
@@ -474,6 +639,8 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("CHAT_MSG_YELL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_GUILD", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_OFFICER", Event_CHAT_MSG_CHANNEL)
+	EC.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
+	EC.Tool.RegisterEvent("UI_ERROR_MESSAGE", Event_UI_ERROR_MESSAGE)
 	EC.Tool.RegisterEvent("TRADE_SHOW", Event_TRADE_SHOW)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
 end

@@ -45,6 +45,7 @@ Current version: `2.1.1`
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - When a trade closes, the addon now retires the queued order automatically if it has enough evidence the enchant was actually completed.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
+- In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 
 ## Contributing
 

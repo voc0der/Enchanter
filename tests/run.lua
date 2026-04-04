@@ -401,6 +401,40 @@ local function test_workbench_manual_invite_and_whisper_actions()
     assert_true(string.find(state.whispers[2].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "manual whisper should include the matched recipe links")
 end
 
+local function test_grouped_follow_up_whispers_after_invite_failure()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = true,
+            GroupedFollowUpDelay = 4,
+            GroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.',
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Grouped")
+
+    local handled = addon.HandleInviteFailureMessage("Buyer-Grouped is already in a group.")
+
+    assert_true(handled, "already-grouped invite failures should be recognized")
+    assert_equal(#state.invites, 1, "initial invite should still be attempted once")
+    assert_equal(#state.whispers, 2, "grouped follow-up should add a second whisper")
+    assert_equal(state.whispers[2].target, "Buyer-Grouped", "grouped follow-up should target the failed invite customer")
+    assert_equal(state.whispers[2].message, 'You were in a group, but if you still need, please whisper "inv"! Thanks.', "grouped follow-up should use the configured message")
+    assert_equal(state.timer_delays[3], 4, "grouped follow-up should honor its own delay")
+end
+
 test_scan_filters_unknown_and_nether_recipes()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
@@ -411,3 +445,4 @@ test_workbench_debug_output_is_printed()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
+test_grouped_follow_up_whispers_after_invite_failure()
