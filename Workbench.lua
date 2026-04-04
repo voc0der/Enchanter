@@ -354,6 +354,42 @@ local function ApplyFrameLayout(frame)
 	frame.ListScroll:SetHeight(GetQueueHeight(frame))
 end
 
+local function GetQueueListWidth(frame)
+	if not frame then
+		return DEFAULT_FRAME_WIDTH - 56
+	end
+
+	local listWidth = 0
+	if frame.ListChild and frame.ListChild.GetWidth then
+		listWidth = tonumber(frame.ListChild:GetWidth()) or 0
+	end
+	if listWidth <= 0 and frame.ListScroll and frame.ListScroll.GetWidth then
+		listWidth = (tonumber(frame.ListScroll:GetWidth()) or 0) - 24
+	end
+	if listWidth <= 0 and frame.GetWidth then
+		listWidth = (tonumber(frame:GetWidth()) or DEFAULT_FRAME_WIDTH) - 52
+	end
+
+	return math.max(320, math.floor(listWidth))
+end
+
+local function ClampQueueScroll(frame)
+	if not frame or not frame.ListScroll or not frame.ListScroll.SetVerticalScroll then
+		return
+	end
+
+	local visibleHeight = frame.ListScroll.GetHeight and tonumber(frame.ListScroll:GetHeight()) or 0
+	local childHeight = frame.ListChild and frame.ListChild.GetHeight and tonumber(frame.ListChild:GetHeight()) or 0
+	local maximumScroll = math.max(0, childHeight - visibleHeight)
+	local currentScroll = frame.ListScroll.GetVerticalScroll and tonumber(frame.ListScroll:GetVerticalScroll()) or 0
+
+	if currentScroll < 0 then
+		frame.ListScroll:SetVerticalScroll(0)
+	elseif currentScroll > maximumScroll then
+		frame.ListScroll:SetVerticalScroll(maximumScroll)
+	end
+end
+
 local function SortedOrders()
 	local state = Workbench.EnsureState()
 	return state.Orders
@@ -755,6 +791,25 @@ function Workbench.RemoveOrder(orderId)
 	Workbench.Refresh()
 end
 
+function Workbench.ClearOrders()
+	local state = Workbench.EnsureState()
+	local removedCount = #state.Orders
+
+	for _, order in ipairs(state.Orders) do
+		EC.PlayerList[order.Customer] = nil
+		EC.LfRecipeList[order.Customer] = nil
+	end
+
+	state.Orders = {}
+	state.SelectedOrderId = nil
+	local runtime = EnsureRuntime()
+	runtime.ActiveTrade = nil
+
+	WorkbenchDebug("cleared queue (" .. tostring(removedCount) .. " orders)")
+	Workbench.Refresh()
+	return removedCount
+end
+
 function Workbench.InviteOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
 	if not order then
@@ -1099,13 +1154,25 @@ function Workbench.CreateFrame()
 		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
 
+	frame.ClearButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.ClearButton:SetSize(48, 20)
+	frame.ClearButton:SetPoint("RIGHT", frame.LockButton, "LEFT", -6, 0)
+	frame.ClearButton:SetText("Clear")
+	if frame.ClearButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.ClearButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.ClearButton, "button")
+	frame.ClearButton:SetScript("OnClick", function()
+		Workbench.ClearOrders()
+	end)
+
 	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
 	frame.TitleText:SetText("Enchanter Workbench")
 
 	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
-	frame.QueueCountText:SetPoint("RIGHT", frame.LockButton, "LEFT", -10, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.ClearButton, "LEFT", -10, 0)
 	frame.QueueCountText:SetJustifyH("LEFT")
 	frame.QueueCountText:SetText("0 orders")
 
@@ -1276,6 +1343,7 @@ function Workbench.Refresh()
 
 		row:ClearAllPoints()
 		row:SetPoint("TOPLEFT", frame.ListChild, "TOPLEFT", 4, -((index - 1) * 62))
+		row:SetWidth(GetQueueListWidth(frame) - 14)
 	end
 
 	for index = #state.Orders + 1, #frame.OrderRows do
@@ -1284,6 +1352,7 @@ function Workbench.Refresh()
 
 	local listHeight = frame.ListScroll and frame.ListScroll.GetHeight and frame.ListScroll:GetHeight() or MIN_QUEUE_HEIGHT
 	frame.ListChild:SetHeight(math.max(listHeight, (#state.Orders * 62)))
+	ClampQueueScroll(frame)
 
 	local order = Workbench.GetSelectedOrder()
 	if not order then

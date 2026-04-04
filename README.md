@@ -43,6 +43,7 @@ Current version: `2.1.4`
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
+- Use the header `Clear` button to wipe the current queue and reset the detail pane if you want to flush stale or finished orders quickly.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - Click `Cast` next to a queued enchant for a best-effort profession cast without fully automating the trade.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.

@@ -171,6 +171,8 @@ local function setup_env(opts)
         function frame:CreateFontString() return new_font_string() end
         function frame:CreateTexture() return new_texture() end
         function frame:SetScrollChild(child) self.scroll_child = child end
+        function frame:SetVerticalScroll(value) self.vertical_scroll = value end
+        function frame:GetVerticalScroll() return self.vertical_scroll or 0 end
         function frame:SetText(text) self.text = text end
         function frame:GetText() return self.text end
         function frame:SetChecked(value) self.checked = value and true or false end
@@ -569,6 +571,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_true(frame.resizable, "workbench should allow resizing")
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
+    assert_equal(frame.ClearButton.parent, frame.Header, "clear button should also live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 end
@@ -591,6 +594,7 @@ local function test_workbench_refresh_survives_without_fontstring_setshown()
     assert_not_nil(frame.OrderRows[1], "queue row should still be created when font strings do not expose SetShown")
     assert_true(frame.OrderRows[1].shown, "queue row should still be shown when refresh uses the compatibility visibility helper")
     assert_equal(frame.OrderRows[1].NameText.text, "Buyer-NoSetShown", "visible queue row should match the newly queued customer")
+    assert_true((frame.OrderRows[1]:GetWidth() or 0) > 0, "queue row should keep a positive width after refresh so it does not disappear")
 end
 
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
@@ -798,6 +802,44 @@ local function test_workbench_manual_invite_and_whisper_actions()
     assert_true(string.find(state.whispers[2].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "manual whisper should include the matched recipe links")
 end
 
+local function test_workbench_clear_button_empties_queue_and_resets_detail()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Wipe")
+
+    frame.ClearButton.scripts["OnClick"]()
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "clear button should remove every queued order")
+    assert_nil(addon.Workbench.GetSelectedOrder(), "clear button should clear the selected order")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "clear button should reset the stale detail pane")
+end
+
+local function test_workbench_refresh_clamps_stale_scroll_offset()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    frame.ListScroll:SetVerticalScroll(999)
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Scroll")
+
+    assert_equal(frame.ListScroll:GetVerticalScroll(), 0, "refresh should clamp stale queue scroll offsets so visible rows are not scrolled into empty space")
+end
+
 local function test_grouped_follow_up_whispers_after_invite_failure()
     local addon, state = setup_env({
         db = {
@@ -979,6 +1021,8 @@ test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_auto_completes_after_trade_cast()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
 test_workbench_manual_invite_and_whisper_actions()
+test_workbench_clear_button_empties_queue_and_resets_detail()
+test_workbench_refresh_clamps_stale_scroll_offset()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()

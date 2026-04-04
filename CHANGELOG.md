@@ -1,3 +1,12 @@
+## [Unreleased]
+
+### Added
+- Added a header-level `Clear` action to wipe the queued orders and reset the selected detail pane when the workbench gets into a stale or noisy state
+
+### Fixed
+- Gave refreshed queue rows an explicit width so workbench orders no longer disappear even while the queue count keeps increasing
+- Clamp stale queue scroll offsets during refresh so the list cannot stay scrolled into blank space after the queued order count changes
+
 ## [2.1.4] - 2026-04-04
 
 ### Added
