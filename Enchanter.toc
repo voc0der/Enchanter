@@ -1,8 +1,9 @@
-## Interface: 30401
+## Interface: 20505
 ## Title: Enchanter
 ## Notes: Helps enchanters get connected with those looking for enchants
-## Version: 2.02
+## Version: 2.1.0
 ## Author: Vyscî-Whitemane
+## X-Website: https://github.com/voc0der/Enchanter
 ## DefaultState: enabled
 ## SavedVariables: EnchanterDB
 ## SavedVariablesPerCharacter:EnchanterDBChar

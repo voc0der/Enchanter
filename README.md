@@ -1,32 +1,45 @@
 # Enchanter
-WoW Addon that helps enchanters get connected with those looking for enchants. This add-on will not blindly invite anyone who is looking for an enchant, it will only invite those who are looking for enchant that the enchanter has. 
 
-Enchanter scans and saves your characters known enchanting recipes, it will then be parsing chat for any requests that match the known recipes. Once there is a match it will auto invite the person and whisper them a link to all of the requested enchant recipes that the enchanter is capable of doing. 
+- Helps enchanters catch trade-chat requests that match recipes they actually know
+- Scans your known enchanting recipes and stores match tags per character
+- Can auto-invite matched players and whisper recipe links for the enchants you can perform
+- Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-If you discover that a request was either wrongfully matched or not matched please provide the full request message
+Current version: `2.1.0`
 
-## Usage VERY IMPORTANT
+## What It Does
 
-You need to first run /ec scan this will store your known recipes and will be parsing chat for them (only need to do it 1 time or if you learned new recipes) after run /ec start to start looking for requests
+- Run `/ec scan` once after learning recipes to build your known-enchant list
+- Match trade-chat requests against configured recipe tags
+- Auto-invite matched players when `Auto Invite` is enabled
+- Whisper the matching enchant links with a configurable delay and message prefix
+- Optionally reply to generic `LF enchanter` requests with a custom whisper
 
-/ec scan MUST BE RAN PRIOR TO /ec start   Scans and stores your enchanting recipes to be used when filtering for requests. NOTE: You need to rerun this when you learn new recipes
-/ec start Starts scanning chat (/ec scan must have been at some point)
-/ec stop/pause pauses scanning
-/ec debug displays debug messages
-/ec about displays usage
+## Install
 
-## THIS ADDON IS CURRENTLY IN VERY EARLY STAGES
-What this means is:
-  - Bugs are going to happen ie not inviting someone who should be invited or inviting the wrong person
-  - It doesn't have every single possible recipe, only the most popular once
-  - Lots of missing features
+1. Download the latest GitHub release when one is available.
+2. Extract the `Enchanter` folder into:
+   `World of Warcraft/_anniversary_/Interface/AddOns/`
+3. Start the game and make sure the addon is enabled.
 
-## Known Issues:
-- A person will only ever be invited to the group once (THIS IS INTENDED BEHAVIOR) regardless of how many times they post or what they post. This is in case there is a bug with the addon and it wrongfully matches a request, we don't want to keep spamming invite to the person every time they repost the message. Doing a /reload will clear the counter
-- Messages that are just "LF Enchanter" will be ignored (THIS IS INTENDED BEHAVIOR)
-- On occasion a whisper don't be send
+## Usage
 
-## Future Features
-- Having settings 
-- Ability to modify tags
-- Maybe more professions (prob not)
+- `/ec scan`: Scan and store your known enchanting recipes. Run this before `/ec start` and any time you learn a new recipe.
+- `/ec start`: Start matching chat messages.
+- `/ec stop` or `/ec pause`: Stop matching chat messages.
+- `/ec config`: Open the addon settings.
+- `/ec debug`: Toggle debug output.
+- `/ec summary`: Print session earnings from completed trades.
+- `/ec about`: Print usage help.
+
+## Contributing
+
+Development and contribution notes are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Release workflow notes are in [`RELEASING.md`](RELEASING.md).
+Fork-specific migration notes are in [`TBC_ANNIVERSARY_NOTES.md`](TBC_ANNIVERSARY_NOTES.md).
+
+## Scope
+
+- Target client: TBC Anniversary Classic
+- TOC interface: `20505`
+- Runtime files are listed in [`Enchanter.toc`](Enchanter.toc)
