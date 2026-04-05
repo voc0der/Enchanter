@@ -8,6 +8,7 @@
 - Stopped showing manual `No tip` and `Complete` controls during an active trade so the detail pane no longer invites premature clicks while the trade is still settling
 - Only auto-verified an applied enchant once Blizzard reports a real enchantment in the trade slot, instead of treating an unmodified slot item as finished work
 - Accumulated shared reagent counts across multiple accepted trades, which fixes multi-enchant orders that are paid out in separate mat handoffs
+- Replaced the material checklist controls with automatic `?` / green-check status indicators so mat tracking is no longer manual
 
 ## [2.1.11] - 2026-04-05
 
