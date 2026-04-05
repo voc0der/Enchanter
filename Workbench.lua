@@ -194,6 +194,18 @@ local function SetRegionShown(region, shouldShow)
 	end
 end
 
+local function IsRegionShown(region)
+	if not region then
+		return false
+	end
+
+	if region.IsShown then
+		return region:IsShown()
+	end
+
+	return region.shown ~= false
+end
+
 local function TrimText(value)
 	if not value then
 		return ""
@@ -258,6 +270,69 @@ local function ParseMoneyCompact(value)
 	return nil
 end
 
+local function GetLegacyTipCopper(order)
+	if not order then
+		return 0
+	end
+
+	local pendingTipText = TrimText(order.PendingTipText)
+	if pendingTipText == "" then
+		return 0
+	end
+
+	local tipCopper = ParseMoneyCompact(pendingTipText)
+	if tipCopper == nil then
+		return 0
+	end
+
+	return math.max(0, math.floor(tipCopper))
+end
+
+local function GetRecordedTipCopper(order)
+	if not order then
+		return 0
+	end
+
+	local observedTipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0))
+	if observedTipCopper > 0 then
+		return observedTipCopper
+	end
+
+	return GetLegacyTipCopper(order)
+end
+
+local function GetResolvedTipCopper(order)
+	local recordedTipCopper = GetRecordedTipCopper(order)
+	if recordedTipCopper > 0 then
+		return recordedTipCopper, true
+	end
+
+	if order and order.NoTipConfirmed then
+		return 0, true
+	end
+
+	return 0, false
+end
+
+local function HasResolvedTip(order)
+	local _, resolved = GetResolvedTipCopper(order)
+	return resolved
+end
+
+local function GetTipStatusText(order, activeTrade)
+	local tipCopper, resolved = GetResolvedTipCopper(order)
+	if tipCopper > 0 then
+		return "Tip: " .. FormatMoneyCompact(tipCopper)
+	end
+	if resolved then
+		return "Tip: no tip"
+	end
+	if activeTrade then
+		return "Tip: waiting for trade gold"
+	end
+	return "Tip: not recorded"
+end
+
 local function CopyRecipeNames(recipeMapOrList)
 	local out = {}
 	local seen = {}
@@ -319,7 +394,22 @@ local function EnsureOrderFields(order)
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
 	order.Message = order.Message or ""
 	order.PendingTipText = order.PendingTipText or ""
+	order.NoTipConfirmed = order.NoTipConfirmed and true or false
 	order.LastObservedTipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0))
+	if TrimText(order.PendingTipText) ~= "" then
+		local migratedTipCopper = ParseMoneyCompact(order.PendingTipText)
+		if migratedTipCopper ~= nil then
+			if migratedTipCopper > 0 and order.LastObservedTipCopper <= 0 then
+				order.LastObservedTipCopper = migratedTipCopper
+			elseif migratedTipCopper == 0 then
+				order.NoTipConfirmed = true
+			end
+		end
+		order.PendingTipText = ""
+	end
+	if order.LastObservedTipCopper > 0 then
+		order.NoTipConfirmed = false
+	end
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
@@ -404,10 +494,23 @@ local function ApplyFrameSize(frame)
 	)
 end
 
+local GetDetailContentWidth
+local GetDetailVisibleHeight
+local ClampDetailScroll
+local UpdateDetailContentHeight
+
 local function GetQueueHeight(frame)
 	local frameHeight = ClampNumber(frame and frame.GetHeight and frame:GetHeight() or DEFAULT_FRAME_HEIGHT, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
 	local maximumQueueHeight = math.max(MIN_QUEUE_HEIGHT, frameHeight - DETAIL_RESERVED_HEIGHT)
 	local suggestedQueueHeight = math.floor(frameHeight * 0.42)
+	local orderCount = #(Workbench.EnsureState().Orders or {})
+
+	if orderCount > 0 then
+		local rowsHeight = (orderCount * 62) + 8
+		local minimumQueueHeight = math.max(74, math.min(MIN_QUEUE_HEIGHT, rowsHeight))
+		return ClampNumber(math.min(suggestedQueueHeight, rowsHeight), minimumQueueHeight, maximumQueueHeight)
+	end
+
 	return ClampNumber(suggestedQueueHeight, MIN_QUEUE_HEIGHT, maximumQueueHeight)
 end
 
@@ -417,6 +520,33 @@ local function ApplyFrameLayout(frame)
 	end
 
 	frame.ListScroll:SetHeight(GetQueueHeight(frame))
+
+	if frame.Detail and frame.Detail.Content then
+		local detailContentWidth = GetDetailContentWidth(frame)
+		local detailVisibleHeight = GetDetailVisibleHeight(frame)
+
+		frame.Detail.Content:SetWidth(detailContentWidth)
+		if (frame.Detail.Content.GetHeight and tonumber(frame.Detail.Content:GetHeight()) or 0) < detailVisibleHeight then
+			frame.Detail.Content:SetHeight(detailVisibleHeight)
+		end
+		if frame.Detail.ActionRow and frame.Detail.ActionRow.SetWidth then
+			frame.Detail.ActionRow:SetWidth(detailContentWidth)
+		end
+		for _, region in ipairs({
+			frame.Detail.Title,
+			frame.Detail.Meta,
+			frame.Detail.Message,
+			frame.Detail.TradeHint,
+			frame.Detail.TipStatus,
+			frame.Detail.Empty,
+			frame.Detail.ReadyText,
+		}) do
+			if region and region.SetWidth then
+				region:SetWidth(detailContentWidth)
+			end
+		end
+		ClampDetailScroll(frame)
+	end
 end
 
 local function GetTradeSlotLimit()
@@ -472,17 +602,126 @@ local function GetQueueListWidth(frame)
 	return math.max(320, math.floor(listWidth))
 end
 
-local function GetDetailContentWidth(frame)
+GetDetailContentWidth = function(frame)
+	if frame and frame.Detail and frame.Detail.Content and frame.Detail.Content.GetWidth then
+		local contentWidth = tonumber(frame.Detail.Content:GetWidth()) or 0
+		if contentWidth > 0 then
+			return math.max(160, math.floor(contentWidth))
+		end
+	end
+
+	if frame and frame.Detail and frame.Detail.Scroll and frame.Detail.Scroll.GetWidth then
+		local scrollWidth = tonumber(frame.Detail.Scroll:GetWidth()) or 0
+		if scrollWidth > 0 then
+			return math.max(160, math.floor(scrollWidth - 20))
+		end
+	end
+
 	if not frame or not frame.Detail or not frame.Detail.GetWidth then
-		return DEFAULT_FRAME_WIDTH - 40
+		return DEFAULT_FRAME_WIDTH - 76
 	end
 
 	local detailWidth = tonumber(frame.Detail:GetWidth()) or 0
 	if detailWidth <= 0 and frame.GetWidth then
-		detailWidth = (tonumber(frame:GetWidth()) or DEFAULT_FRAME_WIDTH) - 28
+		detailWidth = (tonumber(frame:GetWidth()) or DEFAULT_FRAME_WIDTH) - 52
 	end
 
 	return math.max(160, math.floor(detailWidth - 24))
+end
+
+GetDetailVisibleHeight = function(frame)
+	if frame and frame.Detail and frame.Detail.Scroll and frame.Detail.Scroll.GetHeight then
+		local scrollHeight = tonumber(frame.Detail.Scroll:GetHeight()) or 0
+		if scrollHeight > 0 then
+			return math.max(120, math.floor(scrollHeight))
+		end
+	end
+
+	local frameHeight = ClampNumber(frame and frame.GetHeight and frame:GetHeight() or DEFAULT_FRAME_HEIGHT, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
+	return math.max(140, frameHeight - GetQueueHeight(frame) - 134)
+end
+
+ClampDetailScroll = function(frame)
+	if not frame or not frame.Detail or not frame.Detail.Scroll or not frame.Detail.Content or not frame.Detail.Scroll.SetVerticalScroll then
+		return
+	end
+
+	local visibleHeight = GetDetailVisibleHeight(frame)
+	local childHeight = frame.Detail.Content.GetHeight and tonumber(frame.Detail.Content:GetHeight()) or 0
+	local maximumScroll = math.max(0, childHeight - visibleHeight)
+	local currentScroll = frame.Detail.Scroll.GetVerticalScroll and tonumber(frame.Detail.Scroll:GetVerticalScroll()) or 0
+
+	if currentScroll < 0 then
+		frame.Detail.Scroll:SetVerticalScroll(0)
+	elseif currentScroll > maximumScroll then
+		frame.Detail.Scroll:SetVerticalScroll(maximumScroll)
+	end
+end
+
+local function StripTextDecorations(text)
+	text = tostring(text or "")
+	text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
+	text = text:gsub("|r", "")
+	text = text:gsub("|H.-|h(.-)|h", "%1")
+	text = text:gsub("|T.-|t", "")
+	return text
+end
+
+local function MeasureWrappedTextHeight(region, text, width, fallbackLineHeight)
+	local lineHeight = math.max(12, tonumber(fallbackLineHeight) or 14)
+	if region and region.GetStringHeight then
+		local measuredHeight = tonumber(region:GetStringHeight()) or 0
+		if measuredHeight > 0 then
+			return math.max(lineHeight, math.ceil(measuredHeight))
+		end
+	end
+
+	local plainText = StripTextDecorations(text)
+	if plainText == "" then
+		return lineHeight
+	end
+
+	local charactersPerLine = math.max(18, math.floor((tonumber(width) or 220) / 7))
+	local lineCount = 0
+	for segment in (plainText .. "\n"):gmatch("(.-)\n") do
+		local trimmedSegment = TrimText(segment)
+		lineCount = lineCount + math.max(1, math.ceil(math.max(1, #trimmedSegment) / charactersPerLine))
+	end
+
+	return math.max(lineHeight, lineCount * lineHeight)
+end
+
+UpdateDetailContentHeight = function(frame, recipeCount, materialCount)
+	if not frame or not frame.Detail or not frame.Detail.Content then
+		return
+	end
+
+	local detailContentWidth = GetDetailContentWidth(frame)
+	local visibleHeight = GetDetailVisibleHeight(frame)
+	local contentHeight = 48
+
+	contentHeight = contentHeight + 8 + MeasureWrappedTextHeight(frame.Detail.Message, frame.Detail.Message and frame.Detail.Message:GetText() or "", detailContentWidth, 14)
+	if IsRegionShown(frame.Detail.TradeHint) then
+		contentHeight = contentHeight + 8 + MeasureWrappedTextHeight(frame.Detail.TradeHint, frame.Detail.TradeHint:GetText() or "", detailContentWidth, 14)
+	end
+
+	if IsRegionShown(frame.Detail.ActionRow) then
+		contentHeight = contentHeight + 12 + 20
+		contentHeight = contentHeight + 12 + 14
+		if recipeCount > 0 then
+			contentHeight = contentHeight + 6 + (recipeCount * 24) + math.max(0, recipeCount - 1) * 4
+		end
+		contentHeight = contentHeight + 14 + 20
+		contentHeight = contentHeight + 4 + MeasureWrappedTextHeight(frame.Detail.ReadyText, frame.Detail.ReadyText and frame.Detail.ReadyText:GetText() or "", detailContentWidth, 14)
+		if materialCount > 0 then
+			contentHeight = contentHeight + 4 + (materialCount * 22) + math.max(0, materialCount - 1) * 2
+		end
+	else
+		contentHeight = contentHeight + 12 + MeasureWrappedTextHeight(frame.Detail.Empty, frame.Detail.Empty and frame.Detail.Empty:GetText() or "", detailContentWidth, 16)
+	end
+
+	frame.Detail.Content:SetHeight(math.max(visibleHeight, math.floor(contentHeight + 12)))
+	ClampDetailScroll(frame)
 end
 
 local function ClampQueueScroll(frame)
@@ -595,6 +834,9 @@ function Workbench.SelectOrder(orderId)
 	local order = Workbench.GetSelectedOrder()
 	if order then
 		WorkbenchDebug("selected order for", order.Customer, "(" .. tostring(#(order.Recipes or {})) .. " enchants)")
+	end
+	if Workbench.Frame and Workbench.Frame.Detail and Workbench.Frame.Detail.Scroll and Workbench.Frame.Detail.Scroll.SetVerticalScroll then
+		Workbench.Frame.Detail.Scroll:SetVerticalScroll(0)
 	end
 	Workbench.Refresh()
 end
@@ -1038,9 +1280,8 @@ function Workbench.FinishTrade(goldDelta)
 
 	if gotPaid then
 		order.LastObservedTipCopper = math.max(0, math.floor(tonumber(goldDelta) or 0))
-		if TrimText(order.PendingTipText) == "" then
-			order.PendingTipText = FormatMoneyCompact(order.LastObservedTipCopper)
-		end
+		order.PendingTipText = ""
+		order.NoTipConfirmed = false
 		order.UpdatedAt = TimestampText()
 		WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
 	end
@@ -1115,7 +1356,30 @@ function Workbench.SetOrderTipText(orderId, value)
 		return false
 	end
 
-	order.PendingTipText = TrimText(value)
+	local tipCopper = ParseMoneyCompact(value)
+	if tipCopper == nil then
+		return false
+	end
+
+	order.PendingTipText = ""
+	order.LastObservedTipCopper = math.max(0, math.floor(tipCopper))
+	order.NoTipConfirmed = tipCopper == 0
+	order.UpdatedAt = TimestampText()
+	return true
+end
+
+function Workbench.MarkOrderNoTip(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not order then
+		return false
+	end
+
+	order.PendingTipText = ""
+	order.LastObservedTipCopper = 0
+	order.NoTipConfirmed = true
+	order.UpdatedAt = TimestampText()
+	WorkbenchDebug("marked no tip for", order.Customer)
+	Workbench.Refresh()
 	return true
 end
 
@@ -1141,8 +1405,8 @@ function Workbench.CompleteOrder(orderId)
 	local state = Workbench.EnsureState()
 	local order = Workbench.GetOrderById(orderId)
 	local isVerified, verifiedCount, recipeTotal
-	local tipText
 	local tipCopper
+	local tipResolved
 
 	if not order then
 		return false
@@ -1154,15 +1418,10 @@ function Workbench.CompleteOrder(orderId)
 		return false
 	end
 
-	tipText = TrimText(order.PendingTipText)
-	if tipText == "" then
-		tipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0))
-	else
-		tipCopper = ParseMoneyCompact(tipText)
-		if tipCopper == nil then
-			print("|cFFFF1C1CEnchanter|r Tip format should look like 10g, 75s, or 12g50s.")
-			return false
-		end
+	tipCopper, tipResolved = GetResolvedTipCopper(order)
+	if not tipResolved then
+		WorkbenchDebug("refused to complete order without a settled tip for", order.Customer)
+		return false
 	end
 
 	state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
@@ -1805,64 +2064,62 @@ function Workbench.CreateFrame()
 	ApplyBackdrop(frame.Detail, 0.14, 0.1, 0.07, 0.96, 0.54, 0.37, 0.19, 1)
 	ApplyElvUISkin(frame.Detail, "frame")
 
-	frame.Detail.Title = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	frame.Detail.Title:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 12, -12)
-	frame.Detail.Title:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Scroll = CreateFrame("ScrollFrame", TOCNAME .. "WorkbenchDetailScroll", frame.Detail, "UIPanelScrollFrameTemplate")
+	frame.Detail.Scroll:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 8, -8)
+	frame.Detail.Scroll:SetPoint("BOTTOMRIGHT", frame.Detail, "BOTTOMRIGHT", -28, 8)
+	frame.Detail.Scroll.ScrollBar = frame.Detail.Scroll.ScrollBar or _G[TOCNAME .. "WorkbenchDetailScrollScrollBar"]
+	ApplyElvUISkin(frame.Detail.Scroll.ScrollBar, "scrollbar")
+
+	frame.Detail.Content = CreateFrameCompat("Frame", TOCNAME .. "WorkbenchDetailChild", frame.Detail.Scroll)
+	frame.Detail.Content:SetPoint("TOPLEFT", frame.Detail.Scroll, "TOPLEFT", 0, 0)
+	frame.Detail.Content:SetSize(DEFAULT_FRAME_WIDTH - 76, 1)
+	frame.Detail.Scroll:SetScrollChild(frame.Detail.Content)
+
+	frame.Detail.Title = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	frame.Detail.Title:SetPoint("TOPLEFT", frame.Detail.Content, "TOPLEFT", 0, -4)
+	frame.Detail.Title:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Title:SetJustifyH("LEFT")
 
-	frame.Detail.Meta = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.Meta = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.Detail.Meta:SetPoint("TOPLEFT", frame.Detail.Title, "BOTTOMLEFT", 0, -4)
-	frame.Detail.Meta:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Meta:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Meta:SetJustifyH("LEFT")
 
-	frame.Detail.Message = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	frame.Detail.Message = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	frame.Detail.Message:SetPoint("TOPLEFT", frame.Detail.Meta, "BOTTOMLEFT", 0, -8)
-	frame.Detail.Message:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Message:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Message:SetJustifyH("LEFT")
 	frame.Detail.Message:SetJustifyV("TOP")
 
-	frame.Detail.TradeHint = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.TradeHint = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.Detail.TradeHint:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -8)
-	frame.Detail.TradeHint:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.TradeHint:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.TradeHint:SetJustifyH("LEFT")
 	frame.Detail.TradeHint:SetJustifyV("TOP")
 	frame.Detail.TradeHint:Hide()
 
-	frame.Detail.TipLabel = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	frame.Detail.TipLabel:SetText("Tip")
-	frame.Detail.TipLabel:Hide()
+	frame.Detail.ActionRow = CreateFrameCompat("Frame", nil, frame.Detail.Content)
+	frame.Detail.ActionRow:SetPoint("LEFT", frame.Detail.Content, "LEFT", 0, 0)
+	frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+	frame.Detail.ActionRow:SetHeight(20)
+	frame.Detail.ActionRow:Hide()
 
-	frame.Detail.TipInput = CreateFrame("EditBox", nil, frame.Detail, "InputBoxTemplate")
-	frame.Detail.TipInput:SetSize(86, 20)
-	if frame.Detail.TipInput.SetAutoFocus then
-		frame.Detail.TipInput:SetAutoFocus(false)
-	end
-	frame.Detail.TipInput:SetScript("OnEnterPressed", function(self)
-		if self.OrderId then
-			Workbench.SetOrderTipText(self.OrderId, self:GetText())
-		end
-		if self.ClearFocus then
-			self:ClearFocus()
-		end
-	end)
-	frame.Detail.TipInput:SetScript("OnEscapePressed", function(self)
-		if self.ClearFocus then
-			self:ClearFocus()
-		end
-	end)
-	frame.Detail.TipInput:SetScript("OnEditFocusLost", function(self)
-		if self.OrderId then
-			Workbench.SetOrderTipText(self.OrderId, self:GetText())
-		end
-	end)
-	frame.Detail.TipInput:SetScript("OnTextChanged", function(self)
-		if self.OrderId then
-			Workbench.SetOrderTipText(self.OrderId, self:GetText())
-		end
-	end)
-	frame.Detail.TipInput:Hide()
+	frame.Detail.TipStatus = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.TipStatus:SetJustifyH("LEFT")
+	frame.Detail.TipStatus:Hide()
 
-	frame.Detail.CompleteButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.NoTipButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
+	frame.Detail.NoTipButton:SetSize(60, 20)
+	frame.Detail.NoTipButton:SetText("No tip")
+	ApplyElvUISkin(frame.Detail.NoTipButton, "button")
+	frame.Detail.NoTipButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.MarkOrderNoTip(self.OrderId)
+		end
+	end)
+	frame.Detail.NoTipButton:Hide()
+
+	frame.Detail.CompleteButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
 	frame.Detail.CompleteButton:SetSize(72, 20)
 	frame.Detail.CompleteButton:SetText("Complete")
 	ApplyElvUISkin(frame.Detail.CompleteButton, "button")
@@ -1873,13 +2130,13 @@ function Workbench.CreateFrame()
 	end)
 	frame.Detail.CompleteButton:Hide()
 
-	frame.Detail.RecipesHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.RecipesHeader = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.Detail.RecipesHeader:SetText("Enchants")
 
-	frame.Detail.MatsHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.MatsHeader = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.Detail.MatsHeader:SetText("Materials")
 
-	frame.Detail.AllMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.AllMatsButton = CreateFrame("Button", nil, frame.Detail.Content, "UIPanelButtonTemplate")
 	frame.Detail.AllMatsButton:SetSize(72, 20)
 	frame.Detail.AllMatsButton:SetText("All Mats")
 	ApplyElvUISkin(frame.Detail.AllMatsButton, "button")
@@ -1890,7 +2147,7 @@ function Workbench.CreateFrame()
 		end
 	end)
 
-	frame.Detail.UseTradeButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.UseTradeButton = CreateFrame("Button", nil, frame.Detail.Content, "UIPanelButtonTemplate")
 	frame.Detail.UseTradeButton:SetSize(78, 20)
 	frame.Detail.UseTradeButton:SetText("Use Trade")
 	ApplyElvUISkin(frame.Detail.UseTradeButton, "button")
@@ -1901,7 +2158,7 @@ function Workbench.CreateFrame()
 		end
 	end)
 
-	frame.Detail.ClearMatsButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.ClearMatsButton = CreateFrame("Button", nil, frame.Detail.Content, "UIPanelButtonTemplate")
 	frame.Detail.ClearMatsButton:SetSize(60, 20)
 	frame.Detail.ClearMatsButton:SetText("Clear")
 	ApplyElvUISkin(frame.Detail.ClearMatsButton, "button")
@@ -1912,14 +2169,14 @@ function Workbench.CreateFrame()
 		end
 	end)
 
-	frame.Detail.ReadyText = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.Detail.ReadyText = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.Detail.ReadyText:SetJustifyH("LEFT")
 
-	frame.Detail.Empty = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-	frame.Detail.Empty:SetPoint("TOPLEFT", frame.Detail, "TOPLEFT", 12, -44)
-	frame.Detail.Empty:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.Empty = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+	frame.Detail.Empty:SetPoint("TOPLEFT", frame.Detail.Meta, "BOTTOMLEFT", 0, -12)
+	frame.Detail.Empty:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Empty:SetJustifyH("LEFT")
-	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and a manual materials checklist.")
+	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and a trade-aware materials checklist.")
 
 	frame.ResizeHandle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	frame.ResizeHandle:SetSize(54, 18)
@@ -2044,8 +2301,9 @@ function Workbench.Refresh()
 		frame.Detail.Meta:SetText("")
 		frame.Detail.Message:SetText("")
 		frame.Detail.TradeHint:Hide()
-		frame.Detail.TipLabel:Hide()
-		frame.Detail.TipInput:Hide()
+		frame.Detail.ActionRow:Hide()
+		frame.Detail.TipStatus:Hide()
+		frame.Detail.NoTipButton:Hide()
 		frame.Detail.CompleteButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
@@ -2059,6 +2317,10 @@ function Workbench.Refresh()
 		for _, line in ipairs(frame.Detail.MaterialLines) do
 			line:Hide()
 		end
+		if frame.Detail.Scroll and frame.Detail.Scroll.SetVerticalScroll then
+			frame.Detail.Scroll:SetVerticalScroll(0)
+		end
+		UpdateDetailContentHeight(frame, 0, 0)
 		return
 	end
 
@@ -2068,6 +2330,7 @@ function Workbench.Refresh()
 	local checked, total, offeredState, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
 	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
+	local tipResolved = HasResolvedTip(order)
 	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
 	local verificationText = recipeTotal > 0 and string.format("%d/%d verified", verifiedCount, recipeTotal) or "No enchants queued"
 	if recipeTotal > 0 and verifiedCount == recipeTotal then
@@ -2081,18 +2344,16 @@ function Workbench.Refresh()
 	else
 		frame.Detail.TradeHint:Hide()
 	end
-	frame.Detail.TipLabel:ClearAllPoints()
-	frame.Detail.TipLabel:SetPoint("TOPLEFT", activeTrade and frame.Detail.TradeHint or frame.Detail.Message, "BOTTOMLEFT", 0, activeTrade and -10 or -12)
-	frame.Detail.TipLabel:Show()
-	frame.Detail.TipInput:ClearAllPoints()
-	frame.Detail.TipInput:SetPoint("LEFT", frame.Detail.TipLabel, "RIGHT", 8, 0)
-	frame.Detail.TipInput.OrderId = order.Id
-	frame.Detail.TipInput:SetText(order.PendingTipText ~= "" and order.PendingTipText or (order.LastObservedTipCopper > 0 and FormatMoneyCompact(order.LastObservedTipCopper) or ""))
-	frame.Detail.TipInput:Show()
+
+	frame.Detail.ActionRow:ClearAllPoints()
+	frame.Detail.ActionRow:SetPoint("TOPLEFT", activeTrade and frame.Detail.TradeHint or frame.Detail.Message, "BOTTOMLEFT", 0, activeTrade and -10 or -12)
+	frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+	frame.Detail.ActionRow:Show()
+
 	frame.Detail.CompleteButton:ClearAllPoints()
-	frame.Detail.CompleteButton:SetPoint("LEFT", frame.Detail.TipInput, "RIGHT", 8, 0)
+	frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	frame.Detail.CompleteButton.OrderId = order.Id
-	if recipeTotal > 0 and verifiedCount == recipeTotal then
+	if recipeTotal > 0 and verifiedCount == recipeTotal and tipResolved then
 		if frame.Detail.CompleteButton.Enable then
 			frame.Detail.CompleteButton:Enable()
 		end
@@ -2102,15 +2363,32 @@ function Workbench.Refresh()
 		end
 	end
 	frame.Detail.CompleteButton:Show()
+
+	frame.Detail.TipStatus:ClearAllPoints()
+	frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
+	frame.Detail.TipStatus:SetText(GetTipStatusText(order, activeTrade))
+	frame.Detail.TipStatus:Show()
+
+	if tipResolved then
+		frame.Detail.NoTipButton:Hide()
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
+	else
+		frame.Detail.NoTipButton:ClearAllPoints()
+		frame.Detail.NoTipButton:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -6, 0)
+		frame.Detail.NoTipButton.OrderId = order.Id
+		frame.Detail.NoTipButton:Show()
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.NoTipButton, "LEFT", -8, 0)
+	end
+
 	frame.Detail.RecipesHeader:ClearAllPoints()
-	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.TipLabel, "BOTTOMLEFT", 0, -12)
+	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.ActionRow, "BOTTOMLEFT", 0, -12)
 	frame.Detail.RecipesHeader:Show()
 
 	local recipeAnchor = frame.Detail.RecipesHeader
 	local detailContentWidth = GetDetailContentWidth(frame)
 	for index, recipeName in ipairs(order.Recipes or {}) do
 		if not frame.Detail.RecipeLines[index] then
-			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail, index)
+			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail.Content, index)
 		end
 		local line = frame.Detail.RecipeLines[index]
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
@@ -2150,7 +2428,7 @@ function Workbench.Refresh()
 	frame.Detail.ClearMatsButton:SetPoint("LEFT", frame.Detail.UseTradeButton, "RIGHT", 6, 0)
 	frame.Detail.ReadyText:ClearAllPoints()
 	frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
-	frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail, "RIGHT", -12, 0)
+	frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 
 	if #materials > 0 then
 		frame.Detail.AllMatsButton:Show()
@@ -2162,7 +2440,11 @@ function Workbench.Refresh()
 		frame.Detail.ClearMatsButton:Show()
 		local statusBits = {}
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
-			statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Enter the tip and click Complete to bank it in the running total.|r"
+			if tipResolved then
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Click Complete to bank it.|r"
+			else
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Wait for trade gold or click No tip.|r"
+			end
 		elseif recipeTotal > 0 and verifiedCount > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r"
 		else
@@ -2170,11 +2452,11 @@ function Workbench.Refresh()
 		end
 
 		if manualChecked == total then
-			statusBits[#statusBits + 1] = "|cFF74D06CAll queued mats are checked off.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CAll mats are checked off.|r"
 		elseif offeredChecked == total and total > 0 then
-			statusBits[#statusBits + 1] = "|cFF74D06CTrade currently has all queued mats. Click Use Trade to keep them checked.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CTrade has all queued mats. Click Use Trade to keep them checked.|r"
 		elseif offeredChecked > 0 then
-			statusBits[#statusBits + 1] = "|cFFFFD26ATrade currently has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r"
+			statusBits[#statusBits + 1] = "|cFFFFD26ATrade has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r"
 		elseif total > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26AUse the checklist as the customer hands you materials.|r"
 		end
@@ -2184,7 +2466,11 @@ function Workbench.Refresh()
 		frame.Detail.UseTradeButton:Hide()
 		frame.Detail.ClearMatsButton:Hide()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
-			frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Enter the tip and click Complete to bank it in the running total.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+			if tipResolved then
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Click Complete to bank it.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+			else
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Wait for trade gold or click No tip.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+			end
 		elseif recipeTotal > 0 then
 			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 		else
@@ -2196,7 +2482,7 @@ function Workbench.Refresh()
 	local materialAnchor = frame.Detail.ReadyText
 	for index, material in ipairs(materials) do
 		if not frame.Detail.MaterialLines[index] then
-			frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail, index)
+			frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail.Content, index)
 		end
 		local line = frame.Detail.MaterialLines[index]
 		line.Check.OrderId = order.Id
@@ -2220,6 +2506,8 @@ function Workbench.Refresh()
 	if #missingRecipes > 0 then
 		frame.Detail.ReadyText:SetText(frame.Detail.ReadyText:GetText() .. "  |cFFFF9F5AMissing mats: " .. table.concat(missingRecipes, ", ") .. "|r")
 	end
+
+	UpdateDetailContentHeight(frame, #(order.Recipes or {}), #materials)
 end
 
 function Workbench.Show()

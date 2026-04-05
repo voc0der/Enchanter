@@ -729,7 +729,7 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
 end
 
-local function test_workbench_complete_order_tracks_tip_totals_and_clear_resets_them()
+local function test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -744,8 +744,13 @@ local function test_workbench_complete_order_tracks_tip_totals_and_clear_resets_
 
     local order = addon.Workbench.GetSelectedOrder()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
-    frame.Detail.TipInput:SetText("12g 34s")
-    frame.Detail.TipInput.scripts["OnTextChanged"](frame.Detail.TipInput)
+    addon.Workbench.BeginTrade("Buyer-Tip")
+    addon.Workbench.FinishTrade(123400)
+
+    assert_equal(frame.Detail.TipStatus.text, "Tip: 12g 34s", "detail pane should show the tracked trade gold instead of asking for manual tip entry")
+    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide once trade gold has been recorded")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete button should enable after the order is verified and the tip is settled")
+
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
     local workbenchState = addon.Workbench.EnsureState()
@@ -761,6 +766,39 @@ local function test_workbench_complete_order_tracks_tip_totals_and_clear_resets_
     assert_equal(workbenchState.CompletedOrders, 0, "clear should reset the running completed count")
     assert_equal(workbenchState.CompletedTipsCopper, 0, "clear should reset the running tips total")
     assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should return to zero after clear")
+end
+
+local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-NoTip")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+
+    assert_equal(frame.Detail.TipStatus.text, "Tip: not recorded", "untipped orders should show that no gold has been recorded yet")
+    assert_true(frame.Detail.NoTipButton.shown, "untipped orders should offer a compact no-tip override")
+    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until gold is recorded or no-tip is confirmed")
+
+    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
+
+    assert_equal(frame.Detail.TipStatus.text, "Tip: no tip", "clicking no-tip should settle the order at zero gold")
+    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide after zero tip is confirmed")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should enable after no-tip is confirmed")
+
+    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
+
+    local workbenchState = addon.Workbench.EnsureState()
+    assert_equal(workbenchState.CompletedOrders, 1, "zero-tip completions should still count as completed orders")
+    assert_equal(workbenchState.CompletedTipsCopper, 0, "no-tip completions should not add to the running tips total")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -853,14 +891,17 @@ local function test_workbench_detail_lines_keep_a_usable_width_after_refresh()
     })
 
     local frame = addon.Workbench.CreateFrame()
+    local emptyQueueHeight = frame.ListScroll:GetHeight() or 0
     addon.RefreshCompiledData()
     addon.ParseMessage("LF minor speed pst", "Buyer-Detail")
 
+    assert_equal(frame.Detail.Scroll.scroll_child, frame.Detail.Content, "detail pane should render through a scroll child so long orders stay inside the window")
     assert_not_nil(frame.Detail.RecipeLines[1], "detail recipe line should be created for the selected order")
     assert_not_nil(frame.Detail.MaterialLines[1], "detail material lines should be created when a mats snapshot exists")
     assert_true((frame.Detail.RecipeLines[1]:GetWidth() or 0) > 100, "detail recipe rows should keep enough width to render their text and buttons")
     assert_true((frame.Detail.MaterialLines[1]:GetWidth() or 0) > 100, "detail material rows should keep enough width to render the checklist")
     assert_equal(frame.Detail.MatsHeader.shown, true, "materials header should stay visible when the selected order has queued mats")
+    assert_true((frame.ListScroll:GetHeight() or 0) < emptyQueueHeight, "a short queue should collapse so the detail pane gets more room")
 end
 
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
@@ -1517,7 +1558,8 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
-test_workbench_complete_order_tracks_tip_totals_and_clear_resets_them()
+test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
+test_workbench_no_tip_button_allows_manual_zero_tip_completion()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
