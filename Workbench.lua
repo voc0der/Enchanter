@@ -207,6 +207,19 @@ local function IsRegionShown(region)
 	return region.shown ~= false
 end
 
+local function IsWorkbenchFrameShown(frame)
+	frame = frame or Workbench.Frame
+	if not frame then
+		return false
+	end
+
+	if frame.IsShown then
+		return frame:IsShown() and true or false
+	end
+
+	return frame.shown ~= false
+end
+
 local function TrimText(value)
 	if not value then
 		return ""
@@ -373,11 +386,6 @@ local function GetDisplayedTradeMaterialCount(activeTrade, materialKey)
 	return math.max(0, offeredCount - recordedCount)
 end
 
-local function HasResolvedTip(order)
-	local _, resolved = GetResolvedTipCopper(order)
-	return resolved
-end
-
 local function GetTipStatusText(order, activeTrade)
 	local pendingTradeTipCopper = activeTrade and math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)) or 0
 	if pendingTradeTipCopper > 0 then
@@ -415,24 +423,50 @@ local function GetTradeEnchantSlotIndex()
 	return 7
 end
 
-local function TradeEnchantSlotHasItem()
+local function BuildTradeEnchantInfo(itemName, enchantment, side)
+	local cleanedItemName = TrimText(itemName)
+	local cleanedEnchantment = TrimText(enchantment)
+	if cleanedItemName == "" and cleanedEnchantment == "" then
+		return nil
+	end
+
+	return {
+		ItemName = cleanedItemName,
+		Enchantment = cleanedEnchantment,
+		Side = side,
+	}
+end
+
+local function CaptureTradeEnchantInfo()
 	local enchantSlotIndex = GetTradeEnchantSlotIndex()
+	local targetInfo
+	local playerInfo
 
 	if GetTradeTargetItemInfo then
-		local _, _, _, _, _, targetEnchantment = GetTradeTargetItemInfo(enchantSlotIndex)
-		if TrimText(targetEnchantment) ~= "" then
-			return true
-		end
+		local itemName, _, _, _, _, enchantment = GetTradeTargetItemInfo(enchantSlotIndex)
+		targetInfo = BuildTradeEnchantInfo(itemName, enchantment, "target")
 	end
 
 	if GetTradePlayerItemInfo then
-		local _, _, _, _, playerEnchantment = GetTradePlayerItemInfo(enchantSlotIndex)
-		if TrimText(playerEnchantment) ~= "" then
-			return true
-		end
+		local itemName, _, _, _, enchantment = GetTradePlayerItemInfo(enchantSlotIndex)
+		playerInfo = BuildTradeEnchantInfo(itemName, enchantment, "player")
 	end
 
-	return false
+	if targetInfo and targetInfo.Enchantment ~= "" then
+		return targetInfo
+	end
+	if playerInfo and playerInfo.Enchantment ~= "" then
+		return playerInfo
+	end
+	if targetInfo then
+		return targetInfo
+	end
+	return playerInfo
+end
+
+local function TradeEnchantSlotHasItem()
+	local enchantInfo = CaptureTradeEnchantInfo()
+	return enchantInfo and enchantInfo.Enchantment ~= "" or false
 end
 
 local function CopyRecipeNames(recipeMapOrList)
@@ -1079,6 +1113,151 @@ local function OrderHasRecipe(order, recipeName)
 	return false
 end
 
+local function NormalizeRecipeMatchText(text)
+	text = TrimText(text)
+	if text == "" then
+		return ""
+	end
+
+	text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	text = text:gsub("%[(.-)%]", "%1")
+	text = text:lower()
+	text = text:gsub("[^%w]+", " ")
+	text = text:gsub("%s+", " ")
+	return TrimText(text)
+end
+
+local function GetRecipeTradeLabel(recipeName)
+	if type(recipeName) ~= "string" then
+		return ""
+	end
+
+	return TrimText(recipeName:match("^.-%-%s*(.+)$") or recipeName)
+end
+
+local function CollectRecipeMatchTerms(recipeName)
+	local terms = {}
+	local seen = {}
+
+	local function AddTerm(value)
+		local normalized = NormalizeRecipeMatchText(value)
+		if normalized ~= "" and not seen[normalized] then
+			seen[normalized] = true
+			terms[#terms + 1] = normalized
+		end
+	end
+
+	AddTerm(recipeName)
+	AddTerm(GetRecipeTradeLabel(recipeName))
+
+	local recipeTags = EC and EC.DBChar and EC.DBChar.RecipeList and EC.DBChar.RecipeList[recipeName]
+	if type(recipeTags) == "table" then
+		for _, recipeTag in ipairs(recipeTags) do
+			AddTerm(recipeTag)
+		end
+	end
+
+	return terms
+end
+
+local function RecipeMatchesTradeEnchantment(recipeName, enchantmentText)
+	local normalizedEnchantment = NormalizeRecipeMatchText(enchantmentText)
+	local normalizedRecipeName = NormalizeRecipeMatchText(recipeName)
+	local normalizedRecipeLabel = NormalizeRecipeMatchText(GetRecipeTradeLabel(recipeName))
+
+	if normalizedEnchantment == "" then
+		return false
+	end
+
+	for _, term in ipairs(CollectRecipeMatchTerms(recipeName)) do
+		if term == normalizedEnchantment then
+			return true
+		end
+	end
+
+	if normalizedRecipeLabel ~= "" then
+		if string.find(normalizedRecipeLabel, normalizedEnchantment, 1, true) or string.find(normalizedEnchantment, normalizedRecipeLabel, 1, true) then
+			return true
+		end
+	end
+
+	if normalizedRecipeName ~= "" and string.find(normalizedRecipeName, normalizedEnchantment, 1, true) then
+		return true
+	end
+
+	return false
+end
+
+local function GetTradeRecipeMatches(order, enchantmentText, onlyUnverified)
+	local matches = {}
+
+	for _, recipeName in ipairs(order and order.Recipes or {}) do
+		local isVerified = order.VerifiedRecipes and order.VerifiedRecipes[recipeName]
+		if (not onlyUnverified or not isVerified) and RecipeMatchesTradeEnchantment(recipeName, enchantmentText) then
+			matches[#matches + 1] = recipeName
+		end
+	end
+
+	return matches
+end
+
+local function GetUnverifiedRecipeNames(order)
+	local unverifiedRecipes = {}
+
+	for _, recipeName in ipairs(order and order.Recipes or {}) do
+		if not (order.VerifiedRecipes and order.VerifiedRecipes[recipeName]) then
+			unverifiedRecipes[#unverifiedRecipes + 1] = recipeName
+		end
+	end
+
+	return unverifiedRecipes
+end
+
+local function ResolveTradeAppliedRecipeName(order, activeTrade, enchantmentText)
+	local castedRecipeName = activeTrade and activeTrade.CastedRecipeName or nil
+	local unverifiedMatches
+	local allMatches
+	local unverifiedRecipes
+	local totalRecipes = #(order and order.Recipes or {})
+
+	if not order then
+		return nil
+	end
+
+	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and RecipeMatchesTradeEnchantment(castedRecipeName, enchantmentText) then
+		return castedRecipeName
+	end
+
+	unverifiedMatches = GetTradeRecipeMatches(order, enchantmentText, true)
+	if #unverifiedMatches == 1 then
+		return unverifiedMatches[1]
+	end
+
+	allMatches = GetTradeRecipeMatches(order, enchantmentText, false)
+	if #allMatches == 1 then
+		return allMatches[1]
+	end
+
+	unverifiedRecipes = GetUnverifiedRecipeNames(order)
+	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and #unverifiedRecipes == 1 then
+		return castedRecipeName
+	end
+
+	if #unverifiedRecipes == 1 then
+		return unverifiedRecipes[1]
+	end
+
+	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and totalRecipes == 1 then
+		return castedRecipeName
+	end
+
+	if totalRecipes == 1 then
+		return order.Recipes[1]
+	end
+
+	return nil
+end
+
 local function SetRecipeVerifiedInternal(order, recipeName, verified)
 	if not order or not recipeName or not OrderHasRecipe(order, recipeName) then
 		return false
@@ -1142,20 +1321,34 @@ local function AddRecordedTradeMaterialCounts(activeTrade, appliedCounts)
 end
 
 local function TrackTradeAppliedRecipe(order, activeTrade)
-	if not order or not activeTrade or not activeTrade.CastedRecipeName then
+	if not order or not activeTrade then
 		return false
 	end
+
+	local enchantInfo = CaptureTradeEnchantInfo()
+	local recipeName
+
+	activeTrade.LastSeenEnchantItemName = enchantInfo and enchantInfo.ItemName or ""
+	activeTrade.LastSeenEnchantmentText = enchantInfo and enchantInfo.Enchantment or ""
 
 	if not TradeEnchantSlotHasItem() then
 		return false
 	end
 
-	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
-	if not activeTrade.AppliedRecipes[activeTrade.CastedRecipeName] then
-		activeTrade.AppliedRecipes[activeTrade.CastedRecipeName] = true
-		WorkbenchDebug("tracked trade application for", activeTrade.CastedRecipeName, "on", order.Customer)
+	recipeName = ResolveTradeAppliedRecipeName(order, activeTrade, activeTrade.LastSeenEnchantmentText)
+	if not recipeName then
+		WorkbenchDebug("trade enchant detected for", order.Customer, "but the recipe match was ambiguous:", activeTrade.LastSeenEnchantmentText)
+		return false
 	end
-	activeTrade.CastedRecipeName = nil
+
+	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
+	if not activeTrade.AppliedRecipes[recipeName] then
+		activeTrade.AppliedRecipes[recipeName] = true
+		WorkbenchDebug("tracked trade application for", recipeName, "on", order.Customer, "(" .. tostring(activeTrade.LastSeenEnchantmentText) .. ")")
+	end
+	if activeTrade.CastedRecipeName == recipeName then
+		activeTrade.CastedRecipeName = nil
+	end
 	return true
 end
 
@@ -1369,6 +1562,8 @@ function Workbench.BeginTrade(customerName)
 		OrderId = order and order.Id or nil,
 		CastedRecipeName = nil,
 		AppliedRecipes = {},
+		LastSeenEnchantItemName = "",
+		LastSeenEnchantmentText = "",
 		OfferedMaterialState = {},
 		OfferedMaterialCounts = {},
 		OfferedCounts = {},
@@ -1378,6 +1573,7 @@ function Workbench.BeginTrade(customerName)
 		TargetTradeMoneyCopper = GetTargetTradeMoneyCopper(),
 		PlayerAccepted = false,
 		TargetAccepted = false,
+		CompletedSignal = false,
 	}
 
 	if order then
@@ -1443,6 +1639,17 @@ function Workbench.SetTradeAcceptState(playerAccepted, targetAccepted)
 	WorkbenchDebug("trade accept state", tostring(activeTrade.PlayerAccepted), tostring(activeTrade.TargetAccepted))
 	Workbench.Refresh()
 	return activeTrade.PlayerAccepted and activeTrade.TargetAccepted
+end
+
+function Workbench.MarkTradeCompleted()
+	local activeTrade = EnsureRuntime().ActiveTrade
+	if not activeTrade then
+		return false
+	end
+
+	activeTrade.CompletedSignal = true
+	WorkbenchDebug("trade completion confirmed by UI_INFO_MESSAGE")
+	return true
 end
 
 function Workbench.NoteRecipeCast(recipeName)
@@ -1518,7 +1725,7 @@ function Workbench.FinishTrade(goldDelta)
 	end
 
 	tradeTipCopper = math.max(tradeTipCopper, math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)))
-	tradeSucceeded = (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) and true or (math.floor(tonumber(goldDelta) or 0) > 0)
+	tradeSucceeded = activeTrade.CompletedSignal and true or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) and true or (math.floor(tonumber(goldDelta) or 0) > 0)
 
 	if tradeSucceeded then
 		persistedRecipes, persistedMaterials = CommitTradeState(order, activeTrade)
@@ -1629,21 +1836,6 @@ function Workbench.SetOrderTipText(orderId, value)
 	return true
 end
 
-function Workbench.MarkOrderNoTip(orderId)
-	local order = Workbench.GetOrderById(orderId)
-	if not order then
-		return false
-	end
-
-	order.PendingTipText = ""
-	order.LastObservedTipCopper = 0
-	order.NoTipConfirmed = true
-	order.UpdatedAt = TimestampText()
-	WorkbenchDebug("marked no tip for", order.Customer)
-	Workbench.Refresh()
-	return true
-end
-
 function Workbench.SetAllMaterials(orderId, checked)
 	local state = Workbench.EnsureState()
 	for _, order in ipairs(state.Orders) do
@@ -1669,7 +1861,6 @@ function Workbench.CompleteOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
 	local isVerified, verifiedCount, recipeTotal
 	local tipCopper
-	local tipResolved
 
 	if not order then
 		return false
@@ -1681,11 +1872,7 @@ function Workbench.CompleteOrder(orderId)
 		return false
 	end
 
-	tipCopper, tipResolved = GetResolvedTipCopper(order)
-	if not tipResolved then
-		WorkbenchDebug("refused to complete order without a settled tip for", order.Customer)
-		return false
-	end
+	tipCopper = select(1, GetResolvedTipCopper(order))
 
 	state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
 	state.CompletedTipsCopper = (tonumber(state.CompletedTipsCopper) or 0) + tipCopper
@@ -2125,18 +2312,21 @@ local function CreateRecipeLine(parent, index)
 	line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
 	line.NameText:SetJustifyH("LEFT")
 
-	line.VerifyCheck = CreateFrame("CheckButton", nil, line, "UICheckButtonTemplate")
-	line.VerifyCheck:SetPoint("RIGHT", line, "RIGHT", 0, 0)
-	ApplyElvUISkin(line.VerifyCheck, "checkbox")
-	line.VerifyCheck:SetScript("OnClick", function(self)
-		if self.OrderId and self.RecipeName then
-			Workbench.SetRecipeVerified(self.OrderId, self.RecipeName, self:GetChecked())
-		end
-	end)
+	line.StatusCheck = line:CreateTexture(nil, "ARTWORK")
+	line.StatusCheck:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.StatusCheck:SetSize(18, 18)
+	line.StatusCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+	line.StatusCheck:SetVertexColor(0.45, 0.82, 0.42)
+	line.StatusCheck:Hide()
+
+	line.StatusText = line:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	line.StatusText:SetPoint("CENTER", line.StatusCheck, "CENTER", 0, 0)
+	line.StatusText:SetText("?")
+	line.StatusText:SetTextColor(1, 0.82, 0.42)
 
 	line.CastButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.CastButton:SetSize(56, 20)
-	line.CastButton:SetPoint("RIGHT", line.VerifyCheck, "LEFT", -4, 0)
+	line.CastButton:SetPoint("RIGHT", line.StatusCheck, "LEFT", -6, 0)
 	line.CastButton:SetText("Cast")
 	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
@@ -2374,17 +2564,6 @@ function Workbench.CreateFrame()
 	frame.Detail.TipStatus:SetJustifyH("LEFT")
 	frame.Detail.TipStatus:Hide()
 
-	frame.Detail.NoTipButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
-	frame.Detail.NoTipButton:SetSize(60, 20)
-	frame.Detail.NoTipButton:SetText("No tip")
-	ApplyElvUISkin(frame.Detail.NoTipButton, "button")
-	frame.Detail.NoTipButton:SetScript("OnClick", function(self)
-		if self.OrderId then
-			Workbench.MarkOrderNoTip(self.OrderId)
-		end
-	end)
-	frame.Detail.NoTipButton:Hide()
-
 	frame.Detail.CompleteButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
 	frame.Detail.CompleteButton:SetSize(72, 20)
 	frame.Detail.CompleteButton:SetText("Complete")
@@ -2473,10 +2652,14 @@ function Workbench.CreateFrame()
 	frame.Detail.RecipeLines = {}
 	frame.Detail.MaterialLines = {}
 
+	frame:SetScript("OnShow", function()
+		Workbench.EnsureState().Visible = true
+	end)
 	frame:SetScript("OnSizeChanged", function(self)
 		ApplyFrameLayout(self)
 	end)
 	frame:SetScript("OnHide", function()
+		Workbench.EnsureState().Visible = false
 		frame:StopMovingOrSizing()
 	end)
 
@@ -2484,6 +2667,9 @@ function Workbench.CreateFrame()
 	UpdateLockButtonText()
 	UpdateSoundButtonText()
 	UpdateScanButtonText()
+	if not Workbench.EnsureState().Visible then
+		frame:Hide()
+	end
 	return frame
 end
 
@@ -2569,7 +2755,6 @@ function Workbench.Refresh()
 		frame.Detail.TradeHint:Hide()
 		frame.Detail.ActionRow:Hide()
 		frame.Detail.TipStatus:Hide()
-		frame.Detail.NoTipButton:Hide()
 		frame.Detail.CompleteButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
@@ -2596,7 +2781,7 @@ function Workbench.Refresh()
 	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
 	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
-	local tipResolved = HasResolvedTip(order)
+	local hasRecordedTip = GetRecordedTipCopper(order) > 0
 	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
 	local verificationText = recipeTotal > 0 and string.format("%d/%d verified", verifiedCount, recipeTotal) or "No enchants queued"
 	if recipeTotal > 0 and verifiedCount == recipeTotal then
@@ -2605,7 +2790,7 @@ function Workbench.Refresh()
 	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", verificationText, readyText))
 	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
 	if activeTrade then
-		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Click Apply, then click the customer's item. Accepted trades update mats and tips automatically; Complete stays manual.|r")
+		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Apply is optional here; accepted trades update mats, tips, and completed enchants automatically. Complete stays manual.|r")
 		frame.Detail.TradeHint:Show()
 	else
 		frame.Detail.TradeHint:Hide()
@@ -2617,13 +2802,12 @@ function Workbench.Refresh()
 	frame.Detail.ActionRow:Show()
 
 	local showManualComplete = not activeTrade
-	local showManualNoTip = showManualComplete and (not tipResolved)
 
 	frame.Detail.CompleteButton:ClearAllPoints()
 	frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	frame.Detail.CompleteButton.OrderId = order.Id
 	if showManualComplete then
-		if recipeTotal > 0 and verifiedCount == recipeTotal and tipResolved then
+		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if frame.Detail.CompleteButton.Enable then
 				frame.Detail.CompleteButton:Enable()
 			end
@@ -2645,19 +2829,10 @@ function Workbench.Refresh()
 	frame.Detail.TipStatus:SetText(GetTipStatusText(order, activeTrade))
 	frame.Detail.TipStatus:Show()
 
-	if not showManualNoTip then
-		frame.Detail.NoTipButton:Hide()
-		if showManualComplete then
-			frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
-		else
-			frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
-		end
+	if showManualComplete then
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
 	else
-		frame.Detail.NoTipButton:ClearAllPoints()
-		frame.Detail.NoTipButton:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -6, 0)
-		frame.Detail.NoTipButton.OrderId = order.Id
-		frame.Detail.NoTipButton:Show()
-		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.NoTipButton, "LEFT", -8, 0)
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	end
 
 	frame.Detail.RecipesHeader:ClearAllPoints()
@@ -2675,10 +2850,14 @@ function Workbench.Refresh()
 		local isVerified = order.VerifiedRecipes and order.VerifiedRecipes[recipeName]
 		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
 		line.CastButton.RecipeName = recipeName
-		line.VerifyCheck.OrderId = order.Id
-		line.VerifyCheck.RecipeName = recipeName
-		line.VerifyCheck:SetChecked(isVerified and true or false)
-		line.VerifyCheck:Show()
+		if isVerified then
+			line.StatusCheck:Show()
+			line.StatusText:Hide()
+		else
+			line.StatusCheck:Hide()
+			line.StatusText:SetText("?")
+			line.StatusText:Show()
+		end
 		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line:ClearAllPoints()
 		if index == 1 then
@@ -2712,15 +2891,15 @@ function Workbench.Refresh()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
 				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r"
-			elseif tipResolved then
+			elseif hasRecordedTip then
 				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r"
 			else
-				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Open a trade to record the tip, or click No tip.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r"
 			end
 		elseif recipeTotal > 0 and verifiedCount > 0 then
-			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r"
+			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades flip each enchant from ? to a green check automatically.|r"
 		else
-			statusBits[#statusBits + 1] = "|cFFFFD26ACheck each recipe when the payment is settled.|r"
+			statusBits[#statusBits + 1] = "|cFFFFD26AAccepted trades will flip each requested enchant from ? to a green check automatically.|r"
 		end
 
 		if manualChecked == total then
@@ -2737,13 +2916,13 @@ function Workbench.Refresh()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
-			elseif tipResolved then
+			elseif hasRecordedTip then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			else
-				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Open a trade to record the tip, or click No tip.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			end
 		elseif recipeTotal > 0 then
-			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades will flip the rest automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 		else
 			frame.Detail.ReadyText:SetText("|cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 		end
@@ -2818,12 +2997,14 @@ function Workbench.Hide()
 end
 
 function Workbench.Toggle()
+	local state = Workbench.EnsureState()
 	local frame = Workbench.CreateFrame()
 	if not frame then
 		return
 	end
 
-	if frame:IsShown() then
+	state.Visible = IsWorkbenchFrameShown(frame)
+	if state.Visible then
 		Workbench.Hide()
 	else
 		Workbench.Show()
@@ -2834,7 +3015,7 @@ function Workbench.SyncVisibility()
 	local state = Workbench.EnsureState()
 	if state.Visible then
 		Workbench.Show()
-	elseif Workbench.Frame then
+	elseif Workbench.Frame and IsWorkbenchFrameShown(Workbench.Frame) then
 		Workbench.Frame:Hide()
 	end
 end

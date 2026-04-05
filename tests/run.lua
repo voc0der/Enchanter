@@ -300,6 +300,7 @@ local function setup_env(opts)
         UI_REFORGING_REFORGE = 23291,
         AUCTION_WINDOW_OPEN = 5274,
     }
+    _G.ERR_TRADE_COMPLETE = "Trade complete."
     _G.PlaySound = function(sound_kit, channel)
         if opts.play_sound_errors_on_channel and channel ~= nil then
             error("channel playback unsupported")
@@ -763,6 +764,39 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
 end
 
+local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
+    local addon = setup_env()
+
+    local state = addon.Workbench.EnsureState()
+    assert_true(state.Visible == false, "workbench should start hidden by default")
+
+    addon.Workbench.Toggle()
+
+    local frame = addon.Workbench.Frame
+    assert_not_nil(frame, "toggle should create the workbench frame on first use")
+    assert_true(frame:IsShown(), "the first toggle should show the newly created workbench frame instead of immediately hiding it again")
+    assert_true(state.Visible, "showing the newly created workbench should persist visible state")
+end
+
+local function test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
+    local addon = setup_env()
+
+    addon.Workbench.Show()
+    local state = addon.Workbench.EnsureState()
+    local frame = addon.Workbench.Frame
+
+    frame:Hide()
+    if frame.scripts["OnHide"] then
+        frame.scripts["OnHide"](frame)
+    end
+    state.Visible = true
+
+    addon.Workbench.Toggle()
+
+    assert_true(frame:IsShown(), "toggle should show the workbench when the frame is actually hidden, even if saved visibility drifted stale")
+    assert_true(state.Visible, "toggle should resync saved visibility with the actual frame state")
+end
+
 local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     local addon, state = setup_env({
         char_db = {
@@ -781,6 +815,7 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["TRADE_MONEY_CHANGED"], "trade money changes should be registered independently of /ec start")
     assert_true(seen["TRADE_ACCEPT_UPDATE"], "trade accept updates should be registered independently of /ec start")
     assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
+    assert_true(seen["UI_INFO_MESSAGE"], "trade completion messages should be registered independently of /ec start")
 end
 
 local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
@@ -832,7 +867,7 @@ local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manua
     assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should return to zero after clear")
 end
 
-local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+local function test_workbench_complete_allows_zero_tip_without_a_separate_button()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -849,14 +884,8 @@ local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
 
     assert_equal(frame.Detail.TipStatus.text, "Tip: not recorded", "untipped orders should show that no gold has been recorded yet")
-    assert_true(frame.Detail.NoTipButton.shown, "untipped orders should offer a compact no-tip override")
-    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until gold is recorded or no-tip is confirmed")
-
-    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
-
-    assert_equal(frame.Detail.TipStatus.text, "Tip: no tip", "clicking no-tip should settle the order at zero gold")
-    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide after zero tip is confirmed")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should enable after no-tip is confirmed")
+    assert_nil(frame.Detail.NoTipButton, "untipped orders should no longer render a separate no-tip button")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available for verified zero-tip orders")
 
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
@@ -884,7 +913,7 @@ local function test_workbench_active_trade_hides_manual_completion_controls()
     addon.Workbench.BeginTrade("Buyer-LiveTrade")
 
     assert_equal(frame.Detail.TipStatus.text, "Tip in trade: 50s", "active trades should show the live trade gold amount")
-    assert_true(frame.Detail.NoTipButton.shown == false, "active trades should hide the manual no-tip override")
+    assert_nil(frame.Detail.NoTipButton, "active trades should no longer render a separate no-tip override")
     assert_true(frame.Detail.CompleteButton.shown == false, "active trades should hide the manual completion fallback")
     assert_true(string.find(frame.Detail.ReadyText.text or "", "Complete stays manual") ~= nil, "active verified trades should explain that trade syncing is automatic but completion stays manual")
     assert_equal(state.trade_target_money, 5000, "active trade ui test should rely on the trade money api state")
@@ -958,12 +987,11 @@ local function test_workbench_accepted_trade_commits_progress_and_waits_for_manu
     assert_equal(totalRecipes, 1, "the order should still track the recipe total")
     assert_equal(checked, 2, "accepted trades should carry the matching mats forward into the order")
     assert_equal(totalMats, 2, "material progress should still use the order material total")
-    assert_true(frame.Detail.NoTipButton.shown, "after a zero-tip trade the manual no-tip confirmation should still be available")
-    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until you explicitly settle a zero-tip order")
+    assert_nil(frame.Detail.NoTipButton, "after a zero-tip trade there should still be no separate no-tip button")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available after a verified zero-tip trade")
     assert_equal(state.CompletedOrders, 0, "accepted zero-tip trades should not auto-complete the order")
     assert_equal(state.CompletedTipsCopper, 0, "accepted zero-tip trades should not bank tips before manual completion")
 
-    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
     assert_equal(state.CompletedOrders, 1, "manual completion should still work after a zero-tip accepted trade")
@@ -1625,7 +1653,7 @@ local function test_order_only_turns_verified_when_all_recipes_are_checked()
     assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should also show the full-order verified state once all recipes are checked")
 end
 
-local function test_recipe_verify_checkbox_updates_order_state()
+local function test_recipe_lines_show_read_only_status_indicators()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -1638,14 +1666,45 @@ local function test_recipe_verify_checkbox_updates_order_state()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF minor speed pst", "Buyer-Check")
 
-    frame.Detail.RecipeLines[1].VerifyCheck:SetChecked(true)
-    frame.Detail.RecipeLines[1].VerifyCheck.scripts["OnClick"](frame.Detail.RecipeLines[1].VerifyCheck)
+    assert_nil(frame.Detail.RecipeLines[1].VerifyCheck, "recipe rows should no longer expose a clickable verify checkbox")
+    assert_equal(frame.Detail.RecipeLines[1].StatusText.text, "?", "unverified recipe rows should show a question-mark indicator")
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown == false, "unverified recipe rows should not show the green-check texture")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Boots - Minor Speed", true)
+
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "verified recipe rows should show the green-check texture")
+    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "verified recipe rows should hide the question-mark indicator")
+end
+
+local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-AutoVerify")
+
+    addon.Workbench.BeginTrade("Buyer-AutoVerify")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
 
     local order = addon.Workbench.GetSelectedOrder()
     local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
 
-    assert_equal(verified, 1, "recipe verify checkbox should persist the verified recipe count")
-    assert_equal(total, 1, "recipe verify progress should use the order recipe total")
+    assert_equal(verified, 1, "accepted trades should auto-verify a matching enchant even when Apply was not clicked first")
+    assert_equal(total, 1, "auto verification should still track the total queued recipe count")
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "auto-verified recipes should show the green-check indicator")
+    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "auto-verified recipes should hide the question-mark indicator")
 end
 
 local function test_trade_offer_marks_live_material_progress()
@@ -1919,9 +1978,11 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_toggle_shows_a_newly_created_hidden_frame()
+test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
 test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
-test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+test_workbench_complete_allows_zero_tip_without_a_separate_button()
 test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
 test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
@@ -1950,7 +2011,8 @@ test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
-test_recipe_verify_checkbox_updates_order_state()
+test_recipe_lines_show_read_only_status_indicators()
+test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
 test_trade_material_helper_copies_live_offer_into_recorded_progress()
