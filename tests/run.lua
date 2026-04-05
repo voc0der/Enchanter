@@ -222,6 +222,12 @@ local function setup_env(opts)
         function frame:GetVerticalScroll() return self.vertical_scroll or 0 end
         function frame:SetText(text) self.text = text end
         function frame:GetText() return self.text end
+        function frame:SetNormalTexture(value) self.normal_texture = value end
+        function frame:GetNormalTexture() return self.normal_texture end
+        function frame:SetHighlightTexture(value) self.highlight_texture = value end
+        function frame:GetHighlightTexture() return self.highlight_texture end
+        function frame:SetPushedTexture(value) self.pushed_texture = value end
+        function frame:GetPushedTexture() return self.pushed_texture end
         function frame:SetAutoFocus(value) self.auto_focus = value and true or false end
         function frame:SetNumeric(value) self.numeric = value and true or false end
         function frame:SetMaxLetters(value) self.max_letters = value end
@@ -1715,7 +1721,10 @@ local function test_workbench_applies_elvui_skin_when_available()
 
     assert_true(frame.elvui_frame_skinned, "main workbench frame should use the ElvUI frame template when available")
     assert_true(frame.LockButton.elvui_button_skinned, "lock button should use the ElvUI button template when available")
-    assert_true(frame.ResizeHandle.elvui_button_skinned, "resize handle should use the ElvUI button template when available")
+    assert_equal(frame.ResizeHandle.normal_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up", "resize handle should use the native size-grabber texture instead of a text button")
+    assert_equal(frame.ResizeHandle.highlight_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight", "resize handle should expose the native highlight grip texture")
+    assert_equal(frame.ResizeHandle.pushed_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down", "resize handle should expose the native pressed grip texture")
+    assert_true(frame.ResizeHandle.text == nil, "resize handle should not render a Resize text label")
 end
 
 local function test_scan_selects_trade_skill_before_capturing_materials()

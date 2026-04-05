@@ -2834,12 +2834,19 @@ function Workbench.CreateFrame()
 	frame.Detail.Empty:SetJustifyH("LEFT")
 	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and automatic material tracking.")
 
-	frame.ResizeHandle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	frame.ResizeHandle:SetSize(54, 18)
-	frame.ResizeHandle:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
-	frame.ResizeHandle:SetText("Resize")
+	frame.ResizeHandle = CreateFrame("Button", nil, frame)
+	frame.ResizeHandle:SetSize(16, 16)
+	frame.ResizeHandle:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 10)
+	if frame.ResizeHandle.SetNormalTexture then
+		frame.ResizeHandle:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+	end
+	if frame.ResizeHandle.SetHighlightTexture then
+		frame.ResizeHandle:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+	end
+	if frame.ResizeHandle.SetPushedTexture then
+		frame.ResizeHandle:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+	end
 	frame.ResizeHandle:RegisterForDrag("LeftButton")
-	ApplyElvUISkin(frame.ResizeHandle, "button")
 	frame.ResizeHandle:SetScript("OnDragStart", function()
 		WorkbenchDebug("resize start")
 		if frame.StartSizing then
@@ -2855,7 +2862,7 @@ function Workbench.CreateFrame()
 
 	frame.QueueCountText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.QueueCountText:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 16, 20)
-	frame.QueueCountText:SetPoint("RIGHT", frame.ResizeHandle, "LEFT", -14, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.ResizeHandle, "LEFT", -10, 0)
 	frame.QueueCountText:SetJustifyH("LEFT")
 	frame.QueueCountText:SetText(BuildHeaderStatusText())
 
