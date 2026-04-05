@@ -332,6 +332,37 @@ local function NormalizeItemCount(value)
 	return math.max(0, math.floor(tonumber(value) or 0))
 end
 
+local function CopyNormalizedCountTable(source)
+	local copy = {}
+
+	if type(source) ~= "table" then
+		return copy
+	end
+
+	for key, value in pairs(source) do
+		local normalized = NormalizeItemCount(value)
+		if type(key) == "string" and key ~= "" and normalized > 0 then
+			copy[key] = normalized
+		end
+	end
+
+	return copy
+end
+
+local function CountTableHasPositiveCounts(source)
+	if type(source) ~= "table" then
+		return false
+	end
+
+	for _, value in pairs(source) do
+		if NormalizeItemCount(value) > 0 then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function GetRequiredMaterialCount(material)
 	local requiredCount = NormalizeItemCount(material and material.Count or 0)
 	if requiredCount > 0 then
@@ -384,6 +415,26 @@ local function GetDisplayedTradeMaterialCount(activeTrade, materialKey)
 	local offeredCount = NormalizeItemCount(activeTrade and activeTrade.OfferedMaterialCounts and activeTrade.OfferedMaterialCounts[materialKey] or 0)
 	local recordedCount = GetManuallyRecordedTradeMaterialCount(activeTrade, materialKey)
 	return math.max(0, offeredCount - recordedCount)
+end
+
+local function GetOrderForActiveTrade(activeTrade)
+	local order
+
+	if not activeTrade then
+		return nil
+	end
+
+	if activeTrade.OrderId then
+		order = Workbench.GetOrderById(activeTrade.OrderId)
+	end
+	if not order and activeTrade.CustomerName and activeTrade.CustomerName ~= "" then
+		order = Workbench.GetOrderByCustomer(activeTrade.CustomerName)
+		if order then
+			activeTrade.OrderId = order.Id
+		end
+	end
+
+	return order
 end
 
 local function GetTipStatusText(order, activeTrade)
@@ -1320,6 +1371,23 @@ local function AddRecordedTradeMaterialCounts(activeTrade, appliedCounts)
 	end
 end
 
+local function SnapshotTradeCompletionState(activeTrade)
+	local currentTradeMoneyCopper
+
+	if not activeTrade then
+		return
+	end
+
+	if CountTableHasPositiveCounts(activeTrade.OfferedMaterialCounts) then
+		activeTrade.CompletedMaterialCounts = CopyNormalizedCountTable(activeTrade.OfferedMaterialCounts)
+	end
+
+	currentTradeMoneyCopper = math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0))
+	if currentTradeMoneyCopper > 0 then
+		activeTrade.CompletedTradeMoneyCopper = currentTradeMoneyCopper
+	end
+end
+
 local function TrackTradeAppliedRecipe(order, activeTrade)
 	if not order or not activeTrade then
 		return false
@@ -1366,7 +1434,11 @@ local function CommitTradeState(order, activeTrade)
 		end
 	end
 
-	appliedMaterialCount = select(1, MergeTradeMaterialCounts(order, activeTrade.OfferedMaterialCounts, activeTrade.ManuallyRecordedMaterialCounts))
+	appliedMaterialCount = select(1, MergeTradeMaterialCounts(
+		order,
+		CountTableHasPositiveCounts(activeTrade.CompletedMaterialCounts) and activeTrade.CompletedMaterialCounts or activeTrade.OfferedMaterialCounts,
+		activeTrade.ManuallyRecordedMaterialCounts
+	))
 	return appliedRecipeCount, appliedMaterialCount
 end
 
@@ -1569,8 +1641,10 @@ function Workbench.BeginTrade(customerName)
 		OfferedCounts = {},
 		OfferedChecked = 0,
 		OfferedTotal = 0,
+		CompletedMaterialCounts = {},
 		ManuallyRecordedMaterialCounts = {},
 		TargetTradeMoneyCopper = GetTargetTradeMoneyCopper(),
+		CompletedTradeMoneyCopper = 0,
 		PlayerAccepted = false,
 		TargetAccepted = false,
 		CompletedSignal = false,
@@ -1590,7 +1664,6 @@ end
 function Workbench.SyncActiveTrade()
 	local runtime = EnsureRuntime()
 	local activeTrade = runtime.ActiveTrade
-	local order
 
 	if not activeTrade then
 		return nil
@@ -1600,21 +1673,16 @@ function Workbench.SyncActiveTrade()
 		activeTrade.CustomerName = Workbench.GetTradePartnerName and Workbench.GetTradePartnerName() or nil
 	end
 
-	if activeTrade.OrderId then
-		order = Workbench.GetOrderById(activeTrade.OrderId)
-	end
-	if not order and activeTrade.CustomerName and activeTrade.CustomerName ~= "" then
-		order = Workbench.GetOrderByCustomer(activeTrade.CustomerName)
-		if order then
-			activeTrade.OrderId = order.Id
-		end
-	end
+	local order = GetOrderForActiveTrade(activeTrade)
 
 	if order then
 		SetSelectedOrder(order.Id)
 		Workbench.GetTradeMaterialProgress(order)
 		activeTrade.TargetTradeMoneyCopper = GetTargetTradeMoneyCopper()
 		TrackTradeAppliedRecipe(order, activeTrade)
+		if activeTrade.CompletedSignal or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) then
+			SnapshotTradeCompletionState(activeTrade)
+		end
 	else
 		activeTrade.OfferedMaterialState = {}
 		activeTrade.OfferedMaterialCounts = {}
@@ -1636,6 +1704,13 @@ function Workbench.SetTradeAcceptState(playerAccepted, targetAccepted)
 
 	activeTrade.PlayerAccepted = (tonumber(playerAccepted) or 0) > 0
 	activeTrade.TargetAccepted = (tonumber(targetAccepted) or 0) > 0
+	if activeTrade.PlayerAccepted and activeTrade.TargetAccepted then
+		local order = GetOrderForActiveTrade(activeTrade)
+		if order then
+			TrackTradeAppliedRecipe(order, activeTrade)
+		end
+		SnapshotTradeCompletionState(activeTrade)
+	end
 	WorkbenchDebug("trade accept state", tostring(activeTrade.PlayerAccepted), tostring(activeTrade.TargetAccepted))
 	Workbench.Refresh()
 	return activeTrade.PlayerAccepted and activeTrade.TargetAccepted
@@ -1648,6 +1723,11 @@ function Workbench.MarkTradeCompleted()
 	end
 
 	activeTrade.CompletedSignal = true
+	local order = GetOrderForActiveTrade(activeTrade)
+	if order then
+		TrackTradeAppliedRecipe(order, activeTrade)
+	end
+	SnapshotTradeCompletionState(activeTrade)
 	WorkbenchDebug("trade completion confirmed by UI_INFO_MESSAGE")
 	return true
 end
@@ -1724,7 +1804,13 @@ function Workbench.FinishTrade(goldDelta)
 		return nil
 	end
 
-	tradeTipCopper = math.max(tradeTipCopper, math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)))
+	TrackTradeAppliedRecipe(order, activeTrade)
+	SnapshotTradeCompletionState(activeTrade)
+
+	tradeTipCopper = math.max(tradeTipCopper, math.max(
+		math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)),
+		math.max(0, math.floor(tonumber(activeTrade.CompletedTradeMoneyCopper) or 0))
+	))
 	tradeSucceeded = activeTrade.CompletedSignal and true or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) and true or (math.floor(tonumber(goldDelta) or 0) > 0)
 
 	if tradeSucceeded then
