@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.16`
+Current version: `2.1.17`
 
 ## What It Does
 
@@ -14,6 +14,7 @@ Current version: `2.1.16`
 - Match trade-chat requests against configured recipe tags
 - Auto-invite matched players when `Auto Invite` is enabled
 - Whisper the matching enchant links with a configurable delay and message prefix
+- Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
 - Resize the workbench to fit your screen or chat flow, with the layout saved per character

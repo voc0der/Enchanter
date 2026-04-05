@@ -36,6 +36,8 @@ function EC.Default()
 	EC.EnchanterTags = EC.DefaultEnchanterTags
 
 	EC.DB.AutoInvite = true
+	EC.DB.WarnIncompleteOrder = true
+	EC.DB.InviteIncompleteOrder = true
 	EC.DB.NetherRecipes = false
 	EC.DB.WhisperLfRequests = false
 	EC.DB.GroupedFollowUp = false
@@ -56,6 +58,12 @@ function EC.OptionsUpdate()
 	EC.DB.Custom.SearchPrefix = EC.DB.Custom.SearchPrefix or Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = EC.DB.Custom.GenericPrefix or Combine(EC.DefaultEnchanterTags)
 
+	if EC.DB.WarnIncompleteOrder == nil then
+		EC.DB.WarnIncompleteOrder = true
+	end
+	if EC.DB.InviteIncompleteOrder == nil then
+		EC.DB.InviteIncompleteOrder = true
+	end
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then
 		EC.DB.MsgPrefix = EC.DefaultMsg
 	end
@@ -162,6 +170,10 @@ function EC.OptionsInit()
 	AddSavedCheckBox(EC.DB, "NetherRecipes", false, "Disable Nether Recipes")
 	AddSavedCheckBox(EC.DB, "WhisperLfRequests", false, "Reply to LF Enchanter requests")
 	AddSavedCheckBox(EC.DB, "GroupedFollowUp", false, "Follow up if target already grouped")
+	EC.OptionsBuilder.EndInLine()
+	EC.OptionsBuilder.InLine()
+	AddSavedCheckBox(EC.DB, "WarnIncompleteOrder", true, "Warn if Incomplete Order")
+	AddSavedCheckBox(EC.DB, "InviteIncompleteOrder", true, "Invite Incomplete Order")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.Indent(-10)
 	EC.OptionsBuilder.AddSpacerToPanel()
