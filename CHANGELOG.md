@@ -1,3 +1,9 @@
+## [2.1.25] - 2026-04-05
+
+### Fixed
+- Latched accepted trade state so received mats and detected in-window enchants still persist even if the client clears trade accept flags during the close sequence
+- Updated the workbench detail view to show a trade-detected enchant as verified immediately while the trade is still open
+
 ## [2.1.24] - 2026-04-05
 
 ### Fixed

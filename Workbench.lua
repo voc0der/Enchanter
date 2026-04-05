@@ -420,6 +420,14 @@ local function GetDisplayedTradeMaterialCount(activeTrade, materialKey)
 	return math.max(0, offeredCount - recordedCount)
 end
 
+local function HasAcceptedTradeSettlement(activeTrade)
+	if not activeTrade then
+		return false
+	end
+
+	return activeTrade.AcceptedSignal and true or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) and true or false
+end
+
 local function GetOrderForActiveTrade(activeTrade)
 	local order
 
@@ -1500,6 +1508,40 @@ local function CommitTradeState(order, activeTrade)
 	return appliedRecipeCount, appliedMaterialCount
 end
 
+local function IsRecipeVerifiedForDisplay(order, recipeName)
+	local activeTrade
+
+	if not order or not recipeName or recipeName == "" then
+		return false
+	end
+
+	if order.VerifiedRecipes and order.VerifiedRecipes[recipeName] then
+		return true
+	end
+
+	activeTrade = GetActiveTradeForOrder(order)
+	return activeTrade and activeTrade.AppliedRecipes and activeTrade.AppliedRecipes[recipeName] and true or false
+end
+
+local function GetDisplayedRecipeVerificationProgress(order)
+	local checked = 0
+	local total = 0
+
+	order = order or Workbench.GetSelectedOrder()
+	if not order then
+		return 0, 0
+	end
+
+	total = #(order.Recipes or {})
+	for _, recipeName in ipairs(order.Recipes or {}) do
+		if IsRecipeVerifiedForDisplay(order, recipeName) then
+			checked = checked + 1
+		end
+	end
+
+	return checked, total
+end
+
 function Workbench.GetMaterialSnapshot(order)
 	local materials = {}
 	local byKey = {}
@@ -1705,6 +1747,7 @@ function Workbench.BeginTrade(customerName)
 		CompletedTradeMoneyCopper = 0,
 		PlayerAccepted = false,
 		TargetAccepted = false,
+		AcceptedSignal = false,
 		CompletedSignal = false,
 	}
 
@@ -1738,7 +1781,7 @@ function Workbench.SyncActiveTrade()
 		Workbench.GetTradeMaterialProgress(order)
 		activeTrade.TargetTradeMoneyCopper = GetTargetTradeMoneyCopper()
 		TrackTradeAppliedRecipe(order, activeTrade)
-		if activeTrade.CompletedSignal or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) then
+		if activeTrade.CompletedSignal or HasAcceptedTradeSettlement(activeTrade) then
 			SnapshotTradeCompletionState(activeTrade)
 		end
 	else
@@ -1763,6 +1806,7 @@ function Workbench.SetTradeAcceptState(playerAccepted, targetAccepted)
 	activeTrade.PlayerAccepted = (tonumber(playerAccepted) or 0) > 0
 	activeTrade.TargetAccepted = (tonumber(targetAccepted) or 0) > 0
 	if activeTrade.PlayerAccepted and activeTrade.TargetAccepted then
+		activeTrade.AcceptedSignal = true
 		local order = GetOrderForActiveTrade(activeTrade)
 		if order then
 			TrackTradeAppliedRecipe(order, activeTrade)
@@ -1871,7 +1915,7 @@ function Workbench.FinishTrade(goldDelta)
 		math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)),
 		math.max(0, math.floor(tonumber(activeTrade.CompletedTradeMoneyCopper) or 0))
 	))
-	tradeSucceeded = activeTrade.CompletedSignal and true or (activeTrade.PlayerAccepted and activeTrade.TargetAccepted) and true or (math.floor(tonumber(goldDelta) or 0) > 0)
+	tradeSucceeded = activeTrade.CompletedSignal and true or HasAcceptedTradeSettlement(activeTrade) or (math.floor(tonumber(goldDelta) or 0) > 0)
 
 	if tradeSucceeded then
 		persistedRecipes, persistedMaterials = CommitTradeState(order, activeTrade)
@@ -3056,9 +3100,16 @@ function Workbench.Refresh()
 	frame.Detail.Empty:Hide()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
 
-	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
-	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
+	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
+	local verifiedCount
+	local recipeTotal
+
+	if activeTrade then
+		verifiedCount, recipeTotal = GetDisplayedRecipeVerificationProgress(order)
+	else
+		verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
+	end
 	local hasRecordedTip = GetRecordedTipCopper(order) > 0
 	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
 	local verificationText = recipeTotal > 0 and string.format("%d/%d verified", verifiedCount, recipeTotal) or "No enchants queued"
@@ -3125,7 +3176,7 @@ function Workbench.Refresh()
 		end
 		local line = frame.Detail.RecipeLines[index]
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
-		local isVerified = order.VerifiedRecipes and order.VerifiedRecipes[recipeName]
+		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName)
 		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
 		line.CastButton.RecipeName = recipeName
 		if isVerified then
