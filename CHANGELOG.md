@@ -1,3 +1,8 @@
+## [2.1.24] - 2026-04-05
+
+### Fixed
+- Hardened recipe reagent scans so workbench material snapshots keep the full reagent list even on clients that depend on confirmed profession-frame selection or expose extra reagent info fields; owning one reagent yourself no longer collapses queued mats down to that single item
+
 ## [2.1.23] - 2026-04-05
 
 ### Fixed

@@ -146,11 +146,35 @@ end
 
 local function GetRecipeSelectApi(apiKind)
 	apiKind = ResolveRecipeApiKind(apiKind)
-	if apiKind == "trade" and HasTradeSkillRecipeApi() and SelectTradeSkill then
-		return SelectTradeSkill
+	if apiKind == "trade" and HasTradeSkillRecipeApi() then
+		return function(index)
+			local usedFrameSelection = false
+
+			if TradeSkillFrame_SetSelection then
+				usedFrameSelection = pcall(TradeSkillFrame_SetSelection, index)
+			end
+			if not usedFrameSelection and SelectTradeSkill then
+				SelectTradeSkill(index)
+			end
+			if TradeSkillFrame then
+				TradeSkillFrame.selectedSkill = index
+			end
+		end
 	end
-	if apiKind == "craft" and HasCraftRecipeApi() and SelectCraft then
-		return SelectCraft
+	if apiKind == "craft" and HasCraftRecipeApi() then
+		return function(index)
+			local usedFrameSelection = false
+
+			if CraftFrame_SetSelection then
+				usedFrameSelection = pcall(CraftFrame_SetSelection, index)
+			end
+			if not usedFrameSelection and SelectCraft then
+				SelectCraft(index)
+			end
+			if CraftFrame then
+				CraftFrame.selectedCraft = index
+			end
+		end
 	end
 	return nil
 end
@@ -182,26 +206,82 @@ local function GetRecipeReagentApi(apiKind)
 	return nil, nil, nil
 end
 
-local function CaptureRecipeMaterials(recipeIndex, apiKind)
+local function GetSelectedRecipeIndex(apiKind, fallbackIndex)
+	apiKind = ResolveRecipeApiKind(apiKind)
+
+	if apiKind == "trade" and GetTradeSkillSelectionIndex then
+		local selectedIndex = math.floor(tonumber(GetTradeSkillSelectionIndex()) or 0)
+		if selectedIndex > 0 then
+			return selectedIndex
+		end
+	end
+
+	if apiKind == "craft" and GetCraftSelectionIndex then
+		local selectedIndex = math.floor(tonumber(GetCraftSelectionIndex()) or 0)
+		if selectedIndex > 0 then
+			return selectedIndex
+		end
+	end
+
+	return fallbackIndex
+end
+
+local function ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthValue)
+	local requiredCount = tonumber(thirdValue)
+	local alternateCount = tonumber(fourthValue)
+	local playerCount = tonumber(fifthValue)
+	local linkItemId = type(reagentLink) == "string" and tonumber(reagentLink:match("item:(%d+)")) or nil
+
+	if fifthValue ~= nil then
+		if linkItemId and requiredCount and requiredCount == linkItemId and alternateCount and alternateCount > 0 then
+			requiredCount = alternateCount
+		elseif alternateCount and alternateCount > 0 and (not playerCount or playerCount <= alternateCount) then
+			requiredCount = alternateCount
+		end
+	end
+
+	if not requiredCount or requiredCount < 1 then
+		requiredCount = alternateCount
+	end
+
+	requiredCount = tonumber(requiredCount) or 1
+	return math.max(1, math.floor(requiredCount))
+end
+
+local function CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
 	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi(apiKind)
 	local materials = {}
 
-	if not getNumReagents or not getReagentInfo then
+	if not recipeIndex or not getNumReagents or not getReagentInfo then
 		return materials
 	end
 
 	for reagentIndex = 1, getNumReagents(recipeIndex) or 0 do
-		local reagentName, _, reagentCount = getReagentInfo(recipeIndex, reagentIndex)
+		local reagentName, _, thirdValue, fourthValue, fifthValue = getReagentInfo(recipeIndex, reagentIndex)
+		local reagentLink = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil
 		if reagentName and reagentName ~= "" then
 			materials[#materials + 1] = {
 				Name = reagentName,
-				Count = tonumber(reagentCount) or 1,
-				Link = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil,
+				Count = ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthValue),
+				Link = reagentLink,
 			}
 		end
 	end
 
 	return materials
+end
+
+local function CaptureRecipeMaterials(recipeIndex, apiKind)
+	local selectedMaterials = CaptureRecipeMaterialsForIndex(GetSelectedRecipeIndex(apiKind), apiKind)
+	local indexedMaterials = CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
+
+	if #indexedMaterials > #selectedMaterials then
+		return indexedMaterials
+	end
+	if #selectedMaterials > 0 then
+		return selectedMaterials
+	end
+	return indexedMaterials
 end
 
 local function SnapshotTradeSkillFilters()
