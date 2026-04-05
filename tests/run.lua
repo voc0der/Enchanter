@@ -66,6 +66,10 @@ local function setup_env(opts)
         prints = {},
         played_sounds = {},
         played_sound_calls = {},
+        crafts = copy_table(opts.crafts or {}),
+        craft_available_only = opts.craft_available_only and true or false,
+        craft_filter = tonumber(opts.craft_filter) or 0,
+        do_craft_calls = {},
         do_trade_skill_calls = {},
         events = {},
         slash = nil,
@@ -77,6 +81,7 @@ local function setup_env(opts)
         trade_target_money = tonumber(opts.trade_target_money) or 0,
         whispers = {},
         frames = {},
+        selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
     }
 
@@ -314,6 +319,118 @@ local function setup_env(opts)
     end
     _G.CastSpellByName = function(name)
         state.last_cast = name
+    end
+    _G.CraftFrame = {
+        selectedCraft = state.selected_craft,
+    }
+    _G.CraftFrameAvailableFilterCheckButton = {
+        checked = state.craft_available_only and true or false,
+    }
+    function _G.CraftFrameAvailableFilterCheckButton:GetChecked()
+        return self.checked and true or false
+    end
+    function _G.CraftFrameAvailableFilterCheckButton:SetChecked(value)
+        self.checked = value and true or false
+    end
+    local function get_visible_crafts()
+        local visible = {}
+
+        for _, craft in ipairs(state.crafts) do
+            local craftType = craft.craft_type or craft.skill_type or "optimal"
+            local filterIndex = tonumber(craft.filter_index) or 0
+            local numAvailable = math.max(0, math.floor(tonumber(craft.num_available) or 0))
+            local matchesFilter = state.craft_filter == 0 or filterIndex == state.craft_filter or craftType == "header"
+            local matchesAvailable = not state.craft_available_only or craftType == "header" or numAvailable > 0
+
+            if matchesFilter and matchesAvailable then
+                visible[#visible + 1] = craft
+            end
+        end
+
+        return visible
+    end
+    _G.GetCraftSlots = function()
+        return table.unpack(opts.craft_slots or {})
+    end
+    _G.GetCraftFilter = function(index)
+        return (tonumber(index) or 0) == state.craft_filter
+    end
+    _G.SetCraftFilter = function(index)
+        state.craft_filter = tonumber(index) or 0
+    end
+    _G.CraftOnlyShowMakeable = function(value)
+        state.craft_available_only = value and true or false
+        _G.CraftFrameAvailableFilterCheckButton.checked = state.craft_available_only
+    end
+    _G.GetNumCrafts = function()
+        return #get_visible_crafts()
+    end
+    _G.GetCraftInfo = function(index)
+        local craft = get_visible_crafts()[index]
+        if not craft then
+            return nil
+        end
+        return craft.name, craft.sub_spell_name, craft.craft_type or craft.skill_type or "optimal", craft.num_available or 0, craft.is_expanded, craft.training_point_cost or 0, craft.required_level or 0
+    end
+    _G.GetCraftRecipeLink = function(index)
+        local craft = get_visible_crafts()[index]
+        return craft and craft.link or nil
+    end
+    _G.SelectCraft = function(index)
+        state.selected_craft = index
+        _G.CraftFrame.selectedCraft = index
+    end
+    _G.CraftFrame_SetSelection = function(index)
+        state.craft_frame_selection = index
+        state.selected_craft = index
+        _G.CraftFrame.selectedCraft = index
+    end
+    _G.GetCraftSelectionIndex = function()
+        return tonumber(state.selected_craft) or 0
+    end
+    _G.DoCraft = function(index)
+        state.do_craft_calls[#state.do_craft_calls + 1] = {
+            index = index,
+            selected = state.selected_craft,
+        }
+        state.last_do_craft = {
+            index = index,
+        }
+    end
+    _G.GetCraftNumReagents = function(index)
+        local craft = get_visible_crafts()[index]
+        if not craft or not craft.reagents then
+            return 0
+        end
+        if opts.require_craft_selection_for_reagents and state.selected_craft ~= index then
+            return 0
+        end
+        return #craft.reagents
+    end
+    _G.GetCraftReagentInfo = function(index, reagent_index)
+        local craft = get_visible_crafts()[index]
+        if not craft or not craft.reagents then
+            return nil
+        end
+        if opts.require_craft_selection_for_reagents and state.selected_craft ~= index then
+            return nil
+        end
+        local reagent = craft.reagents[reagent_index]
+        if not reagent then
+            return nil
+        end
+        return reagent.name, reagent.texture, reagent.count
+    end
+    _G.GetCraftReagentItemLink = function(index, reagent_index)
+        local craft = get_visible_crafts()[index]
+        if not craft or not craft.reagents then
+            return nil
+        end
+        if opts.require_craft_selection_for_reagents and state.selected_craft ~= index then
+            return nil
+        end
+        local reagent = craft.reagents[reagent_index]
+        return reagent and reagent.link or nil
     end
     _G.TradeSkillFrame = {
         selectedSkill = nil,
@@ -570,6 +687,36 @@ local function test_scan_filters_unknown_and_nether_recipes()
     assert_nil(EnchanterDBChar.RecipeList["Enchant Boots - Surefooted"], "nether recipe should be filtered when disabled")
     assert_equal(EnchanterDBChar.RecipeLinks["Enchant Weapon - Mongoose"], "spell:27984", "known recipe link should be stored")
     assert_nil(EnchanterDBChar.RecipeList["Completely Unknown Recipe"], "unknown recipes should not be added")
+end
+
+local function test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
+    local addon = setup_env({
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+                reagents = {
+                    { name = "Wrong Dust", count = 2, link = "item:99999" },
+                },
+            },
+        },
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local materials = EnchanterDBChar.RecipeMats["Enchant Boots - Minor Speed"]
+
+    assert_true(ok, "scan should still succeed when both recipe api families are exposed")
+    assert_equal(EnchanterDBChar.RecipeLinks["Enchant Boots - Minor Speed"], "spell:13890", "scan should prefer the trade skill recipe link when both api families are available")
+    assert_equal(materials[1].Name, "Soul Dust", "scan should keep recipe materials aligned with the chosen trade skill api family")
 end
 
 local function test_options_update_rebuilds_compiled_tags()
@@ -1476,6 +1623,31 @@ local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
     assert_equal(state.last_do_trade_skill.count, 1, "cast should use the Blizzard create count instead of omitting it")
 end
 
+local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
+    local addon, state = setup_env({
+        craft_available_only = true,
+        craft_filter = 1,
+        craft_slots = { "INVTYPE_WEAPON" },
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+                filter_index = 0,
+                num_available = 0,
+            },
+        },
+    })
+
+    local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
+
+    assert_true(casted, "cast should still start when only the legacy craft api exposes the recipe")
+    assert_equal(state.craft_frame_selection, 1, "craft casting should use the Blizzard craft selection helper when it is available")
+    assert_equal(state.last_do_craft.index, 1, "craft casting should create the selected legacy craft recipe")
+    assert_equal(state.craft_filter, 1, "craft casting should restore the previous craft slot filter after casting")
+    assert_true(state.craft_available_only, "craft casting should restore the previous makeable-only filter after casting")
+    assert_true(CraftFrameAvailableFilterCheckButton.checked, "craft casting should keep the craft filter checkbox aligned with the restored state")
+end
+
 local function test_workbench_legacy_timestamps_are_reformatted_on_load()
     local addon = setup_env({
         char_db = {
@@ -2044,6 +2216,7 @@ local function test_slash_commands_expose_simulate_entry()
 end
 
 test_scan_filters_unknown_and_nether_recipes()
+test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_invites_once_and_whispers_link()
 test_generic_lf_enchanter_whisper()
@@ -2077,6 +2250,7 @@ test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
 test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
+test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_trade_cast_keeps_order_until_verified()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()

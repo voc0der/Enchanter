@@ -2104,18 +2104,6 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 end
 
 local function TryCastRecipe(recipeName)
-	if GetNumCrafts and GetCraftInfo and DoCraft then
-		for index = 1, GetNumCrafts() or 0 do
-			if GetCraftInfo(index) == recipeName then
-				if SelectCraft then
-					SelectCraft(index)
-				end
-				DoCraft(index)
-				return true
-			end
-		end
-	end
-
 	local function FindTradeSkillIndexByName()
 		if not GetNumTradeSkills or not GetTradeSkillInfo then
 			return nil
@@ -2224,6 +2212,106 @@ local function TryCastRecipe(recipeName)
 		end
 
 		RestoreTradeSkillFilters(filterSnapshot)
+	end
+
+	local function FindCraftIndexByName()
+		if not GetNumCrafts or not GetCraftInfo then
+			return nil
+		end
+
+		for index = 1, GetNumCrafts() or 0 do
+			local name, _, craftType = GetCraftInfo(index)
+			if craftType ~= "header" and craftType ~= "subheader" and name == recipeName then
+				return index
+			end
+		end
+
+		return nil
+	end
+
+	local function SnapshotCraftFilters()
+		local snapshot = {
+			available = nil,
+			slot = 0,
+		}
+		local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
+
+		if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.GetChecked then
+			snapshot.available = CraftFrameAvailableFilterCheckButton:GetChecked() and true or false
+		end
+
+		if GetCraftFilter then
+			for index = 0, #craftSlots do
+				if GetCraftFilter(index) then
+					snapshot.slot = index
+					break
+				end
+			end
+		end
+
+		return snapshot
+	end
+
+	local function RestoreCraftFilters(snapshot)
+		if not snapshot then
+			return
+		end
+
+		if snapshot.available ~= nil and CraftOnlyShowMakeable then
+			CraftOnlyShowMakeable(snapshot.available)
+			if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.SetChecked then
+				CraftFrameAvailableFilterCheckButton:SetChecked(snapshot.available)
+			end
+		end
+
+		if snapshot.slot ~= nil and SetCraftFilter then
+			SetCraftFilter(snapshot.slot)
+		end
+	end
+
+	if GetNumCrafts and GetCraftInfo and DoCraft then
+		local index = FindCraftIndexByName()
+		local filterSnapshot
+
+		if not index then
+			filterSnapshot = SnapshotCraftFilters()
+			if CraftOnlyShowMakeable then
+				CraftOnlyShowMakeable(false)
+				if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.SetChecked then
+					CraftFrameAvailableFilterCheckButton:SetChecked(false)
+				end
+			end
+			if SetCraftFilter then
+				SetCraftFilter(0)
+			end
+			index = FindCraftIndexByName()
+		end
+
+		if index then
+			local usedCraftFrameSelection = false
+
+			if CraftFrame_SetSelection then
+				usedCraftFrameSelection = pcall(CraftFrame_SetSelection, index)
+			end
+			if not usedCraftFrameSelection and SelectCraft then
+				SelectCraft(index)
+			end
+
+			if GetCraftSelectionIndex and GetNumCrafts then
+				local selectedIndex = math.floor(tonumber(GetCraftSelectionIndex()) or 0)
+				local visibleCount = math.floor(tonumber(GetNumCrafts()) or 0)
+				if selectedIndex < 1 or selectedIndex > visibleCount then
+					RestoreCraftFilters(filterSnapshot)
+					return false
+				end
+			end
+
+			DoCraft(index)
+			RestoreCraftFilters(filterSnapshot)
+			return true
+		end
+
+		RestoreCraftFilters(filterSnapshot)
 	end
 
 	return false
