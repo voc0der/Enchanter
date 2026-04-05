@@ -764,6 +764,39 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
 end
 
+local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
+    local addon = setup_env()
+
+    local state = addon.Workbench.EnsureState()
+    assert_true(state.Visible == false, "workbench should start hidden by default")
+
+    addon.Workbench.Toggle()
+
+    local frame = addon.Workbench.Frame
+    assert_not_nil(frame, "toggle should create the workbench frame on first use")
+    assert_true(frame:IsShown(), "the first toggle should show the newly created workbench frame instead of immediately hiding it again")
+    assert_true(state.Visible, "showing the newly created workbench should persist visible state")
+end
+
+local function test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
+    local addon = setup_env()
+
+    addon.Workbench.Show()
+    local state = addon.Workbench.EnsureState()
+    local frame = addon.Workbench.Frame
+
+    frame:Hide()
+    if frame.scripts["OnHide"] then
+        frame.scripts["OnHide"](frame)
+    end
+    state.Visible = true
+
+    addon.Workbench.Toggle()
+
+    assert_true(frame:IsShown(), "toggle should show the workbench when the frame is actually hidden, even if saved visibility drifted stale")
+    assert_true(state.Visible, "toggle should resync saved visibility with the actual frame state")
+end
+
 local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     local addon, state = setup_env({
         char_db = {
@@ -1945,6 +1978,8 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_toggle_shows_a_newly_created_hidden_frame()
+test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
 test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
 test_workbench_complete_allows_zero_tip_without_a_separate_button()

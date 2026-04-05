@@ -4,6 +4,7 @@
 - Replaced the workbench recipe checkbox with automatic `?` / green-check status so accepted trades confirm completed enchants without manual clicks
 - Matched applied enchants from the trade-slot API, even when you did not start the cast from Enchanter's own `Apply` button
 - Dropped the extra `No tip` button so verified orders can be completed directly at `0g` when nobody tips
+- Synced the saved workbench visibility with the real frame state so `/ec workbench` now opens or closes correctly in one command after using the `X` button
 
 ## [2.1.13] - 2026-04-05
 

@@ -207,6 +207,19 @@ local function IsRegionShown(region)
 	return region.shown ~= false
 end
 
+local function IsWorkbenchFrameShown(frame)
+	frame = frame or Workbench.Frame
+	if not frame then
+		return false
+	end
+
+	if frame.IsShown then
+		return frame:IsShown() and true or false
+	end
+
+	return frame.shown ~= false
+end
+
 local function TrimText(value)
 	if not value then
 		return ""
@@ -2639,10 +2652,14 @@ function Workbench.CreateFrame()
 	frame.Detail.RecipeLines = {}
 	frame.Detail.MaterialLines = {}
 
+	frame:SetScript("OnShow", function()
+		Workbench.EnsureState().Visible = true
+	end)
 	frame:SetScript("OnSizeChanged", function(self)
 		ApplyFrameLayout(self)
 	end)
 	frame:SetScript("OnHide", function()
+		Workbench.EnsureState().Visible = false
 		frame:StopMovingOrSizing()
 	end)
 
@@ -2650,6 +2667,9 @@ function Workbench.CreateFrame()
 	UpdateLockButtonText()
 	UpdateSoundButtonText()
 	UpdateScanButtonText()
+	if not Workbench.EnsureState().Visible then
+		frame:Hide()
+	end
 	return frame
 end
 
@@ -2977,12 +2997,14 @@ function Workbench.Hide()
 end
 
 function Workbench.Toggle()
+	local state = Workbench.EnsureState()
 	local frame = Workbench.CreateFrame()
 	if not frame then
 		return
 	end
 
-	if frame:IsShown() then
+	state.Visible = IsWorkbenchFrameShown(frame)
+	if state.Visible then
 		Workbench.Hide()
 	else
 		Workbench.Show()
@@ -2993,7 +3015,7 @@ function Workbench.SyncVisibility()
 	local state = Workbench.EnsureState()
 	if state.Visible then
 		Workbench.Show()
-	elseif Workbench.Frame then
+	elseif Workbench.Frame and IsWorkbenchFrameShown(Workbench.Frame) then
 		Workbench.Frame:Hide()
 	end
 end
