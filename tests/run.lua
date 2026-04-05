@@ -83,6 +83,7 @@ local function setup_env(opts)
         frames = {},
         selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
+        trade_skill_frame_selection = nil,
         trade_skill_available_only = opts.trade_skill_available_only and true or false,
         trade_skill_subclass_filter = tonumber(opts.trade_skill_subclass_filter) or 0,
         trade_skill_invslot_filter = tonumber(opts.trade_skill_invslot_filter) or 0,
@@ -585,6 +586,11 @@ local function setup_env(opts)
         state.selected_trade_skill = index
         _G.TradeSkillFrame.selectedSkill = index
     end
+    _G.TradeSkillFrame_SetSelection = function(index)
+        state.trade_skill_frame_selection = index
+        state.selected_trade_skill = index
+        _G.TradeSkillFrame.selectedSkill = index
+    end
     _G.DoTradeSkill = function(index, count)
         state.do_trade_skill_calls[#state.do_trade_skill_calls + 1] = {
             index = index,
@@ -596,12 +602,21 @@ local function setup_env(opts)
             count = count,
         }
     end
+    local function trade_skill_reagents_are_available(index)
+        if opts.require_trade_frame_selection_for_reagents then
+            return state.trade_skill_frame_selection == index
+        end
+        if opts.require_trade_selection_for_reagents then
+            return state.selected_trade_skill == index
+        end
+        return true
+    end
     _G.GetTradeSkillNumReagents = function(index)
         local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return 0
         end
-        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+        if not trade_skill_reagents_are_available(index) then
             return 0
         end
         return #skill.reagents
@@ -611,12 +626,16 @@ local function setup_env(opts)
         if not skill or not skill.reagents then
             return nil
         end
-        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+        if not trade_skill_reagents_are_available(index) then
             return nil
         end
         local reagent = skill.reagents[reagent_index]
         if not reagent then
             return nil
+        end
+        if opts.trade_reagent_info_includes_item_id then
+            local itemId = tonumber(reagent.item_id) or tonumber((reagent.link or ""):match("item:(%d+)")) or 0
+            return reagent.name, reagent.texture, itemId, reagent.count, reagent.player_count or 0
         end
         return reagent.name, reagent.texture, reagent.count
     end
@@ -625,7 +644,7 @@ local function setup_env(opts)
         if not skill or not skill.reagents then
             return nil
         end
-        if opts.require_trade_selection_for_reagents and state.selected_trade_skill ~= index then
+        if not trade_skill_reagents_are_available(index) then
             return nil
         end
         local reagent = skill.reagents[reagent_index]
@@ -1814,6 +1833,45 @@ local function test_scan_selects_trade_skill_before_capturing_materials()
     assert_equal(materials[1].Name, "Soul Dust", "captured mats should include the first reagent")
 end
 
+local function test_scan_keeps_full_reagent_snapshot_when_only_one_mat_is_owned()
+    local addon, state = setup_env({
+        require_trade_frame_selection_for_reagents = true,
+        trade_reagent_info_includes_item_id = true,
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                reagents = {
+                    { name = "Small Radiant Shard", count = 1, player_count = 0, link = "item:11178", item_id = 11178 },
+                    { name = "Aquamarine", count = 1, player_count = 1, link = "item:7909", item_id = 7909 },
+                    { name = "Lesser Nether Essence", count = 1, player_count = 0, link = "item:11174", item_id = 11174 },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local scannedMaterials = EnchanterDBChar.RecipeMats["Enchant Boots - Minor Speed"]
+
+    assert_true(ok, "scan should still succeed when Anniversary-style reagent info includes item ids")
+    assert_equal(state.trade_skill_frame_selection, 1, "scan should use the trade-skill frame selection helper when reagent APIs depend on it")
+    assert_not_nil(scannedMaterials, "scan should store a mats snapshot for the selected recipe")
+    assert_equal(#scannedMaterials, 3, "scan should keep the full reagent list even when only one reagent is currently owned")
+    assert_equal(scannedMaterials[1].Count, 1, "scan should keep the required count instead of confusing it with item ids or owned counts")
+    assert_equal(scannedMaterials[2].Name, "Aquamarine", "scan should preserve the owned reagent without collapsing the other missing mats")
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed boots", "Buyer-OwnedAqua")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local orderMaterials = addon.Workbench.GetMaterialSnapshot(order)
+    local checked, total = addon.Workbench.GetMaterialProgress(order)
+
+    assert_equal(#orderMaterials, 3, "queued orders should still show every customer-supplied reagent for the recipe")
+    assert_equal(checked, 0, "owning one reagent yourself should not pre-mark any customer mat as tracked")
+    assert_equal(total, 3, "material progress should reflect the full reagent count for the queued order")
+end
+
 local function test_scan_clears_trade_skill_filters_and_restores_them_afterward()
     local addon = setup_env({
         trade_skill_available_only = true,
@@ -2622,6 +2680,7 @@ test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
+test_scan_keeps_full_reagent_snapshot_when_only_one_mat_is_owned()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
