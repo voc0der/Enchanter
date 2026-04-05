@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.7`
+Current version: `2.1.8`
 
 ## What It Does
 
@@ -44,10 +44,14 @@ Current version: `2.1.7`
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
-- Use the header `Clear` button to wipe the current queue and reset the detail pane if you want to flush stale or finished orders quickly.
+- Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound`.
+- When every requested enchant is verified, enter the tip and click `Complete` to remove that order cleanly and add it to the running totals.
+- The workbench header keeps a rolling `orders / done / tips` summary across reloads and relogs.
+- Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane explains the trade-slot flow.
 - Click `Apply`, then click the customer's item in the trade window to finish the enchant manually without over-automating it.
+- If the trade closes after the customer pays, the tip box will prefill from the observed gold change so `Complete` can use that amount directly.
 - Check the green checkbox next to each requested enchant once you have verified that specific enchant is fully paid and done.
 - Multi-enchant orders only turn green once every requested enchant has been checked off.
 - The workbench now watches the customer's current trade offer for matching mats and can show live progress against the queued material list.

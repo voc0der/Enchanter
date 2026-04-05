@@ -11,6 +11,11 @@ local MAX_FRAME_WIDTH = 960
 local MAX_FRAME_HEIGHT = 960
 local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
+local ORDER_ALERT_SOUND_FALLBACKS = {
+	{ key = "UI_REFORGING_REFORGE", id = 23291 },
+	{ key = "AUCTION_WINDOW_OPEN", id = 5274 },
+}
+local TRADE_CAST_RETRY_DELAYS = { 0.2, 0.5, 1.0 }
 
 local ElvUIEngine, ElvUISkins
 
@@ -196,6 +201,63 @@ local function TrimText(value)
 	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+local function FormatMoneyCompact(copper)
+	copper = math.max(0, math.floor(tonumber(copper) or 0))
+
+	local gold = math.floor(copper / 10000)
+	local silver = math.floor((copper % 10000) / 100)
+	local coin = copper % 100
+	local parts = {}
+
+	if gold > 0 then
+		parts[#parts + 1] = tostring(gold) .. "g"
+	end
+	if silver > 0 then
+		parts[#parts + 1] = tostring(silver) .. "s"
+	end
+	if coin > 0 then
+		parts[#parts + 1] = tostring(coin) .. "c"
+	end
+
+	if #parts == 0 then
+		return "0g"
+	end
+
+	return table.concat(parts, " ")
+end
+
+local function ParseMoneyCompact(value)
+	value = TrimText(value)
+	if value == "" then
+		return 0
+	end
+
+	local normalized = value:lower():gsub(",", ""):gsub("%s+", "")
+	if normalized:match("^%d+$") then
+		return (tonumber(normalized) or 0) * 10000
+	end
+
+	local total = 0
+	local matched = false
+	for amount, unit in normalized:gmatch("(%d+)([gsc])") do
+		local numericAmount = tonumber(amount) or 0
+		if unit == "g" then
+			total = total + (numericAmount * 10000)
+		elseif unit == "s" then
+			total = total + (numericAmount * 100)
+		elseif unit == "c" then
+			total = total + numericAmount
+		end
+		matched = true
+	end
+
+	if matched then
+		return total
+	end
+
+	return nil
+end
+
 local function CopyRecipeNames(recipeMapOrList)
 	local out = {}
 	local seen = {}
@@ -256,6 +318,8 @@ local function EnsureOrderFields(order)
 	order.MaterialState = order.MaterialState or {}
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
 	order.Message = order.Message or ""
+	order.PendingTipText = order.PendingTipText or ""
+	order.LastObservedTipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0))
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
@@ -489,6 +553,43 @@ local function SetSelectedOrder(orderId)
 	end
 end
 
+local function IsQueueSoundEnabled()
+	local state = Workbench.EnsureState()
+	return state.SoundEnabled and true or false
+end
+
+local function BuildHeaderStatusText(state)
+	state = state or Workbench.EnsureState()
+
+	local orderCount = #((state and state.Orders) or {})
+	local completedCount = math.max(0, math.floor(tonumber(state.CompletedOrders) or 0))
+	local completedTips = math.max(0, math.floor(tonumber(state.CompletedTipsCopper) or 0))
+
+	return string.format("%d orders  •  %d done  •  %s tips", orderCount, completedCount, FormatMoneyCompact(completedTips))
+end
+
+local function PlayQueueAlertSound()
+	if not IsQueueSoundEnabled() or type(PlaySound) ~= "function" then
+		return false
+	end
+
+	for _, candidate in ipairs(ORDER_ALERT_SOUND_FALLBACKS) do
+		local soundKit = candidate.id
+		if type(SOUNDKIT) == "table" and SOUNDKIT[candidate.key] then
+			soundKit = SOUNDKIT[candidate.key]
+		end
+
+		if soundKit then
+			local ok = pcall(PlaySound, soundKit)
+			if ok then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
 function Workbench.SelectOrder(orderId)
 	SetSelectedOrder(orderId)
 	local order = Workbench.GetSelectedOrder()
@@ -522,6 +623,15 @@ function Workbench.EnsureState()
 	if state.Visible == nil then
 		state.Visible = false
 	end
+	if state.SoundEnabled == nil then
+		state.SoundEnabled = false
+	end
+	if state.CompletedOrders == nil then
+		state.CompletedOrders = 0
+	end
+	if state.CompletedTipsCopper == nil then
+		state.CompletedTipsCopper = 0
+	end
 	if not state.NextOrderId or state.NextOrderId < 1 then
 		state.NextOrderId = 1
 	end
@@ -545,6 +655,8 @@ function Workbench.EnsureState()
 	end
 	state.Size.Width = ClampNumber(state.Size.Width, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH)
 	state.Size.Height = ClampNumber(state.Size.Height, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT)
+	state.CompletedOrders = math.max(0, math.floor(tonumber(state.CompletedOrders) or 0))
+	state.CompletedTipsCopper = math.max(0, math.floor(tonumber(state.CompletedTipsCopper) or 0))
 
 	for index, order in ipairs(state.Orders) do
 		state.Orders[index] = EnsureOrderFields(order)
@@ -924,6 +1036,15 @@ function Workbench.FinishTrade(goldDelta)
 	local gotPaid = (tonumber(goldDelta) or 0) > 0
 	local isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
 
+	if gotPaid then
+		order.LastObservedTipCopper = math.max(0, math.floor(tonumber(goldDelta) or 0))
+		if TrimText(order.PendingTipText) == "" then
+			order.PendingTipText = FormatMoneyCompact(order.LastObservedTipCopper)
+		end
+		order.UpdatedAt = TimestampText()
+		WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
+	end
+
 	if isVerified then
 		WorkbenchDebug("trade closed for", order.Customer, "with fully verified order (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ")")
 		completedOrder = order
@@ -988,6 +1109,16 @@ function Workbench.SetRecipeVerified(orderId, recipeName, verified)
 	Workbench.Refresh()
 end
 
+function Workbench.SetOrderTipText(orderId, value)
+	local order = Workbench.GetOrderById(orderId)
+	if not order then
+		return false
+	end
+
+	order.PendingTipText = TrimText(value)
+	return true
+end
+
 function Workbench.SetAllMaterials(orderId, checked)
 	local state = Workbench.EnsureState()
 	for _, order in ipairs(state.Orders) do
@@ -1004,6 +1135,42 @@ function Workbench.SetAllMaterials(orderId, checked)
 	end
 
 	Workbench.Refresh()
+end
+
+function Workbench.CompleteOrder(orderId)
+	local state = Workbench.EnsureState()
+	local order = Workbench.GetOrderById(orderId)
+	local isVerified, verifiedCount, recipeTotal
+	local tipText
+	local tipCopper
+
+	if not order then
+		return false
+	end
+
+	isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
+	if recipeTotal == 0 or not isVerified then
+		WorkbenchDebug("refused to complete unverified order for", order.Customer)
+		return false
+	end
+
+	tipText = TrimText(order.PendingTipText)
+	if tipText == "" then
+		tipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0))
+	else
+		tipCopper = ParseMoneyCompact(tipText)
+		if tipCopper == nil then
+			print("|cFFFF1C1CEnchanter|r Tip format should look like 10g, 75s, or 12g50s.")
+			return false
+		end
+	end
+
+	state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
+	state.CompletedTipsCopper = (tonumber(state.CompletedTipsCopper) or 0) + tipCopper
+	WorkbenchDebug("completed order for", order.Customer, "(" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ", tip " .. FormatMoneyCompact(tipCopper) .. ")")
+
+	Workbench.RemoveOrder(orderId)
+	return true
 end
 
 function Workbench.RemoveOrder(orderId)
@@ -1042,10 +1209,12 @@ function Workbench.ClearOrders()
 
 	state.Orders = {}
 	state.SelectedOrderId = nil
+	state.CompletedOrders = 0
+	state.CompletedTipsCopper = 0
 	local runtime = EnsureRuntime()
 	runtime.ActiveTrade = nil
 
-	WorkbenchDebug("cleared queue (" .. tostring(removedCount) .. " orders)")
+	WorkbenchDebug("cleared queue and totals (" .. tostring(removedCount) .. " orders)")
 	Workbench.Refresh()
 	return removedCount
 end
@@ -1128,6 +1297,9 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 
 	if isNewOrder then
 		WorkbenchDebug("queued order for", customer, "(" .. tostring(#order.Recipes) .. " enchants)")
+		if PlayQueueAlertSound() then
+			WorkbenchDebug("played queue alert for", customer)
+		end
 	else
 		WorkbenchDebug("updated order for", customer, "(" .. tostring(#order.Recipes) .. " enchants)")
 	end
@@ -1140,19 +1312,123 @@ local function TryCastRecipe(recipeName)
 	if GetNumCrafts and GetCraftInfo and DoCraft then
 		for index = 1, GetNumCrafts() or 0 do
 			if GetCraftInfo(index) == recipeName then
+				if SelectCraft then
+					SelectCraft(index)
+				end
 				DoCraft(index)
 				return true
 			end
 		end
 	end
 
-	if GetNumTradeSkills and GetTradeSkillInfo and DoTradeSkill then
+	local function FindTradeSkillIndexByName()
+		if not GetNumTradeSkills or not GetTradeSkillInfo then
+			return nil
+		end
+
 		for index = 1, GetNumTradeSkills() or 0 do
-			if GetTradeSkillInfo(index) == recipeName then
-				DoTradeSkill(index)
-				return true
+			local name, skillType = GetTradeSkillInfo(index)
+			if skillType ~= "header" and skillType ~= "subheader" and name == recipeName then
+				return index
 			end
 		end
+
+		return nil
+	end
+
+	local function SnapshotTradeSkillFilters()
+		local snapshot = {
+			available = nil,
+			subClass = {},
+			invSlot = {},
+		}
+		local subClassNames = { GetTradeSkillSubClasses and GetTradeSkillSubClasses() or nil }
+		local invSlotNames = { GetTradeSkillInvSlots and GetTradeSkillInvSlots() or nil }
+
+		if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.GetChecked then
+			snapshot.available = TradeSkillFrameAvailableFilterCheckButton:GetChecked() and true or false
+		end
+
+		for index = 0, #subClassNames do
+			if GetTradeSkillSubClassFilter then
+				snapshot.subClass[index] = GetTradeSkillSubClassFilter(index)
+			end
+		end
+
+		for index = 0, #invSlotNames do
+			if GetTradeSkillInvSlotFilter then
+				snapshot.invSlot[index] = GetTradeSkillInvSlotFilter(index)
+			end
+		end
+
+		return snapshot
+	end
+
+	local function RestoreTradeSkillFilters(snapshot)
+		if not snapshot then
+			return
+		end
+
+		if snapshot.available ~= nil and TradeSkillOnlyShowMakeable then
+			TradeSkillOnlyShowMakeable(snapshot.available)
+			if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
+				TradeSkillFrameAvailableFilterCheckButton:SetChecked(snapshot.available)
+			end
+		end
+
+		if SetTradeSkillSubClassFilter then
+			for index, selected in pairs(snapshot.subClass or {}) do
+				SetTradeSkillSubClassFilter(index, selected or 0, 1)
+			end
+		end
+
+		if SetTradeSkillInvSlotFilter then
+			for index, selected in pairs(snapshot.invSlot or {}) do
+				SetTradeSkillInvSlotFilter(index, selected or 0, 1)
+			end
+		end
+	end
+
+	if GetNumTradeSkills and GetTradeSkillInfo and DoTradeSkill then
+		local index = FindTradeSkillIndexByName()
+		local filterSnapshot
+
+		if not index then
+			filterSnapshot = SnapshotTradeSkillFilters()
+			if TradeSkillOnlyShowMakeable then
+				TradeSkillOnlyShowMakeable(false)
+				if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
+					TradeSkillFrameAvailableFilterCheckButton:SetChecked(false)
+				end
+			end
+			if ExpandTradeSkillSubClass then
+				ExpandTradeSkillSubClass(0)
+			end
+			if SetTradeSkillSubClassFilter then
+				SetTradeSkillSubClassFilter(0, 1, 1)
+			end
+			if SetTradeSkillInvSlotFilter then
+				SetTradeSkillInvSlotFilter(0, 1, 1)
+			end
+			index = FindTradeSkillIndexByName()
+		end
+
+		if index then
+			if SelectTradeSkill then
+				SelectTradeSkill(index)
+			end
+			if TradeSkillFrame then
+				TradeSkillFrame.selectedSkill = index
+			end
+			if TradeSkillInputBox and TradeSkillInputBox.SetNumber then
+				TradeSkillInputBox:SetNumber(1)
+			end
+			DoTradeSkill(index, 1)
+			RestoreTradeSkillFilters(filterSnapshot)
+			return true
+		end
+
+		RestoreTradeSkillFilters(filterSnapshot)
 	end
 
 	return false
@@ -1168,14 +1444,40 @@ local function PrintTradeApplyHint(recipeName)
 end
 
 function Workbench.CastRecipe(recipeName)
+	local function MarkCastStarted(debugSuffix)
+		Workbench.NoteRecipeCast(recipeName)
+		PrintTradeApplyHint(recipeName)
+		if debugSuffix then
+			WorkbenchDebug("cast started for", recipeName, debugSuffix)
+		else
+			WorkbenchDebug("cast started for", recipeName)
+		end
+	end
+
+	local function RetryCast(attemptIndex)
+		if TryCastRecipe(recipeName) then
+			MarkCastStarted("after opening enchanting")
+			return
+		end
+
+		local nextDelay = TRADE_CAST_RETRY_DELAYS[attemptIndex]
+		if nextDelay and C_Timer and C_Timer.After then
+			C_Timer.After(nextDelay, function()
+				RetryCast(attemptIndex + 1)
+			end)
+			return
+		end
+
+		WorkbenchDebug("cast retry still unavailable for", recipeName)
+		print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
+	end
+
 	if not recipeName or recipeName == "" then
 		return false
 	end
 
 	if TryCastRecipe(recipeName) then
-		Workbench.NoteRecipeCast(recipeName)
-		PrintTradeApplyHint(recipeName)
-		WorkbenchDebug("cast started for", recipeName)
+		MarkCastStarted()
 		return true
 	end
 
@@ -1185,15 +1487,8 @@ function Workbench.CastRecipe(recipeName)
 	end
 
 	if C_Timer and C_Timer.After then
-		C_Timer.After(0.2, function()
-			if not TryCastRecipe(recipeName) then
-				WorkbenchDebug("cast retry still unavailable for", recipeName)
-				print("|cFFFF1C1CEnchanter|r Open enchanting and click Cast again if the client did not expose the recipe list yet.")
-			else
-				Workbench.NoteRecipeCast(recipeName)
-				PrintTradeApplyHint(recipeName)
-				WorkbenchDebug("cast started for", recipeName, "after opening enchanting")
-			end
+		C_Timer.After(TRADE_CAST_RETRY_DELAYS[1], function()
+			RetryCast(2)
 		end)
 	else
 		WorkbenchDebug("cast retry unavailable for", recipeName)
@@ -1210,6 +1505,14 @@ local function UpdateLockButtonText()
 
 	local state = Workbench.EnsureState()
 	Workbench.Frame.LockButton:SetText(state.Locked and "Unlock" or "Lock")
+end
+
+local function UpdateSoundButtonText()
+	if not Workbench.Frame or not Workbench.Frame.SoundButton then
+		return
+	end
+
+	Workbench.Frame.SoundButton:SetText(IsQueueSoundEnabled() and "Sound" or "No Sound")
 end
 
 local function UpdateScanButtonText()
@@ -1440,9 +1743,23 @@ function Workbench.CreateFrame()
 		Workbench.ClearOrders()
 	end)
 
+	frame.SoundButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.SoundButton:SetSize(70, 20)
+	frame.SoundButton:SetPoint("RIGHT", frame.ClearButton, "LEFT", -6, 0)
+	if frame.SoundButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.SoundButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.SoundButton, "button")
+	frame.SoundButton:SetScript("OnClick", function()
+		local state = Workbench.EnsureState()
+		state.SoundEnabled = not state.SoundEnabled
+		UpdateSoundButtonText()
+		WorkbenchDebug("queue sound", state.SoundEnabled and "enabled" or "disabled")
+	end)
+
 	frame.ScanButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.ScanButton:SetSize(54, 20)
-	frame.ScanButton:SetPoint("RIGHT", frame.ClearButton, "LEFT", -6, 0)
+	frame.ScanButton:SetPoint("RIGHT", frame.SoundButton, "LEFT", -6, 0)
 	if frame.ScanButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.ScanButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
@@ -1465,7 +1782,7 @@ function Workbench.CreateFrame()
 	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
 	frame.QueueCountText:SetPoint("RIGHT", frame.ScanButton, "LEFT", -10, 0)
 	frame.QueueCountText:SetJustifyH("LEFT")
-	frame.QueueCountText:SetText("0 orders")
+	frame.QueueCountText:SetText(BuildHeaderStatusText())
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
@@ -1516,6 +1833,51 @@ function Workbench.CreateFrame()
 	frame.Detail.TradeHint:SetJustifyH("LEFT")
 	frame.Detail.TradeHint:SetJustifyV("TOP")
 	frame.Detail.TradeHint:Hide()
+
+	frame.Detail.TipLabel = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.TipLabel:SetText("Tip")
+	frame.Detail.TipLabel:Hide()
+
+	frame.Detail.TipInput = CreateFrame("EditBox", nil, frame.Detail, "InputBoxTemplate")
+	frame.Detail.TipInput:SetSize(86, 20)
+	if frame.Detail.TipInput.SetAutoFocus then
+		frame.Detail.TipInput:SetAutoFocus(false)
+	end
+	frame.Detail.TipInput:SetScript("OnEnterPressed", function(self)
+		if self.OrderId then
+			Workbench.SetOrderTipText(self.OrderId, self:GetText())
+		end
+		if self.ClearFocus then
+			self:ClearFocus()
+		end
+	end)
+	frame.Detail.TipInput:SetScript("OnEscapePressed", function(self)
+		if self.ClearFocus then
+			self:ClearFocus()
+		end
+	end)
+	frame.Detail.TipInput:SetScript("OnEditFocusLost", function(self)
+		if self.OrderId then
+			Workbench.SetOrderTipText(self.OrderId, self:GetText())
+		end
+	end)
+	frame.Detail.TipInput:SetScript("OnTextChanged", function(self)
+		if self.OrderId then
+			Workbench.SetOrderTipText(self.OrderId, self:GetText())
+		end
+	end)
+	frame.Detail.TipInput:Hide()
+
+	frame.Detail.CompleteButton = CreateFrame("Button", nil, frame.Detail, "UIPanelButtonTemplate")
+	frame.Detail.CompleteButton:SetSize(72, 20)
+	frame.Detail.CompleteButton:SetText("Complete")
+	ApplyElvUISkin(frame.Detail.CompleteButton, "button")
+	frame.Detail.CompleteButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.CompleteOrder(self.OrderId)
+		end
+	end)
+	frame.Detail.CompleteButton:Hide()
 
 	frame.Detail.RecipesHeader = frame.Detail:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.Detail.RecipesHeader:SetText("Enchants")
@@ -1597,6 +1959,7 @@ function Workbench.CreateFrame()
 
 	ApplyFrameLayout(frame)
 	UpdateLockButtonText()
+	UpdateSoundButtonText()
 	UpdateScanButtonText()
 	return frame
 end
@@ -1608,9 +1971,10 @@ function Workbench.Refresh()
 		return
 	end
 
-	frame.QueueCountText:SetText(string.format("%d orders", #state.Orders))
+	frame.QueueCountText:SetText(BuildHeaderStatusText(state))
 	SetRegionShown(frame.EmptyQueueText, #state.Orders == 0)
 	UpdateLockButtonText()
+	UpdateSoundButtonText()
 	UpdateScanButtonText()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
@@ -1680,6 +2044,9 @@ function Workbench.Refresh()
 		frame.Detail.Meta:SetText("")
 		frame.Detail.Message:SetText("")
 		frame.Detail.TradeHint:Hide()
+		frame.Detail.TipLabel:Hide()
+		frame.Detail.TipInput:Hide()
+		frame.Detail.CompleteButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
 		frame.Detail.AllMatsButton:Hide()
@@ -1714,8 +2081,29 @@ function Workbench.Refresh()
 	else
 		frame.Detail.TradeHint:Hide()
 	end
+	frame.Detail.TipLabel:ClearAllPoints()
+	frame.Detail.TipLabel:SetPoint("TOPLEFT", activeTrade and frame.Detail.TradeHint or frame.Detail.Message, "BOTTOMLEFT", 0, activeTrade and -10 or -12)
+	frame.Detail.TipLabel:Show()
+	frame.Detail.TipInput:ClearAllPoints()
+	frame.Detail.TipInput:SetPoint("LEFT", frame.Detail.TipLabel, "RIGHT", 8, 0)
+	frame.Detail.TipInput.OrderId = order.Id
+	frame.Detail.TipInput:SetText(order.PendingTipText ~= "" and order.PendingTipText or (order.LastObservedTipCopper > 0 and FormatMoneyCompact(order.LastObservedTipCopper) or ""))
+	frame.Detail.TipInput:Show()
+	frame.Detail.CompleteButton:ClearAllPoints()
+	frame.Detail.CompleteButton:SetPoint("LEFT", frame.Detail.TipInput, "RIGHT", 8, 0)
+	frame.Detail.CompleteButton.OrderId = order.Id
+	if recipeTotal > 0 and verifiedCount == recipeTotal then
+		if frame.Detail.CompleteButton.Enable then
+			frame.Detail.CompleteButton:Enable()
+		end
+	else
+		if frame.Detail.CompleteButton.Disable then
+			frame.Detail.CompleteButton:Disable()
+		end
+	end
+	frame.Detail.CompleteButton:Show()
 	frame.Detail.RecipesHeader:ClearAllPoints()
-	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", activeTrade and frame.Detail.TradeHint or frame.Detail.Message, "BOTTOMLEFT", 0, activeTrade and -10 or -14)
+	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.TipLabel, "BOTTOMLEFT", 0, -12)
 	frame.Detail.RecipesHeader:Show()
 
 	local recipeAnchor = frame.Detail.RecipesHeader
@@ -1774,7 +2162,7 @@ function Workbench.Refresh()
 		frame.Detail.ClearMatsButton:Show()
 		local statusBits = {}
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
-			statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Enter the tip and click Complete to bank it in the running total.|r"
 		elseif recipeTotal > 0 and verifiedCount > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r"
 		else
@@ -1796,7 +2184,7 @@ function Workbench.Refresh()
 		frame.Detail.UseTradeButton:Hide()
 		frame.Detail.ClearMatsButton:Hide()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
-			frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+			frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Enter the tip and click Complete to bank it in the running total.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 		elseif recipeTotal > 0 then
 			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Check each recipe when the payment is settled.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 		else
