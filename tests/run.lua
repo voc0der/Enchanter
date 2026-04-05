@@ -81,8 +81,17 @@ local function setup_env(opts)
             shown = true,
         }
 
-        function font_string:SetPoint(...) self.point = { ... } end
-        function font_string:ClearAllPoints() self.point = nil end
+        function font_string:SetPoint(...)
+            self.points = self.points or {}
+            self.points[#self.points + 1] = { ... }
+            if not self.point then
+                self.point = self.points[1]
+            end
+        end
+        function font_string:ClearAllPoints()
+            self.point = nil
+            self.points = nil
+        end
         function font_string:SetText(text) self.text = text end
         function font_string:GetText() return self.text end
         function font_string:SetJustifyH(value) self.justify_h = value end
@@ -146,14 +155,23 @@ local function setup_env(opts)
         function frame:GetWidth() return self.width or 0 end
         function frame:GetHeight() return self.height or 0 end
         function frame:GetName() return self.name end
-        function frame:SetPoint(...) self.point = { ... } end
+        function frame:SetPoint(...)
+            self.points = self.points or {}
+            self.points[#self.points + 1] = { ... }
+            if not self.point then
+                self.point = self.points[1]
+            end
+        end
         function frame:GetPoint()
             if self.point then
                 return table.unpack(self.point)
             end
             return "CENTER", _G.UIParent, "CENTER", 0, 0
         end
-        function frame:ClearAllPoints() self.point = nil end
+        function frame:ClearAllPoints()
+            self.point = nil
+            self.points = nil
+        end
         function frame:SetMovable(value) self.movable = value end
         function frame:SetResizable(value) self.resizable = value end
         function frame:SetResizeBounds(min_width, min_height, max_width, max_height)
@@ -689,6 +707,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+    assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 end
 
@@ -734,14 +753,14 @@ local function test_workbench_complete_order_tracks_tip_totals_and_clear_resets_
     assert_equal(workbenchState.CompletedOrders, 1, "completing a verified order should increment the running completed count")
     assert_equal(workbenchState.CompletedTipsCopper, 123400, "completed orders should add the parsed tip to the running total")
     assert_equal(#workbenchState.Orders, 0, "completed orders should leave the active queue")
-    assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "header summary should show the completed count")
-    assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "header summary should show the running tips total")
+    assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "footer summary should show the completed count")
+    assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "footer summary should show the running tips total")
 
     frame.ClearButton.scripts["OnClick"]()
 
     assert_equal(workbenchState.CompletedOrders, 0, "clear should reset the running completed count")
     assert_equal(workbenchState.CompletedTipsCopper, 0, "clear should reset the running tips total")
-    assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "header summary should return to zero after clear")
+    assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should return to zero after clear")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()

@@ -1,3 +1,11 @@
+## [2.1.9] - 2026-04-05
+
+### Changed
+- Moved the workbench running `orders / done / tips` summary out of the crowded header and into a footer line near the resize handle
+
+### Fixed
+- Kept the workbench title row on a single line again by moving the new completion totals out of the header controls area
+
 ## [2.1.8] - 2026-04-05
 
 ### Added

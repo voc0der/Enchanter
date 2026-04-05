@@ -1778,12 +1778,6 @@ function Workbench.CreateFrame()
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
 	frame.TitleText:SetText("Enchanter Workbench")
 
-	frame.QueueCountText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	frame.QueueCountText:SetPoint("LEFT", frame.TitleText, "RIGHT", 12, 0)
-	frame.QueueCountText:SetPoint("RIGHT", frame.ScanButton, "LEFT", -10, 0)
-	frame.QueueCountText:SetJustifyH("LEFT")
-	frame.QueueCountText:SetText(BuildHeaderStatusText())
-
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
 	frame.ListHeader:SetText("Queue")
@@ -1807,7 +1801,7 @@ function Workbench.CreateFrame()
 
 	frame.Detail = CreateFrameCompat("Frame", nil, frame)
 	frame.Detail:SetPoint("TOPLEFT", frame.ListScroll, "BOTTOMLEFT", 0, -18)
-	frame.Detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
+	frame.Detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 40)
 	ApplyBackdrop(frame.Detail, 0.14, 0.1, 0.07, 0.96, 0.54, 0.37, 0.19, 1)
 	ApplyElvUISkin(frame.Detail, "frame")
 
@@ -1945,6 +1939,12 @@ function Workbench.CreateFrame()
 		ApplyFrameLayout(frame)
 		Workbench.Refresh()
 	end)
+
+	frame.QueueCountText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	frame.QueueCountText:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 16, 20)
+	frame.QueueCountText:SetPoint("RIGHT", frame.ResizeHandle, "LEFT", -14, 0)
+	frame.QueueCountText:SetJustifyH("LEFT")
+	frame.QueueCountText:SetText(BuildHeaderStatusText())
 
 	frame.OrderRows = {}
 	frame.Detail.RecipeLines = {}
