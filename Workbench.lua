@@ -2461,7 +2461,12 @@ local function UpdateLockButtonVisual()
 
 	local state = Workbench.EnsureState()
 	local button = Workbench.Frame.LockButton
-	button:SetText(state.Locked and "Lock" or "No Lock")
+	local label = state.Locked and "Lock" or "No Lock"
+	if type(button.SetTextInsets) ~= "function" then
+		-- Older button templates on this client family do not expose SetTextInsets.
+		label = "   " .. label
+	end
+	button:SetText(label)
 
 	if button.Icon then
 		button.Icon:SetTexture(LOCK_BUTTON_ICON_TEXTURE)
@@ -2696,7 +2701,9 @@ function Workbench.CreateFrame()
 		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
 	ApplyElvUISkin(frame.LockButton, "button")
-	frame.LockButton:SetTextInsets(20, 0, 0, 0)
+	if frame.LockButton.SetTextInsets then
+		frame.LockButton:SetTextInsets(20, 0, 0, 0)
+	end
 	frame.LockButton.Icon = frame.LockButton:CreateTexture(nil, "ARTWORK")
 	frame.LockButton.Icon:SetSize(12, 12)
 	frame.LockButton.Icon:SetPoint("LEFT", frame.LockButton, "LEFT", 6, 0)

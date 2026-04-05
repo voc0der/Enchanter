@@ -1,3 +1,8 @@
+## [2.1.23] - 2026-04-05
+
+### Fixed
+- Made the workbench `Lock` / `No Lock` toggle tolerate clients whose button templates do not expose `SetTextInsets`, which fixes the blank load-time Lua error when opening the workbench
+
 ## [2.1.22] - 2026-04-05
 
 ### Fixed
