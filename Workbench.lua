@@ -2177,6 +2177,22 @@ local function TryCastRecipe(recipeName)
 			return
 		end
 
+		local function GetSelectedFilterIndex(filterValues)
+			local selectedIndex = 0
+
+			for index, selected in pairs(filterValues or {}) do
+				local filterIndex = tonumber(index) or 0
+				if filterIndex > 0 and (selected == 1 or selected == true) then
+					return filterIndex
+				end
+				if filterIndex == 0 and (selected == 1 or selected == true) then
+					selectedIndex = 0
+				end
+			end
+
+			return selectedIndex
+		end
+
 		if snapshot.available ~= nil and TradeSkillOnlyShowMakeable then
 			TradeSkillOnlyShowMakeable(snapshot.available)
 			if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
@@ -2185,15 +2201,11 @@ local function TryCastRecipe(recipeName)
 		end
 
 		if SetTradeSkillSubClassFilter then
-			for index, selected in pairs(snapshot.subClass or {}) do
-				SetTradeSkillSubClassFilter(index, selected or 0, 1)
-			end
+			SetTradeSkillSubClassFilter(GetSelectedFilterIndex(snapshot.subClass), 1, 1)
 		end
 
 		if SetTradeSkillInvSlotFilter then
-			for index, selected in pairs(snapshot.invSlot or {}) do
-				SetTradeSkillInvSlotFilter(index, selected or 0, 1)
-			end
+			SetTradeSkillInvSlotFilter(GetSelectedFilterIndex(snapshot.invSlot), 1, 1)
 		end
 	end
 

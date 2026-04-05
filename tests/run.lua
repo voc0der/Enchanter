@@ -83,6 +83,12 @@ local function setup_env(opts)
         frames = {},
         selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
+        trade_skill_available_only = opts.trade_skill_available_only and true or false,
+        trade_skill_subclass_filter = tonumber(opts.trade_skill_subclass_filter) or 0,
+        trade_skill_invslot_filter = tonumber(opts.trade_skill_invslot_filter) or 0,
+        trade_skill_search_text = opts.trade_skill_search_text,
+        trade_skill_item_level_min = tonumber(opts.trade_skill_item_level_min) or 0,
+        trade_skill_item_level_max = tonumber(opts.trade_skill_item_level_max) or 0,
     }
 
     local function new_font_string()
@@ -435,6 +441,15 @@ local function setup_env(opts)
     _G.TradeSkillFrame = {
         selectedSkill = nil,
     }
+    _G.TradeSearchInputBox = {
+        text = opts.trade_skill_search_text or "",
+    }
+    function _G.TradeSearchInputBox:SetText(value)
+        self.text = value or ""
+    end
+    function _G.TradeSearchInputBox:GetText()
+        return self.text or ""
+    end
     _G.TradeSkillInputBox = {
         value = 1,
     }
@@ -448,13 +463,36 @@ local function setup_env(opts)
         self.cleared_focus = true
     end
     _G.TradeSkillFrameAvailableFilterCheckButton = {
-        checked = false,
+        checked = state.trade_skill_available_only and true or false,
     }
     function _G.TradeSkillFrameAvailableFilterCheckButton:GetChecked()
         return self.checked and true or false
     end
     function _G.TradeSkillFrameAvailableFilterCheckButton:SetChecked(value)
         self.checked = value and true or false
+    end
+    local function get_visible_trade_skills()
+        local visible = {}
+
+        for _, skill in ipairs(state.trade_skills) do
+            local skillType = skill.skill_type or "optimal"
+            local subClassIndex = tonumber(skill.sub_class_index) or 0
+            local invSlotIndex = tonumber(skill.inv_slot_index) or 0
+            local numAvailable = math.max(0, math.floor(tonumber(skill.num_available) or 0))
+            local itemLevel = math.max(0, math.floor(tonumber(skill.item_level) or 0))
+            local searchText = state.trade_skill_search_text
+            local matchesSubClass = state.trade_skill_subclass_filter == 0 or subClassIndex == state.trade_skill_subclass_filter or skillType == "header"
+            local matchesInvSlot = state.trade_skill_invslot_filter == 0 or invSlotIndex == state.trade_skill_invslot_filter or skillType == "header"
+            local matchesAvailable = not state.trade_skill_available_only or skillType == "header" or numAvailable > 0
+            local matchesLevel = (state.trade_skill_item_level_min <= 0 and state.trade_skill_item_level_max <= 0) or skillType == "header" or (itemLevel >= state.trade_skill_item_level_min and itemLevel <= state.trade_skill_item_level_max)
+            local matchesSearch = searchText == nil or searchText == "" or skillType == "header" or string.find(string.lower(skill.name or ""), string.lower(searchText), 1, true) ~= nil
+
+            if matchesSubClass and matchesInvSlot and matchesAvailable and matchesLevel and matchesSearch then
+                visible[#visible + 1] = skill
+            end
+        end
+
+        return visible
     end
     _G.GetTradeSkillSubClasses = function()
         return table.unpack(opts.trade_skill_subclasses or {})
@@ -463,31 +501,72 @@ local function setup_env(opts)
         return table.unpack(opts.trade_skill_invslots or {})
     end
     _G.GetTradeSkillSubClassFilter = function(index)
-        return index == 0 and 1 or 0
+        index = tonumber(index) or 0
+        if state.trade_skill_subclass_filter == 0 then
+            return index == 0 and 1 or 0
+        end
+        return index == state.trade_skill_subclass_filter and 1 or 0
     end
     _G.GetTradeSkillInvSlotFilter = function(index)
-        return index == 0 and 1 or 0
+        index = tonumber(index) or 0
+        if state.trade_skill_invslot_filter == 0 then
+            return index == 0 and 1 or 0
+        end
+        return index == state.trade_skill_invslot_filter and 1 or 0
     end
-    _G.SetTradeSkillSubClassFilter = function() end
-    _G.SetTradeSkillInvSlotFilter = function() end
+    _G.SetTradeSkillSubClassFilter = function(index, on, exclusive)
+        index = tonumber(index) or 0
+        if exclusive == 1 or exclusive == true then
+            state.trade_skill_subclass_filter = (on == 1 or on == true) and index or 0
+        elseif on == 1 or on == true then
+            state.trade_skill_subclass_filter = index
+        elseif state.trade_skill_subclass_filter == index then
+            state.trade_skill_subclass_filter = 0
+        end
+    end
+    _G.SetTradeSkillInvSlotFilter = function(index, on, exclusive)
+        index = tonumber(index) or 0
+        if exclusive == 1 or exclusive == true then
+            state.trade_skill_invslot_filter = (on == 1 or on == true) and index or 0
+        elseif on == 1 or on == true then
+            state.trade_skill_invslot_filter = index
+        elseif state.trade_skill_invslot_filter == index then
+            state.trade_skill_invslot_filter = 0
+        end
+    end
     _G.ExpandTradeSkillSubClass = function(index)
         state.expanded_trade_skill_subclass = index
     end
     _G.TradeSkillOnlyShowMakeable = function(value)
-        _G.TradeSkillFrameAvailableFilterCheckButton.checked = value and true or false
+        state.trade_skill_available_only = value and true or false
+        _G.TradeSkillFrameAvailableFilterCheckButton.checked = state.trade_skill_available_only
+    end
+    _G.SetTradeSkillItemNameFilter = function(value)
+        state.trade_skill_search_text = value
+    end
+    _G.SetTradeSkillItemLevelFilter = function(min_level, max_level)
+        state.trade_skill_item_level_min = tonumber(min_level) or 0
+        state.trade_skill_item_level_max = tonumber(max_level) or 0
+    end
+    _G.TradeSkillFilter_OnTextChanged = function(self)
+        local text = self and self.GetText and self:GetText() or ""
+        state.trade_skill_search_text = text ~= "" and text or ""
+        state.trade_skill_item_level_min = 0
+        state.trade_skill_item_level_max = 0
     end
     _G.GetNumTradeSkills = function()
-        return #state.trade_skills
+        return #get_visible_trade_skills()
     end
     _G.GetTradeSkillInfo = function(index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill then
             return nil
         end
         return skill.name, skill.skill_type
     end
     _G.GetTradeSkillRecipeLink = function(index)
-        return state.trade_skills[index] and state.trade_skills[index].link or nil
+        local skill = get_visible_trade_skills()[index]
+        return skill and skill.link or nil
     end
     _G.SelectTradeSkill = function(index)
         state.selected_trade_skill = index
@@ -505,7 +584,7 @@ local function setup_env(opts)
         }
     end
     _G.GetTradeSkillNumReagents = function(index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return 0
         end
@@ -515,7 +594,7 @@ local function setup_env(opts)
         return #skill.reagents
     end
     _G.GetTradeSkillReagentInfo = function(index, reagent_index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return nil
         end
@@ -529,7 +608,7 @@ local function setup_env(opts)
         return reagent.name, reagent.texture, reagent.count
     end
     _G.GetTradeSkillReagentItemLink = function(index, reagent_index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return nil
         end
@@ -1664,6 +1743,68 @@ local function test_scan_selects_trade_skill_before_capturing_materials()
     assert_equal(materials[1].Name, "Soul Dust", "captured mats should include the first reagent")
 end
 
+local function test_scan_clears_trade_skill_filters_and_restores_them_afterward()
+    local addon = setup_env({
+        trade_skill_available_only = true,
+        trade_skill_subclasses = { "Boots" },
+        trade_skill_invslots = { "Boots" },
+        trade_skill_subclass_filter = 1,
+        trade_skill_invslot_filter = 1,
+        trade_skill_search_text = "zzz",
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                num_available = 0,
+                sub_class_index = 1,
+                inv_slot_index = 1,
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+
+    assert_true(ok, "scan should still succeed after temporarily clearing trade-skill filters")
+    assert_not_nil(EnchanterDBChar.RecipeList["Enchant Boots - Minor Speed"], "scan should capture recipes even when filters would otherwise hide them")
+    assert_true(TradeSkillFrameAvailableFilterCheckButton:GetChecked(), "trade-skill makeable filter should be restored after scanning")
+    assert_equal(GetTradeSkillSubClassFilter(1), 1, "trade-skill subclass filter should be restored after scanning")
+    assert_equal(GetTradeSkillInvSlotFilter(1), 1, "trade-skill inventory-slot filter should be restored after scanning")
+    assert_equal(TradeSearchInputBox:GetText(), "zzz", "trade-skill search text should be restored after scanning")
+end
+
+local function test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
+    local addon, state = setup_env({
+        trade_skills = {
+            {
+                name = "Completely Unknown Recipe",
+                link = "spell:99999",
+            },
+        },
+    })
+
+    local ok = addon.RunRecipeScan()
+
+    assert_true(not ok, "scan should fail when no supported enchanting recipes were captured")
+    assert_true(addon.NeedsRecipeScan(), "missing supported recipes should keep the scan-required state")
+
+    local sawSuccess = false
+    local sawFailure = false
+    for _, line in ipairs(state.prints) do
+        if line == "Scan Completed" then
+            sawSuccess = true
+        end
+        if string.find(line, "Scan found no supported enchanting recipes", 1, true) ~= nil then
+            sawFailure = true
+        end
+    end
+
+    assert_true(not sawSuccess, "scan should not print a success message when zero supported recipes were captured")
+    assert_true(sawFailure, "scan should explain why it stayed in the scan-required state")
+end
+
 local function test_workbench_timestamps_follow_clock_style()
     local addon = setup_env({
         game_time = {
@@ -2408,6 +2549,8 @@ test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
+test_scan_clears_trade_skill_filters_and_restores_them_afterward()
+test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()

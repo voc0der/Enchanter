@@ -1,3 +1,9 @@
+## [2.1.19] - 2026-04-05
+
+### Fixed
+- Made recipe scans temporarily clear Blizzard trade-skill and craft filters so `/ec scan` can capture your real enchanting list even when the profession UI is filtered or searched
+- Stopped printing `Scan Completed` when the scan captured zero supported recipes; failed scans now stay on `Scan` with a more accurate warning instead
+
 ## [2.1.18] - 2026-04-05
 
 ### Fixed

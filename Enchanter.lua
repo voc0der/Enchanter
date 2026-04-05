@@ -204,6 +204,180 @@ local function CaptureRecipeMaterials(recipeIndex, apiKind)
 	return materials
 end
 
+local function SnapshotTradeSkillFilters()
+	local snapshot = {
+		available = nil,
+		subClass = {},
+		invSlot = {},
+		searchText = nil,
+	}
+	local subClassNames = { GetTradeSkillSubClasses and GetTradeSkillSubClasses() or nil }
+	local invSlotNames = { GetTradeSkillInvSlots and GetTradeSkillInvSlots() or nil }
+
+	if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.GetChecked then
+		snapshot.available = TradeSkillFrameAvailableFilterCheckButton:GetChecked() and true or false
+	end
+
+	for index = 0, #subClassNames do
+		if GetTradeSkillSubClassFilter then
+			snapshot.subClass[index] = GetTradeSkillSubClassFilter(index)
+		end
+	end
+
+	for index = 0, #invSlotNames do
+		if GetTradeSkillInvSlotFilter then
+			snapshot.invSlot[index] = GetTradeSkillInvSlotFilter(index)
+		end
+	end
+
+	if TradeSearchInputBox and TradeSearchInputBox.GetText then
+		snapshot.searchText = TradeSearchInputBox:GetText()
+	end
+
+	return snapshot
+end
+
+local function GetSelectedTradeSkillFilterIndex(filterValues)
+	local selectedIndex = 0
+
+	for index, selected in pairs(filterValues or {}) do
+		local filterIndex = tonumber(index) or 0
+		if filterIndex > 0 and (selected == 1 or selected == true) then
+			return filterIndex
+		end
+		if filterIndex == 0 and (selected == 1 or selected == true) then
+			selectedIndex = 0
+		end
+	end
+
+	return selectedIndex
+end
+
+local function RestoreTradeSkillFilters(snapshot)
+	if not snapshot then
+		return
+	end
+
+	if snapshot.available ~= nil and TradeSkillOnlyShowMakeable then
+		TradeSkillOnlyShowMakeable(snapshot.available)
+		if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
+			TradeSkillFrameAvailableFilterCheckButton:SetChecked(snapshot.available)
+		end
+	end
+
+	if SetTradeSkillSubClassFilter then
+		SetTradeSkillSubClassFilter(GetSelectedTradeSkillFilterIndex(snapshot.subClass), 1, 1)
+	end
+
+	if SetTradeSkillInvSlotFilter then
+		SetTradeSkillInvSlotFilter(GetSelectedTradeSkillFilterIndex(snapshot.invSlot), 1, 1)
+	end
+
+	if TradeSearchInputBox and TradeSearchInputBox.SetText then
+		TradeSearchInputBox:SetText(snapshot.searchText or "")
+	end
+	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
+	end
+end
+
+local function ClearTradeSkillFiltersForScan()
+	if TradeSkillOnlyShowMakeable then
+		TradeSkillOnlyShowMakeable(false)
+		if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
+			TradeSkillFrameAvailableFilterCheckButton:SetChecked(false)
+		end
+	end
+
+	if ExpandTradeSkillSubClass then
+		ExpandTradeSkillSubClass(0)
+	end
+	if SetTradeSkillSubClassFilter then
+		SetTradeSkillSubClassFilter(0, 1, 1)
+	end
+	if SetTradeSkillInvSlotFilter then
+		SetTradeSkillInvSlotFilter(0, 1, 1)
+	end
+
+	if TradeSearchInputBox and TradeSearchInputBox.SetText then
+		TradeSearchInputBox:SetText("")
+	end
+	if SetTradeSkillItemLevelFilter then
+		SetTradeSkillItemLevelFilter(0, 0)
+	end
+	if SetTradeSkillItemNameFilter then
+		SetTradeSkillItemNameFilter("")
+	end
+	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
+	end
+end
+
+local function SnapshotCraftFilters()
+	local snapshot = {
+		available = nil,
+		slot = 0,
+	}
+	local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
+
+	if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.GetChecked then
+		snapshot.available = CraftFrameAvailableFilterCheckButton:GetChecked() and true or false
+	end
+
+	if GetCraftFilter then
+		for index = 0, #craftSlots do
+			if GetCraftFilter(index) then
+				snapshot.slot = index
+				break
+			end
+		end
+	end
+
+	return snapshot
+end
+
+local function RestoreCraftFilters(snapshot)
+	if not snapshot then
+		return
+	end
+
+	if snapshot.available ~= nil and CraftOnlyShowMakeable then
+		CraftOnlyShowMakeable(snapshot.available)
+		if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.SetChecked then
+			CraftFrameAvailableFilterCheckButton:SetChecked(snapshot.available)
+		end
+	end
+
+	if snapshot.slot ~= nil and SetCraftFilter then
+		SetCraftFilter(snapshot.slot)
+	end
+end
+
+local function ClearCraftFiltersForScan()
+	if CraftOnlyShowMakeable then
+		CraftOnlyShowMakeable(false)
+		if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.SetChecked then
+			CraftFrameAvailableFilterCheckButton:SetChecked(false)
+		end
+	end
+	if SetCraftFilter then
+		SetCraftFilter(0)
+	end
+end
+
+local function CountRecipeEntries(recipeMap)
+	local count = 0
+	if type(recipeMap) ~= "table" then
+		return 0
+	end
+
+	for _ in pairs(recipeMap) do
+		count = count + 1
+	end
+
+	return count
+end
+
 local function NormalizePhrase(value)
 	if not value then
 		return ""
@@ -494,19 +668,6 @@ function EC.DebugPrint(...)
 	print("Debug mode:", table.concat(parts, " "))
 end
 
-local function CountRecipeEntries(recipeMap)
-	local count = 0
-	if type(recipeMap) ~= "table" then
-		return 0
-	end
-
-	for _ in pairs(recipeMap) do
-		count = count + 1
-	end
-
-	return count
-end
-
 local function AddRecipeTagsToLookup(tagMap, tagList, recipeName, tags)
 	if type(recipeName) ~= "string" or recipeName == "" or type(tags) ~= "table" then
 		return
@@ -734,49 +895,115 @@ function EC.RefreshCompiledData()
 end
 
 function EC.GetItems()
-	local apiKind
-	local getCount, getInfo, getLink
-	local selectRecipe
+	local function CountScannedRecipes(recipeList)
+		return CountRecipeEntries(recipeList)
+	end
+
+	local function ApplyNetherRecipeFilter(recipeList, recipeLinks, recipeMats)
+		if not EC.DB.NetherRecipes then
+			return
+		end
+
+		for _, recipeName in ipairs(EC.RecipesWithNether) do
+			recipeList[recipeName] = nil
+			recipeLinks[recipeName] = nil
+			recipeMats[recipeName] = nil
+		end
+	end
+
+	local function CaptureRecipesForApi(apiKind)
+		local getCount, getInfo, getLink = GetRecipeApi(apiKind)
+		local selectRecipe = GetRecipeSelectApi(apiKind)
+		local restoreFilters
+		local recipeList = {}
+		local recipeLinks = {}
+		local recipeMats = {}
+
+		if not getCount or not getInfo then
+			return false, recipeList, recipeLinks, recipeMats, 0
+		end
+
+		if apiKind == "trade" then
+			restoreFilters = SnapshotTradeSkillFilters()
+			ClearTradeSkillFiltersForScan()
+		elseif apiKind == "craft" then
+			restoreFilters = SnapshotCraftFilters()
+			ClearCraftFiltersForScan()
+		end
+
+		for index = 1, getCount() or 0 do
+			local recipeName = getInfo(index)
+			if recipeName and not IsRecipeHeader(index, apiKind) and EC.RecipeTags["enGB"][recipeName] then
+				if selectRecipe then
+					selectRecipe(index)
+				end
+				recipeLinks[recipeName] = getLink and getLink(index) or nil
+				recipeMats[recipeName] = CaptureRecipeMaterials(index, apiKind)
+				recipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
+			end
+		end
+
+		if apiKind == "trade" then
+			RestoreTradeSkillFilters(restoreFilters)
+		elseif apiKind == "craft" then
+			RestoreCraftFilters(restoreFilters)
+		end
+
+		ApplyNetherRecipeFilter(recipeList, recipeLinks, recipeMats)
+		return true, recipeList, recipeLinks, recipeMats, CountScannedRecipes(recipeList)
+	end
+
+	local orderedKinds = {}
+	local seenKinds = {}
+	local bestRecipeCount = -1
+	local bestRecipeList = {}
+	local bestRecipeLinks = {}
+	local bestRecipeMats = {}
+	local triedAnyApi = false
+
+	local function AddApiKind(kind)
+		if kind and not seenKinds[kind] then
+			seenKinds[kind] = true
+			orderedKinds[#orderedKinds + 1] = kind
+		end
+	end
 
 	if CastSpellByName then
 		CastSpellByName("Enchanting")
 	end
 
-	apiKind = ResolveRecipeApiKind("trade")
-	getCount, getInfo, getLink = GetRecipeApi(apiKind)
-	selectRecipe = GetRecipeSelectApi(apiKind)
-	if not getCount or not getInfo then
+	AddApiKind(ResolveRecipeApiKind("trade"))
+	AddApiKind("trade")
+	AddApiKind("craft")
+
+	for _, apiKind in ipairs(orderedKinds) do
+		local ok, recipeList, recipeLinks, recipeMats, recipeCount = CaptureRecipesForApi(apiKind)
+		if ok then
+			triedAnyApi = true
+			if recipeCount > bestRecipeCount then
+				bestRecipeCount = recipeCount
+				bestRecipeList = recipeList
+				bestRecipeLinks = recipeLinks
+				bestRecipeMats = recipeMats
+			end
+			if recipeCount > 0 then
+				break
+			end
+		end
+	end
+
+	if not triedAnyApi then
 		print("|cFFFF1C1CEnchanter|r could not find a supported enchanting scan API on this client.")
 		return false
 	end
 
-	EC.DBChar.RecipeList = {}
-	EC.DBChar.RecipeLinks = {}
-	EC.DBChar.RecipeMats = {}
-
-	for index = 1, getCount() or 0 do
-		local recipeName = getInfo(index)
-		if recipeName and not IsRecipeHeader(index, apiKind) and EC.RecipeTags["enGB"][recipeName] then
-			if selectRecipe then
-				selectRecipe(index)
-			end
-			EC.DBChar.RecipeLinks[recipeName] = getLink and getLink(index) or nil
-			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index, apiKind)
-			EC.DBChar.RecipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
-		end
-	end
-
-	if EC.DB.NetherRecipes then
-		for _, recipeName in ipairs(EC.RecipesWithNether) do
-			EC.DBChar.RecipeList[recipeName] = nil
-			EC.DBChar.RecipeLinks[recipeName] = nil
-			EC.DBChar.RecipeMats[recipeName] = nil
-		end
-	end
+	EC.DBChar.RecipeList = bestRecipeList
+	EC.DBChar.RecipeLinks = bestRecipeLinks
+	EC.DBChar.RecipeMats = bestRecipeMats
 
 	EC.UpdateTags()
 	EC.RefreshCompiledData()
-	return true
+	return bestRecipeCount > 0
 end
 
 function EC.GenerateSimulatedOrder(sourceLabel)
@@ -888,12 +1115,14 @@ end
 local function DoScan()
 	if EC.GetItems() then
 		print("Scan Completed")
+		return true
 	end
+	print("|cFFFF1C1CEnchanter|r Scan found no supported enchanting recipes. Clear profession filters or search text, then try again.")
+	return false
 end
 
 function EC.RunRecipeScan()
-	DoScan()
-	return not EC.NeedsRecipeScan()
+	return DoScan() and not EC.NeedsRecipeScan()
 end
 
 function EC.Init()
