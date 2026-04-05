@@ -1242,13 +1242,16 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["UI_INFO_MESSAGE"], "trade completion messages should be registered independently of /ec start")
 end
 
-local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
+local function test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
     local addon, state = setup_env({
         trade_target_money = 123400,
         char_db = {
             RecipeList = {
                 ["Enchant Weapon - Mongoose"] = { "mongoose" },
             },
+        },
+        trade_target_items = {
+            [7] = { name = "Arcanite Reaper", enchantment = "Mongoose" },
         },
     })
 
@@ -1257,32 +1260,23 @@ local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manua
     addon.ParseMessage("LF mongoose pst", "Buyer-Tip")
 
     local order = addon.Workbench.GetSelectedOrder()
-    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
     addon.Workbench.BeginTrade("Buyer-Tip")
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.SyncActiveTrade()
     addon.Workbench.FinishTrade(0)
 
-    order = addon.Workbench.GetSelectedOrder()
     local workbenchState = addon.Workbench.EnsureState()
 
-    assert_not_nil(order, "accepted trades should leave the order queued until you click complete")
-    assert_equal(order.LastObservedTipCopper, 123400, "accepted trades should store the target trade money on the order")
-    assert_equal(frame.Detail.TipStatus.text, "Tip: 12g 34s", "the detail pane should show the recorded trade tip after the trade closes")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should enable after a verified order has a recorded tip")
-    assert_equal(workbenchState.CompletedOrders, 0, "accepted trades should not auto-complete the order")
-    assert_equal(workbenchState.CompletedTipsCopper, 0, "accepted trades should wait for manual completion before banking totals")
-    assert_equal(#workbenchState.Orders, 1, "accepted verified trades should stay queued until manually completed")
-    assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should stay unbanked until manual completion")
+    assert_true(order.VerifiedRecipes["Enchant Weapon - Mongoose"], "accepted trades should still verify the matching enchant before the order retires")
+    assert_equal(order.LastObservedTipCopper, 123400, "accepted trades should still store the target trade money on the order before auto-completing")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "accepted verified trades should retire themselves automatically")
+    assert_equal(workbenchState.CompletedOrders, 1, "accepted verified trades should auto-complete the order")
+    assert_equal(workbenchState.CompletedTipsCopper, 123400, "auto-completion should bank the tracked trade money immediately")
+    assert_equal(#workbenchState.Orders, 0, "auto-completed verified trades should leave no queued order behind")
+    assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "footer summary should show the completed count right away")
+    assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "footer summary should show the tracked tip total right away")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after the order auto-completes")
     assert_equal(state.trade_target_money, 123400, "trade money test should use the target trade money api path")
-
-    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
-
-    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should increment the running completed count")
-    assert_equal(workbenchState.CompletedTipsCopper, 123400, "manual completion should bank the tracked trade money in the running total")
-    assert_equal(#workbenchState.Orders, 0, "manual completion should remove the order from the queue")
-    assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "footer summary should show the completed count")
-    assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "footer summary should show the running tips total")
 
     frame.ClearButton.scripts["OnClick"]()
 
@@ -1291,7 +1285,7 @@ local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manua
     assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should return to zero after clear")
 end
 
-local function test_workbench_complete_allows_zero_tip_without_a_separate_button()
+local function test_workbench_verified_orders_auto_complete_without_a_button()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -1307,15 +1301,13 @@ local function test_workbench_complete_allows_zero_tip_without_a_separate_button
     local order = addon.Workbench.GetSelectedOrder()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
 
-    assert_equal(frame.Detail.TipStatus.text, "Tip: not recorded", "untipped orders should show that no gold has been recorded yet")
-    assert_nil(frame.Detail.NoTipButton, "untipped orders should no longer render a separate no-tip button")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available for verified zero-tip orders")
-
-    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
-
     local workbenchState = addon.Workbench.EnsureState()
-    assert_equal(workbenchState.CompletedOrders, 1, "zero-tip completions should still count as completed orders")
-    assert_equal(workbenchState.CompletedTipsCopper, 0, "no-tip completions should not add to the running tips total")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "fully verified orders should auto-complete even without a trade")
+    assert_equal(workbenchState.CompletedOrders, 1, "auto-completing a verified order should increment the completed count")
+    assert_equal(workbenchState.CompletedTipsCopper, 0, "zero-tip auto-completions should not add to the running tips total")
+    assert_nil(frame.Detail.NoTipButton, "untipped orders should no longer render a separate no-tip button")
+    assert_true(frame.Detail.CompleteButton.shown == false, "the old Complete button should stay hidden")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset once the order auto-completes")
 end
 
 local function test_workbench_active_trade_hides_manual_completion_controls()
@@ -1332,14 +1324,12 @@ local function test_workbench_active_trade_hides_manual_completion_controls()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF mongoose pst", "Buyer-LiveTrade")
 
-    local order = addon.Workbench.GetSelectedOrder()
-    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
     addon.Workbench.BeginTrade("Buyer-LiveTrade")
 
     assert_equal(frame.Detail.TipStatus.text, "Tip in trade: 50s", "active trades should show the live trade gold amount")
     assert_nil(frame.Detail.NoTipButton, "active trades should no longer render a separate no-tip override")
-    assert_true(frame.Detail.CompleteButton.shown == false, "active trades should hide the manual completion fallback")
-    assert_true(string.find(frame.Detail.ReadyText.text or "", "Complete stays manual") ~= nil, "active verified trades should explain that trade syncing is automatic but completion stays manual")
+    assert_true(frame.Detail.CompleteButton.shown == false, "the old Complete button should stay hidden during active trades")
+    assert_true(string.find(frame.Detail.TradeHint.text or "", "retire themselves") ~= nil, "active trades should explain that verified orders retire automatically")
     assert_equal(state.trade_target_money, 5000, "active trade ui test should rely on the trade money api state")
 end
 
@@ -1393,12 +1383,13 @@ local function test_trade_completion_message_falls_back_to_recorded_cast_when_en
     addon.Workbench.MarkTradeCompleted()
     addon.Workbench.FinishTrade(0)
 
-    local verified, total = addon.Workbench.GetRecipeVerificationProgress(addon.Workbench.GetOrderById(order.Id))
-    assert_equal(verified, 1, "the completion signal should trust the recorded cast when the trade slot never exposes enchant text")
-    assert_equal(total, 1, "completion-signal fallback should preserve the queued recipe total")
+    local workbenchState = addon.Workbench.EnsureState()
+    assert_true(order.VerifiedRecipes["Enchant Boots - Minor Speed"], "the completion signal should trust the recorded cast when the trade slot never exposes enchant text")
+    assert_equal(workbenchState.CompletedOrders, 1, "completion-signal fallback should still auto-complete the finished order")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "completion-signal fallback should retire the finished order")
 end
 
-local function test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+local function test_workbench_accepted_trade_commits_progress_and_auto_completes_zero_tip_order()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -1429,26 +1420,16 @@ local function test_workbench_accepted_trade_commits_progress_and_waits_for_manu
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    order = addon.Workbench.GetOrderById(order.Id)
     local state = addon.Workbench.EnsureState()
-    local verified, totalRecipes = addon.Workbench.GetRecipeVerificationProgress(order)
-    local checked, totalMats = addon.Workbench.GetMaterialProgress(order)
 
-    assert_not_nil(order, "accepted zero-tip trades should stay queued until you choose to complete them")
-    assert_equal(verified, 1, "accepted trades should auto-verify the applied recipe once the enchant slot shows the enchantment")
-    assert_equal(totalRecipes, 1, "the order should still track the recipe total")
-    assert_equal(checked, 2, "accepted trades should carry the matching mats forward into the order")
-    assert_equal(totalMats, 2, "material progress should still use the order material total")
+    assert_true(order.VerifiedRecipes["Enchant Boots - Minor Speed"], "accepted trades should still auto-verify the applied recipe before the order retires")
+    assert_equal(order.MaterialCounts["item:11083"], 6, "accepted trades should still carry the matching Soul Dust forward into the order before auto-completing")
+    assert_equal(order.MaterialCounts["item:11174"], 1, "accepted trades should still carry the matching essence forward into the order before auto-completing")
     assert_nil(frame.Detail.NoTipButton, "after a zero-tip trade there should still be no separate no-tip button")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available after a verified zero-tip trade")
-    assert_equal(state.CompletedOrders, 0, "accepted zero-tip trades should not auto-complete the order")
-    assert_equal(state.CompletedTipsCopper, 0, "accepted zero-tip trades should not bank tips before manual completion")
-
-    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
-
-    assert_equal(state.CompletedOrders, 1, "manual completion should still work after a zero-tip accepted trade")
-    assert_equal(state.CompletedTipsCopper, 0, "manual completion should bank zero tip for a no-tip order")
-    assert_nil(addon.Workbench.GetOrderById(order.Id), "manual completion should remove the finished zero-tip order")
+    assert_true(frame.Detail.CompleteButton.shown == false, "the old Complete button should stay hidden after a zero-tip trade")
+    assert_equal(state.CompletedOrders, 1, "accepted zero-tip trades should auto-complete the order")
+    assert_equal(state.CompletedTipsCopper, 0, "accepted zero-tip trades should bank zero tip immediately")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "auto-completing zero-tip trades should remove the finished order")
 end
 
 local function test_workbench_persists_trade_progress_after_accept_flags_reset_during_close()
@@ -1481,14 +1462,13 @@ local function test_workbench_persists_trade_progress_after_accept_flags_reset_d
     addon.Workbench.SetTradeAcceptState(0, 0)
     addon.Workbench.FinishTrade(0)
 
-    order = addon.Workbench.GetOrderById(order.Id)
-    local checked, totalMats = addon.Workbench.GetMaterialProgress(order)
-    local verified, totalRecipes = addon.Workbench.GetRecipeVerificationProgress(order)
+    local workbenchState = addon.Workbench.EnsureState()
 
-    assert_equal(checked, 2, "a successful trade should keep received mats recorded even if the client clears accept flags before close")
-    assert_equal(totalMats, 2, "material totals should stay intact after the close-time accept reset")
-    assert_equal(verified, 1, "a detected in-trade enchant should still persist when accept flags reset during the close sequence")
-    assert_equal(totalRecipes, 1, "recipe totals should stay intact after the close-time accept reset")
+    assert_equal(order.MaterialCounts["item:11083"], 6, "a successful trade should keep received mats recorded even if the client clears accept flags before close")
+    assert_equal(order.MaterialCounts["item:11174"], 1, "material totals should stay intact after the close-time accept reset")
+    assert_true(order.VerifiedRecipes["Enchant Boots - Minor Speed"], "a detected in-trade enchant should still persist when accept flags reset during the close sequence")
+    assert_equal(workbenchState.CompletedOrders, 1, "a fully verified trade should still auto-complete after the close-time accept reset")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "auto-completed trades should leave no queued order behind after the accept reset")
 end
 
 local function test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
@@ -1518,51 +1498,52 @@ local function test_workbench_trade_completion_message_captures_final_enchant_wi
     addon.Workbench.MarkTradeCompleted()
     addon.Workbench.FinishTrade(0)
 
-    order = addon.Workbench.GetOrderById(order.Id)
-    local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
-    assert_equal(verified, 1, "trade completion should capture a final enchant that only appears when the completion message fires")
-    assert_equal(total, 1, "late completion-message verification should preserve the queued recipe total")
+    local workbenchState = addon.Workbench.EnsureState()
+    assert_true(order.VerifiedRecipes["Enchant Boots - Minor Speed"], "trade completion should capture a final enchant that only appears when the completion message fires")
+    assert_equal(workbenchState.CompletedOrders, 1, "late completion-message verification should still auto-complete the finished order")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "late completion-message verification should retire the finished order")
 end
 
-local function test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
+local function test_workbench_verified_orders_auto_complete_on_the_next_successful_trade()
     local addon, state = setup_env({
         trade_target_money = 5000,
         char_db = {
-            RecipeList = {
-                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            Workbench = {
+                Orders = {
+                    {
+                        Id = 7,
+                        Customer = "Buyer-MultiTip",
+                        Recipes = { "Enchant Weapon - Mongoose" },
+                        VerifiedRecipes = { ["Enchant Weapon - Mongoose"] = true },
+                        Message = "LF mongoose pst",
+                        CreatedAt = "1:11 PM",
+                        UpdatedAt = "1:11 PM",
+                    },
+                },
+                SelectedOrderId = 7,
+                NextOrderId = 8,
+                Locked = true,
+                Visible = false,
+                Position = { Point = "CENTER", RelativePoint = "CENTER", X = 0, Y = 0 },
+                Size = { Width = 468, Height = 520 },
             },
         },
     })
 
     local frame = addon.Workbench.CreateFrame()
-    addon.RefreshCompiledData()
-    addon.ParseMessage("LF mongoose pst", "Buyer-MultiTip")
-
     local order = addon.Workbench.GetSelectedOrder()
-    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
 
     addon.Workbench.BeginTrade("Buyer-MultiTip")
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    state.trade_target_money = 2000
-    addon.Workbench.BeginTrade("Buyer-MultiTip")
-    addon.Workbench.SetTradeAcceptState(1, 1)
-    addon.Workbench.FinishTrade(0)
-
-    order = addon.Workbench.GetSelectedOrder()
     local workbenchState = addon.Workbench.EnsureState()
 
-    assert_not_nil(order, "verified orders should stay queued so later tips can still attach")
-    assert_equal(order.LastObservedTipCopper, 7000, "multiple successful tip trades should accumulate until manual completion")
-    assert_equal(frame.Detail.TipStatus.text, "Tip: 70s", "the detail pane should show the accumulated tip total after multiple trades")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should be ready once the accumulated tip is recorded")
-    assert_equal(workbenchState.CompletedOrders, 0, "multiple accepted tip trades should not auto-complete the order")
-
-    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
-
-    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should bank the accumulated multi-trade tip")
-    assert_equal(workbenchState.CompletedTipsCopper, 7000, "manual completion should use the full accumulated tip total")
+    assert_equal(order.LastObservedTipCopper, 5000, "a later successful tip trade should still be recorded before a legacy verified order retires")
+    assert_equal(workbenchState.CompletedOrders, 1, "already-verified orders should auto-complete on their next successful trade")
+    assert_equal(workbenchState.CompletedTipsCopper, 5000, "auto-completion should bank the first successful tip trade immediately")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-MultiTip"), "auto-completed verified orders should not stay queued for later tips")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after a verified order auto-completes")
 end
 
 local function test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
@@ -1587,22 +1568,21 @@ local function test_workbench_accumulates_trade_tip_before_the_final_successful_
     assert_not_nil(order, "orders without a finished enchant should stay queued after an earlier tip trade")
     assert_equal(order.LastObservedTipCopper, 5000, "trade tips should accumulate on the order even before the final trade finishes the work")
 
-    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
     state.trade_target_money = 0
+    state.trade_target_items = {
+        [7] = { name = "Arcanite Reaper", enchantment = "Mongoose" },
+    }
     addon.Workbench.BeginTrade("Buyer-SplitTip")
+    addon.Workbench.SyncActiveTrade()
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    order = addon.Workbench.GetSelectedOrder()
     local workbenchState = addon.Workbench.EnsureState()
-    assert_not_nil(order, "the later accepted trade should still leave the order queued for manual completion")
+    assert_true(order.VerifiedRecipes["Enchant Weapon - Mongoose"], "the later accepted trade should still verify the requested enchant before the order retires")
     assert_equal(order.LastObservedTipCopper, 5000, "the earlier tip should stay attached to the order after the later accepted trade")
-    assert_equal(workbenchState.CompletedOrders, 0, "the later accepted trade should not auto-complete the already-paid order")
-
-    addon.Workbench.CompleteOrder(order.Id)
-
-    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should bank the earlier split tip once the order is finished")
-    assert_equal(workbenchState.CompletedTipsCopper, 5000, "manual completion should still count the earlier tip total")
+    assert_equal(workbenchState.CompletedOrders, 1, "the later accepted trade should auto-complete the already-paid order")
+    assert_equal(workbenchState.CompletedTipsCopper, 5000, "auto-completion should still count the earlier split tip total")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "auto-completing the final verified trade should remove the order from the queue")
 end
 
 local function test_workbench_accumulates_split_material_counts_across_accepted_trades()
@@ -1696,6 +1676,55 @@ local function test_workbench_keeps_last_accepted_trade_material_snapshot_when_t
     assert_equal(order.MaterialCounts["item:11174"], 1, "accepted trades should keep the last settled essence count even if the live trade slots clear before close")
     assert_equal(checked, 2, "trade-close persistence should still mark both queued mats complete after the slots clear")
     assert_equal(total, 2, "trade-close persistence should keep the original material total")
+end
+
+local function test_workbench_late_completion_signal_preserves_split_trade_progress_during_followup_trade()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-LateSplit")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-LateSplit")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.FinishTrade(0)
+
+    state.trade_target_money = 0
+    state.trade_target_items = {
+        [7] = { name = "Netherweave Boots" },
+    }
+    addon.Workbench.BeginTrade("Buyer-LateSplit")
+    addon.Workbench.MarkTradeCompleted()
+
+    order = addon.Workbench.GetOrderById(order.Id)
+    local checked, total = addon.Workbench.GetMaterialProgress(order)
+
+    assert_equal(order.LastObservedTipCopper, 5000, "a late completion signal should still attach the earlier split-trade tip to the queued order")
+    assert_equal(order.MaterialCounts["item:11083"], 6, "a late completion signal should still persist the earlier split-trade Soul Dust handoff")
+    assert_equal(order.MaterialCounts["item:11174"], 1, "a late completion signal should still persist the earlier split-trade essence handoff")
+    assert_equal(checked, 2, "the follow-up enchant trade should still see the earlier accepted mats as tracked")
+    assert_equal(total, 2, "follow-up trade mat totals should still use the original queued snapshot")
+    assert_equal(frame.Detail.TipStatus.text, "Tip: 50s", "the follow-up trade should keep showing the carried tip instead of resetting to a fresh trade watch")
+    assert_true(frame.Detail.MaterialLines[1].StatusCheck.shown, "follow-up trade should keep the first carried material checked")
+    assert_true(frame.Detail.MaterialLines[2].StatusCheck.shown, "follow-up trade should keep the second carried material checked")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -2362,8 +2391,10 @@ local function test_order_only_turns_verified_when_all_recipes_are_checked()
 
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Boots - Minor Speed", true)
 
-    assert_true(string.find(frame.OrderRows[1].MetaText.text or "", "Verified") ~= nil, "the queue should only show the green verified state after every requested enchant is checked")
-    assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should also show the full-order verified state once all recipes are checked")
+    local state = addon.Workbench.EnsureState()
+    assert_equal(state.CompletedOrders, 1, "the queue should only retire the order once every requested enchant is checked")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "fully verified multi-enchant orders should auto-complete")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "detail meta should reset once the fully verified order retires")
 end
 
 local function test_recipe_lines_show_read_only_status_indicators()
@@ -2386,8 +2417,8 @@ local function test_recipe_lines_show_read_only_status_indicators()
     local order = addon.Workbench.GetSelectedOrder()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Boots - Minor Speed", true)
 
-    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "verified recipe rows should show the green-check texture")
-    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "verified recipe rows should hide the question-mark indicator")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "fully verified orders should retire automatically instead of lingering with a manual complete step")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after the order auto-completes")
 end
 
 local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
@@ -2411,13 +2442,11 @@ local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    local order = addon.Workbench.GetSelectedOrder()
-    local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
+    local state = addon.Workbench.EnsureState()
 
-    assert_equal(verified, 1, "accepted trades should auto-verify a matching enchant even when Apply was not clicked first")
-    assert_equal(total, 1, "auto verification should still track the total queued recipe count")
-    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "auto-verified recipes should show the green-check indicator")
-    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "auto-verified recipes should hide the question-mark indicator")
+    assert_equal(state.CompletedOrders, 1, "accepted trades should auto-verify and then auto-complete a matching enchant even when Apply was not clicked first")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-AutoVerify"), "auto-verified finished orders should retire automatically")
+    assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after auto-verification retires the order")
 end
 
 local function test_trade_detected_enchant_shows_as_checked_before_trade_closes()
@@ -2725,18 +2754,19 @@ test_workbench_lock_button_survives_clients_without_text_insets()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
 test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
-test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
-test_workbench_complete_allows_zero_tip_without_a_separate_button()
+test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
+test_workbench_verified_orders_auto_complete_without_a_button()
 test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
 test_trade_completion_message_falls_back_to_recorded_cast_when_enchant_text_never_appears()
-test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+test_workbench_accepted_trade_commits_progress_and_auto_completes_zero_tip_order()
 test_workbench_persists_trade_progress_after_accept_flags_reset_during_close()
 test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
-test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
+test_workbench_verified_orders_auto_complete_on_the_next_successful_trade()
 test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
 test_workbench_accumulates_split_material_counts_across_accepted_trades()
 test_workbench_keeps_last_accepted_trade_material_snapshot_when_trade_slots_clear_before_close()
+test_workbench_late_completion_signal_preserves_split_trade_progress_during_followup_trade()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
