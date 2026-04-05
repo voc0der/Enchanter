@@ -1,3 +1,12 @@
+## [2.1.26] - 2026-04-05
+
+### Changed
+- Retired fully verified workbench orders automatically so the old per-order `Complete` step is no longer needed after the final enchant trade settles
+
+### Fixed
+- Preserved accepted split-trade mats and tip snapshots even when `TRADE_CLOSED` arrives before the late trade completion signal, which keeps follow-up enchant trades from dropping green checks back to `?`
+- Carried earlier split-trade gold forward into the final verifying trade before the order auto-completes, so the running totals still bank the right tip amount
+
 ## [2.1.25] - 2026-04-05
 
 ### Fixed

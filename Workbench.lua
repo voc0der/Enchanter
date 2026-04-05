@@ -1416,6 +1416,8 @@ local function AddRecordedTradeMaterialCounts(activeTrade, appliedCounts)
 	end
 end
 
+local CommitTradeState
+
 local function SnapshotTradeCompletionState(activeTrade)
 	local currentTradeMoneyCopper
 
@@ -1431,6 +1433,104 @@ local function SnapshotTradeCompletionState(activeTrade)
 	if currentTradeMoneyCopper > 0 then
 		activeTrade.CompletedTradeMoneyCopper = currentTradeMoneyCopper
 	end
+end
+
+local function GetTradeSettlementTipCopper(activeTrade, goldDelta)
+	local tradeTipCopper = math.max(0, math.floor(tonumber(goldDelta) or 0))
+
+	if not activeTrade then
+		return tradeTipCopper
+	end
+
+	return math.max(tradeTipCopper, math.max(
+		math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)),
+		math.max(0, math.floor(tonumber(activeTrade.CompletedTradeMoneyCopper) or 0))
+	))
+end
+
+local function FinalizeSuccessfulTrade(order, activeTrade, goldDelta)
+	local persistedRecipes = 0
+	local persistedMaterials = 0
+	local tradeTipCopper = GetTradeSettlementTipCopper(activeTrade, goldDelta)
+
+	if not order or not activeTrade then
+		return persistedRecipes, persistedMaterials, tradeTipCopper
+	end
+
+	persistedRecipes, persistedMaterials = CommitTradeState(order, activeTrade)
+	if tradeTipCopper > 0 then
+		order.LastObservedTipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0)) + tradeTipCopper
+		order.PendingTipText = ""
+		order.NoTipConfirmed = false
+		order.UpdatedAt = TimestampText()
+		if EC then
+			EC.SessionGold = (tonumber(EC.SessionGold) or 0) + tradeTipCopper
+		end
+		WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(tradeTipCopper) .. ", total " .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
+	end
+
+	return persistedRecipes, persistedMaterials, tradeTipCopper
+end
+
+local function TradeHasDeferredCompletionEvidence(activeTrade)
+	if not activeTrade or not activeTrade.OrderId then
+		return false
+	end
+
+	if CountTableHasPositiveCounts(activeTrade.CompletedMaterialCounts) or CountTableHasPositiveCounts(activeTrade.OfferedMaterialCounts) then
+		return true
+	end
+	if GetTradeSettlementTipCopper(activeTrade, 0) > 0 then
+		return true
+	end
+	if next(activeTrade.AppliedRecipes or {}) ~= nil then
+		return true
+	end
+	if TrimText(activeTrade.CastedRecipeName) ~= "" then
+		return true
+	end
+	if TrimText(activeTrade.LastSeenEnchantmentText) ~= "" then
+		return true
+	end
+	if TrimText(activeTrade.LastSeenEnchantItemName) ~= "" then
+		return true
+	end
+
+	return false
+end
+
+local function QueuePendingClosedTrade(activeTrade)
+	local runtime
+	local pendingClosedTrades
+
+	if not TradeHasDeferredCompletionEvidence(activeTrade) then
+		return false
+	end
+
+	runtime = EnsureRuntime()
+	pendingClosedTrades = runtime.PendingClosedTrades
+	if type(pendingClosedTrades) ~= "table" then
+		pendingClosedTrades = {}
+		runtime.PendingClosedTrades = pendingClosedTrades
+	end
+
+	pendingClosedTrades[#pendingClosedTrades + 1] = activeTrade
+	while #pendingClosedTrades > 3 do
+		table.remove(pendingClosedTrades, 1)
+	end
+
+	return true
+end
+
+local function TakeMostRecentPendingClosedTrade()
+	local runtime = EnsureRuntime()
+	local pendingClosedTrades = runtime.PendingClosedTrades
+
+	if type(pendingClosedTrades) ~= "table" or #pendingClosedTrades == 0 then
+		return nil
+	end
+
+	return table.remove(pendingClosedTrades)
 end
 
 local function TrackTradeAppliedRecipe(order, activeTrade)
@@ -1486,7 +1586,7 @@ local function TrackCompletedTradeCast(order, activeTrade)
 	return true
 end
 
-local function CommitTradeState(order, activeTrade)
+CommitTradeState = function(order, activeTrade)
 	local appliedRecipeCount = 0
 	local appliedMaterialCount = 0
 
@@ -1820,18 +1920,54 @@ end
 
 function Workbench.MarkTradeCompleted()
 	local activeTrade = EnsureRuntime().ActiveTrade
-	if not activeTrade then
+	local targetTrade
+	local order
+	local persistedRecipes
+	local persistedMaterials
+	local checked
+	local total
+	local verifiedCount
+	local recipeTotal
+	local autoCompleted = false
+
+	if activeTrade and (activeTrade.CompletedSignal or HasAcceptedTradeSettlement(activeTrade)) then
+		targetTrade = activeTrade
+	elseif activeTrade then
+		targetTrade = TakeMostRecentPendingClosedTrade() or activeTrade
+	else
+		targetTrade = TakeMostRecentPendingClosedTrade()
+	end
+
+	if not targetTrade then
 		return false
 	end
 
-	activeTrade.CompletedSignal = true
-	local order = GetOrderForActiveTrade(activeTrade)
+	targetTrade.CompletedSignal = true
+	order = GetOrderForActiveTrade(targetTrade)
 	if order then
-		TrackTradeAppliedRecipe(order, activeTrade)
-		TrackCompletedTradeCast(order, activeTrade)
+		TrackTradeAppliedRecipe(order, targetTrade)
+		TrackCompletedTradeCast(order, targetTrade)
 	end
-	SnapshotTradeCompletionState(activeTrade)
-	WorkbenchDebug("trade completion confirmed by UI_INFO_MESSAGE")
+	SnapshotTradeCompletionState(targetTrade)
+
+	if targetTrade ~= activeTrade then
+		persistedRecipes, persistedMaterials = FinalizeSuccessfulTrade(order, targetTrade, 0)
+		if order then
+			checked, total = Workbench.GetMaterialProgress(order)
+			_, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
+			if recipeTotal > 0 and verifiedCount == recipeTotal and Workbench.CompleteOrder then
+				autoCompleted = Workbench.CompleteOrder(order.Id) and true or false
+			end
+			WorkbenchDebug("late trade completion confirmed for", order.Customer, "(" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats, " .. tostring(checked) .. "/" .. tostring(total) .. " tracked, tip " .. FormatMoneyCompact(GetRecordedTipCopper(order)) .. ")")
+		else
+			WorkbenchDebug("late trade completion confirmed by UI_INFO_MESSAGE")
+		end
+		if not autoCompleted then
+			Workbench.Refresh()
+		end
+	else
+		WorkbenchDebug("trade completion confirmed by UI_INFO_MESSAGE")
+	end
 	return true
 end
 
@@ -1893,6 +2029,8 @@ function Workbench.FinishTrade(goldDelta)
 	local tradeSucceeded
 	local persistedRecipes = 0
 	local persistedMaterials = 0
+	local waitingForLateCompletion = false
+	local autoCompleted = false
 
 	if not activeTrade or not activeTrade.OrderId then
 		runtime.ActiveTrade = nil
@@ -1911,38 +2049,38 @@ function Workbench.FinishTrade(goldDelta)
 	SnapshotTradeCompletionState(activeTrade)
 	TrackCompletedTradeCast(order, activeTrade)
 
-	tradeTipCopper = math.max(tradeTipCopper, math.max(
-		math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)),
-		math.max(0, math.floor(tonumber(activeTrade.CompletedTradeMoneyCopper) or 0))
-	))
+	tradeTipCopper = GetTradeSettlementTipCopper(activeTrade, tradeTipCopper)
 	tradeSucceeded = activeTrade.CompletedSignal and true or HasAcceptedTradeSettlement(activeTrade) or (math.floor(tonumber(goldDelta) or 0) > 0)
 
 	if tradeSucceeded then
-		persistedRecipes, persistedMaterials = CommitTradeState(order, activeTrade)
-		if tradeTipCopper > 0 then
-			order.LastObservedTipCopper = math.max(0, math.floor(tonumber(order.LastObservedTipCopper) or 0)) + tradeTipCopper
-			order.PendingTipText = ""
-			order.NoTipConfirmed = false
-			order.UpdatedAt = TimestampText()
-			if EC then
-				EC.SessionGold = (tonumber(EC.SessionGold) or 0) + tradeTipCopper
-			end
-			WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(tradeTipCopper) .. ", total " .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
-		end
+		persistedRecipes, persistedMaterials, tradeTipCopper = FinalizeSuccessfulTrade(order, activeTrade, tradeTipCopper)
+	elseif QueuePendingClosedTrade(activeTrade) then
+		waitingForLateCompletion = true
 	end
 
 	runtime.ActiveTrade = nil
 
 	local checked, total = Workbench.GetMaterialProgress(order)
 	local isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
+	if tradeSucceeded and recipeTotal > 0 and isVerified and Workbench.CompleteOrder then
+		autoCompleted = Workbench.CompleteOrder(order.Id) and true or false
+	end
 
 	if tradeSucceeded then
-		WorkbenchDebug("trade closed for", order.Customer, "and updated the queue (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats, tip " .. FormatMoneyCompact(GetRecordedTipCopper(order)) .. ")")
+		if autoCompleted then
+			WorkbenchDebug("trade closed for", order.Customer, "and auto-completed the order (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats, tip " .. FormatMoneyCompact(GetRecordedTipCopper(order)) .. ")")
+		else
+			WorkbenchDebug("trade closed for", order.Customer, "and updated the queue (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats, tip " .. FormatMoneyCompact(GetRecordedTipCopper(order)) .. ")")
+		end
+	elseif waitingForLateCompletion then
+		WorkbenchDebug("trade closed for", order.Customer, "before completion confirmation arrived; keeping the last trade snapshot pending")
 	else
 		WorkbenchDebug("trade closed for", order.Customer, "without a completed exchange (tip=" .. FormatMoneyCompact(tradeTipCopper) .. ", mats=" .. tostring(checked) .. "/" .. tostring(total) .. ", verified=" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ")")
 	end
 
-	Workbench.Refresh()
+	if not autoCompleted then
+		Workbench.Refresh()
+	end
 	return tradeSucceeded and order or nil
 end
 
@@ -1996,13 +2134,24 @@ end
 
 function Workbench.SetRecipeVerified(orderId, recipeName, verified)
 	local state = Workbench.EnsureState()
+	local autoCompleteOrderId
 	for _, order in ipairs(state.Orders) do
 		if order.Id == orderId then
 			if SetRecipeVerifiedInternal(order, recipeName, verified) then
 				WorkbenchDebug((verified and "verified" or "cleared verification for"), recipeName, "on", order.Customer)
+				if verified then
+					local isVerified, _, recipeTotal = Workbench.IsOrderVerified(order)
+					if recipeTotal > 0 and isVerified then
+						autoCompleteOrderId = order.Id
+					end
+				end
 			end
 			break
 		end
+	end
+
+	if autoCompleteOrderId and Workbench.CompleteOrder and Workbench.CompleteOrder(autoCompleteOrderId) then
+		return
 	end
 
 	Workbench.Refresh()
@@ -2112,6 +2261,7 @@ function Workbench.ClearOrders()
 	state.CompletedTipsCopper = 0
 	local runtime = EnsureRuntime()
 	runtime.ActiveTrade = nil
+	runtime.PendingClosedTrades = nil
 
 	WorkbenchDebug("cleared queue and totals (" .. tostring(removedCount) .. " orders)")
 	Workbench.Refresh()
@@ -3119,7 +3269,7 @@ function Workbench.Refresh()
 	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", verificationText, readyText))
 	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
 	if activeTrade then
-		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Apply is optional here; accepted trades update mats, tips, and completed enchants automatically. Complete stays manual.|r")
+		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Apply is optional here; accepted trades update mats, tips, and completed enchants automatically. Fully verified orders retire themselves when the trade settles.|r")
 		frame.Detail.TradeHint:Show()
 	else
 		frame.Detail.TradeHint:Hide()
@@ -3130,39 +3280,13 @@ function Workbench.Refresh()
 	frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.ActionRow:Show()
 
-	local showManualComplete = not activeTrade
-
-	frame.Detail.CompleteButton:ClearAllPoints()
-	frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
-	frame.Detail.CompleteButton.OrderId = order.Id
-	if showManualComplete then
-		if recipeTotal > 0 and verifiedCount == recipeTotal then
-			if frame.Detail.CompleteButton.Enable then
-				frame.Detail.CompleteButton:Enable()
-			end
-		else
-			if frame.Detail.CompleteButton.Disable then
-				frame.Detail.CompleteButton:Disable()
-			end
-		end
-		frame.Detail.CompleteButton:Show()
-	else
-		if frame.Detail.CompleteButton.Disable then
-			frame.Detail.CompleteButton:Disable()
-		end
-		frame.Detail.CompleteButton:Hide()
-	end
+	frame.Detail.CompleteButton:Hide()
 
 	frame.Detail.TipStatus:ClearAllPoints()
 	frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
 	frame.Detail.TipStatus:SetText(GetTipStatusText(order, activeTrade))
 	frame.Detail.TipStatus:Show()
-
-	if showManualComplete then
-		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
-	else
-		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
-	end
+	frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 
 	frame.Detail.RecipesHeader:ClearAllPoints()
 	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.ActionRow, "BOTTOMLEFT", 0, -12)
@@ -3219,11 +3343,11 @@ function Workbench.Refresh()
 		local statusBits = {}
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
-				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will finish this verified order automatically when the trade settles.|r"
 			elseif hasRecordedTip then
-				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. This order will retire itself automatically.|r"
 			else
-				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. This order will retire itself automatically.|r"
 			end
 		elseif recipeTotal > 0 and verifiedCount > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades flip each enchant from ? to a green check automatically.|r"
@@ -3244,11 +3368,11 @@ function Workbench.Refresh()
 	else
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
-				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will finish this verified order automatically when the trade settles.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			elseif hasRecordedTip then
-				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. This order will retire itself automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			else
-				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. This order will retire itself automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			end
 		elseif recipeTotal > 0 then
 			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades will flip the rest automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
