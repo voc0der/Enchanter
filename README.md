@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.14`
+Current version: `2.1.15`
 
 ## What It Does
 
@@ -50,7 +50,7 @@ Current version: `2.1.14`
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
-- `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it.
+- `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it, including late completion updates.
 - If they tip during earlier mat trades or across multiple follow-up trades, that gold stays attached to the order until you click `Complete`.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
@@ -58,7 +58,7 @@ Current version: `2.1.14`
 - The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
-- Accepted trades never retire the order by themselves; partial mats trades, repeated tip trades, and applied enchants stay attached to the queue entry until you click `Complete`.
+- Accepted trades never retire the order by themselves; partial mats trades, repeated tip trades, and applied enchants stay attached to the queue entry until you click `Complete`, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.

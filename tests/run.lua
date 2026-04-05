@@ -999,6 +999,39 @@ local function test_workbench_accepted_trade_commits_progress_and_waits_for_manu
     assert_nil(addon.Workbench.GetOrderById(order.Id), "manual completion should remove the finished zero-tip order")
 end
 
+local function test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-LateEnchant")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-LateEnchant")
+    addon.Workbench.NoteRecipeCast("Enchant Boots - Minor Speed")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    state.trade_target_items = {
+        [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+    }
+
+    addon.Workbench.MarkTradeCompleted()
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderById(order.Id)
+    local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
+    assert_equal(verified, 1, "trade completion should capture a final enchant that only appears when the completion message fires")
+    assert_equal(total, 1, "late completion-message verification should preserve the queued recipe total")
+end
+
 local function test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
     local addon, state = setup_env({
         trade_target_money = 5000,
@@ -1130,6 +1163,47 @@ local function test_workbench_accumulates_split_material_counts_across_accepted_
     assert_equal(order.MaterialCounts["item:11083"], 12, "accepted trades should accumulate partial reagent counts across multiple handoffs")
     assert_equal(checked, 1, "once the accumulated count reaches the required total the material row should complete")
     assert_equal(total, 1, "the aggregated material row count should stay stable across repeated handoffs")
+end
+
+local function test_workbench_keeps_last_accepted_trade_material_snapshot_when_trade_slots_clear_before_close()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-ClearedTrade")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-ClearedTrade")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.SyncActiveTrade()
+
+    state.trade_target_items = {}
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.MarkTradeCompleted()
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderById(order.Id)
+    local checked, total = addon.Workbench.GetMaterialProgress(order)
+
+    assert_equal(order.MaterialCounts["item:11083"], 6, "accepted trades should keep the last settled Soul Dust count even if the live trade slots clear before close")
+    assert_equal(order.MaterialCounts["item:11174"], 1, "accepted trades should keep the last settled essence count even if the live trade slots clear before close")
+    assert_equal(checked, 2, "trade-close persistence should still mark both queued mats complete after the slots clear")
+    assert_equal(total, 2, "trade-close persistence should keep the original material total")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -1986,9 +2060,11 @@ test_workbench_complete_allows_zero_tip_without_a_separate_button()
 test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
 test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
 test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
 test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
 test_workbench_accumulates_split_material_counts_across_accepted_trades()
+test_workbench_keeps_last_accepted_trade_material_snapshot_when_trade_slots_clear_before_close()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()

@@ -1,8 +1,10 @@
-## [2.1.14] - 2026-04-05
+## [2.1.15] - 2026-04-05
 
 ### Fixed
 - Replaced the workbench recipe checkbox with automatic `?` / green-check status so accepted trades confirm completed enchants without manual clicks
 - Matched applied enchants from the trade-slot API, even when you did not start the cast from Enchanter's own `Apply` button
+- Preserved the last accepted trade-mat snapshot so finished material handoffs stay checked even if Blizzard clears the trade offer before `TRADE_CLOSED`
+- Re-checked the trade enchant state on completion so late trade-slot enchant updates still auto-verify the finished recipe
 - Dropped the extra `No tip` button so verified orders can be completed directly at `0g` when nobody tips
 - Synced the saved workbench visibility with the real frame state so `/ec workbench` now opens or closes correctly in one command after using the `X` button
 
