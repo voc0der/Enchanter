@@ -1,3 +1,12 @@
+## [2.1.10] - 2026-04-05
+
+### Changed
+- Replaced the manual workbench tip entry with automatic trade-gold tracking plus an inline `No tip` confirmation before manual completion
+
+### Fixed
+- Let short queues collapse so the selected order gets more room in the detail pane
+- Kept long order details inside the workbench with a scrollable detail area instead of letting recipes or mats bleed past the frame
+
 ## [2.1.9] - 2026-04-05
 
 ### Changed
