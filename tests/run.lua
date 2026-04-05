@@ -314,7 +314,9 @@ local function setup_env(opts)
         }
     end
     _G.SOUNDKIT = {
-        UI_REFORGING_REFORGE = 23291,
+        IG_MAINMENU_OPTION_CHECKBOX_ON = 856,
+        U_CHAT_SCROLL_BUTTON = 1115,
+        IG_CHARACTER_INFO_OPEN = 839,
         AUCTION_WINDOW_OPEN = 5274,
     }
     _G.ERR_TRADE_COMPLETE = "Trade complete."
@@ -327,6 +329,9 @@ local function setup_env(opts)
             sound_kit = sound_kit,
             channel = channel,
         }
+        if opts.play_sound_returns_false then
+            return false
+        end
         return true
     end
     _G.CastSpellByName = function(name)
@@ -1076,6 +1081,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     local addon = setup_env()
 
     local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
 
     assert_not_nil(frame, "workbench frame should be created when UI helpers exist")
     assert_equal(frame.frame_strata, "DIALOG", "workbench should use dialog strata so it stays interactable")
@@ -1086,26 +1092,62 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+    assert_equal(frame.LockButton.text, "Lock", "lock control should show the current locked state like the sound toggle")
+    assert_equal(frame.LockButton.width, 66, "lock control should stay compact while leaving room for the padlock and state text")
+    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture")
+    assert_true(workbenchState.Locked, "workbench should start locked by default")
+    assert_equal(frame.LockButton.Icon.vertex_color[1], 1, "locked state should render the padlock brightly")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
+
+    frame.LockButton.scripts["OnClick"]()
+
+    assert_true(not workbenchState.Locked, "clicking the padlock should still unlock the workbench")
+    assert_equal(frame.LockButton.text, "No Lock", "unlocked state should read like the sound toggle instead of requiring a tooltip")
+    assert_equal(frame.LockButton.Icon.vertex_color[1], 0.72, "unlocked state should dim the padlock while keeping the button readable")
 end
 
 local function test_workbench_sound_button_defaults_off_and_toggles()
-    local addon = setup_env()
+    local addon, state = setup_env()
 
     local frame = addon.Workbench.CreateFrame()
     local workbenchState = addon.Workbench.EnsureState()
 
     assert_true(not workbenchState.SoundEnabled, "queue sound should default to disabled")
     assert_equal(frame.SoundButton.text, "No Sound", "header button should show No Sound when alerts are disabled")
+    assert_equal(#state.played_sounds, 0, "sound preview should stay idle until the toggle is enabled")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(workbenchState.SoundEnabled, "sound toggle should persist as enabled after clicking")
     assert_equal(frame.SoundButton.text, "Sound", "header button should flip to Sound when alerts are enabled")
+    assert_equal(#state.played_sounds, 1, "enabling queue sounds should play an immediate preview so the user can hear it")
+    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "sound preview should start with the most client-safe Blizzard UI sound")
+    assert_equal(state.played_sound_calls[1].channel, "Master", "sound preview should use the Master channel when available")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(not workbenchState.SoundEnabled, "sound toggle should persist as disabled after a second click")
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
+    assert_equal(#state.played_sounds, 1, "disabling queue sounds should not play any extra preview")
+end
+
+local function test_workbench_sound_button_warns_when_preview_cannot_play()
+    local addon, state = setup_env({
+        play_sound_returns_false = true,
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    frame.SoundButton.scripts["OnClick"]()
+
+    local foundWarning = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Queue alert sound preview failed", 1, true) ~= nil then
+            foundWarning = true
+            break
+        end
+    end
+
+    assert_true(foundWarning, "enabling queue sounds should warn when none of the preview fallbacks can actually play")
 end
 
 local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
@@ -1721,6 +1763,7 @@ local function test_workbench_applies_elvui_skin_when_available()
 
     assert_true(frame.elvui_frame_skinned, "main workbench frame should use the ElvUI frame template when available")
     assert_true(frame.LockButton.elvui_button_skinned, "lock button should use the ElvUI button template when available")
+    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock button should keep its padlock icon even when ElvUI is active")
     assert_equal(frame.ResizeHandle.normal_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up", "resize handle should use the native size-grabber texture instead of a text button")
     assert_equal(frame.ResizeHandle.highlight_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight", "resize handle should expose the native highlight grip texture")
     assert_equal(frame.ResizeHandle.pushed_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down", "resize handle should expose the native pressed grip texture")
@@ -1883,8 +1926,8 @@ local function test_workbench_queue_alert_only_plays_for_new_orders_when_enabled
     })
 
     assert_equal(#state.played_sounds, 2, "queue alert should only play for newly queued customers")
-    assert_equal(state.played_sounds[1], SOUNDKIT.UI_REFORGING_REFORGE, "queue alert should use the enchanting-themed WoW sound first")
-    assert_equal(state.played_sounds[2], SOUNDKIT.UI_REFORGING_REFORGE, "each new queued customer should reuse the same alert sound")
+    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "queue alert should use a Blizzard UI sound that exists on Classic and TBC clients")
+    assert_equal(state.played_sounds[2], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "each new queued customer should reuse the same first-choice alert sound")
     assert_equal(state.played_sound_calls[1].channel, "Master", "queue alerts should play on the Master channel so they can be heard with muted SFX")
     assert_equal(state.played_sound_calls[2].channel, "Master", "each new queue alert should keep using the Master channel")
 end
@@ -2536,6 +2579,7 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_sound_button_warns_when_preview_cannot_play()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
 test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
