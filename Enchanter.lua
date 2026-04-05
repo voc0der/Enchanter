@@ -876,14 +876,10 @@ function EC.NeedsRecipeScan()
 	end
 
 	local recipeList = EC.DBChar.RecipeList or {}
-	local recipeMats = EC.DBChar.RecipeMats or {}
 	local recipeCount = 0
 
-	for recipeName in pairs(recipeList) do
+	for _ in pairs(recipeList) do
 		recipeCount = recipeCount + 1
-		if recipeMats[recipeName] == nil then
-			return true
-		end
 	end
 
 	return recipeCount == 0
