@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.12`
+Current version: `2.1.13`
 
 ## What It Does
 
@@ -41,7 +41,7 @@ Current version: `2.1.12`
 ## Workbench
 
 - New matched orders are added to a queue instead of being lost in chat spam.
-- Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
+- Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound` and now plays through the `Master` channel so muted sound effects do not suppress the queue ping.
@@ -55,8 +55,7 @@ Current version: `2.1.12`
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Check the green checkbox next to each requested enchant once you have verified that specific enchant is fully paid and done.
 - Multi-enchant orders only turn green once every requested enchant has been checked off.
-- The workbench now watches the customer's current trade offer for matching mats and can show live progress against the queued material list.
-- Click `Use Trade` to copy the mats currently offered in the trade window into the persistent checklist.
+- The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
 - Accepted trades never retire the order by themselves; partial mats trades, repeated tip trades, and applied enchants stay attached to the queue entry until you click `Complete`.

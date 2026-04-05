@@ -98,6 +98,7 @@ local function setup_env(opts)
         end
         function font_string:SetText(text) self.text = text end
         function font_string:GetText() return self.text end
+        function font_string:SetTextColor(...) self.text_color = { ... } end
         function font_string:SetJustifyH(value) self.justify_h = value end
         function font_string:SetJustifyV(value) self.justify_v = value end
         function font_string:Show() self.shown = true end
@@ -116,8 +117,13 @@ local function setup_env(opts)
 
         function texture:SetAllPoints() end
         function texture:SetPoint(...) self.point = { ... } end
+        function texture:SetSize(width, height)
+            self.width = width
+            self.height = height
+        end
         function texture:SetTexture(value) self.texture = value end
         function texture:SetColorTexture(...) self.color = { ... } end
+        function texture:SetVertexColor(...) self.vertex_color = { ... } end
         function texture:Show() self.shown = true end
         function texture:Hide() self.shown = false end
 
@@ -1196,7 +1202,7 @@ local function test_workbench_detail_lines_keep_a_usable_width_after_refresh()
     assert_not_nil(frame.Detail.RecipeLines[1], "detail recipe line should be created for the selected order")
     assert_not_nil(frame.Detail.MaterialLines[1], "detail material lines should be created when a mats snapshot exists")
     assert_true((frame.Detail.RecipeLines[1]:GetWidth() or 0) > 100, "detail recipe rows should keep enough width to render their text and buttons")
-    assert_true((frame.Detail.MaterialLines[1]:GetWidth() or 0) > 100, "detail material rows should keep enough width to render the checklist")
+    assert_true((frame.Detail.MaterialLines[1]:GetWidth() or 0) > 100, "detail material rows should keep enough width to render the tracked material status")
     assert_equal(frame.Detail.MatsHeader.shown, true, "materials header should stay visible when the selected order has queued mats")
     assert_true((frame.ListScroll:GetHeight() or 0) < emptyQueueHeight, "a short queue should collapse so the detail pane gets more room")
 end
@@ -1711,10 +1717,10 @@ local function test_trade_sync_recovers_partner_name_after_trade_show()
     assert_equal(order.Customer, "Buyer-LateTradeName", "late trade-name recovery should select the matching queued order")
     assert_equal(checked, 2, "recovered trade partner should still enable live mats tracking")
     assert_equal(total, 2, "recovered trade partner should preserve the queued mats total")
-    assert_equal(frame.Detail.UseTradeButton.shown, true, "recovered trade partner should expose the Use Trade shortcut in the detail pane")
+    assert_true(frame.Detail.UseTradeButton.shown == false, "recovered trade partner should keep the manual trade-mat button hidden")
 end
 
-local function test_use_trade_materials_copies_live_offer_into_checklist()
+local function test_trade_material_helper_copies_live_offer_into_recorded_progress()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -1741,9 +1747,44 @@ local function test_use_trade_materials_copies_live_offer_into_checklist()
     local copied = addon.Workbench.UseTradeMaterials(order.Id)
     local checked, total = addon.Workbench.GetMaterialProgress(order)
 
-    assert_true(copied, "use trade should copy the currently offered mats into the manual checklist")
-    assert_equal(checked, 2, "copied trade mats should become persisted checklist progress")
-    assert_equal(total, 2, "manual mats progress should still reflect the full material total")
+    assert_true(copied, "the internal trade-material helper should still be able to copy the live offer into recorded progress")
+    assert_equal(checked, 2, "copied trade mats should become persisted tracked progress")
+    assert_equal(total, 2, "recorded mats progress should still reflect the full material total")
+end
+
+local function test_material_lines_show_read_only_status_indicators()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Status")
+
+    assert_true(frame.Detail.AllMatsButton.shown == false, "all mats should stay hidden because mat tracking is automatic")
+    assert_true(frame.Detail.UseTradeButton.shown == false, "use trade should stay hidden because mat tracking is automatic")
+    assert_true(frame.Detail.ClearMatsButton.shown == false, "clear mats should stay hidden because mat tracking is automatic")
+    assert_equal(frame.Detail.MaterialLines[1].StatusText.text, "?", "untracked materials should show a question-mark indicator")
+    assert_true(frame.Detail.MaterialLines[1].StatusCheck.shown == false, "untracked materials should not show the green-check texture")
+
+    addon.Workbench.BeginTrade("Buyer-Status")
+
+    assert_true(frame.Detail.MaterialLines[1].StatusCheck.shown, "fully offered trade mats should show the green-check indicator")
+    assert_true(frame.Detail.MaterialLines[1].StatusText.shown == false, "fully offered trade mats should hide the question-mark indicator")
 end
 
 local function test_active_trade_updates_recipe_button_to_apply()
@@ -1912,7 +1953,8 @@ test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_verify_checkbox_updates_order_state()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
-test_use_trade_materials_copies_live_offer_into_checklist()
+test_trade_material_helper_copies_live_offer_into_recorded_progress()
+test_material_lines_show_read_only_status_indicators()
 test_active_trade_updates_recipe_button_to_apply()
 test_simulate_generates_safe_fake_orders_and_schedules_next_tick()
 test_simulate_stop_invalidates_pending_tick()

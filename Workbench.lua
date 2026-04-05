@@ -2155,17 +2155,20 @@ local function CreateMaterialLine(parent, index)
 	line:SetPoint("LEFT", parent, "LEFT", 0, 0)
 	line:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 
-	line.Check = CreateFrame("CheckButton", nil, line, "UICheckButtonTemplate")
-	line.Check:SetPoint("LEFT", line, "LEFT", -4, 0)
-	ApplyElvUISkin(line.Check, "checkbox")
-	line.Check:SetScript("OnClick", function(self)
-		if self.OrderId and self.MaterialKey then
-			Workbench.SetMaterialChecked(self.OrderId, self.MaterialKey, self:GetChecked())
-		end
-	end)
+	line.StatusCheck = line:CreateTexture(nil, "ARTWORK")
+	line.StatusCheck:SetPoint("LEFT", line, "LEFT", 0, 0)
+	line.StatusCheck:SetSize(18, 18)
+	line.StatusCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+	line.StatusCheck:SetVertexColor(0.45, 0.82, 0.42)
+	line.StatusCheck:Hide()
+
+	line.StatusText = line:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	line.StatusText:SetPoint("CENTER", line.StatusCheck, "CENTER", 0, 0)
+	line.StatusText:SetText("?")
+	line.StatusText:SetTextColor(1, 0.82, 0.42)
 
 	line.Text = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	line.Text:SetPoint("LEFT", line.Check, "RIGHT", -2, 0)
+	line.Text:SetPoint("LEFT", line.StatusCheck, "RIGHT", 4, 0)
 	line.Text:SetPoint("RIGHT", line, "RIGHT", 0, 0)
 	line.Text:SetJustifyH("LEFT")
 
@@ -2439,7 +2442,7 @@ function Workbench.CreateFrame()
 	frame.Detail.Empty:SetPoint("TOPLEFT", frame.Detail.Meta, "BOTTOMLEFT", 0, -12)
 	frame.Detail.Empty:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Empty:SetJustifyH("LEFT")
-	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and a trade-aware materials checklist.")
+	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and automatic material tracking.")
 
 	frame.ResizeHandle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	frame.ResizeHandle:SetSize(54, 18)
@@ -2697,24 +2700,14 @@ function Workbench.Refresh()
 	frame.Detail.MatsHeader:SetPoint("TOPLEFT", matsAnchor, "BOTTOMLEFT", 0, -14)
 	frame.Detail.MatsHeader:Show()
 
-	frame.Detail.AllMatsButton:ClearAllPoints()
-	frame.Detail.AllMatsButton:SetPoint("LEFT", frame.Detail.MatsHeader, "RIGHT", 12, 0)
-	frame.Detail.UseTradeButton:ClearAllPoints()
-	frame.Detail.UseTradeButton:SetPoint("LEFT", frame.Detail.AllMatsButton, "RIGHT", 6, 0)
-	frame.Detail.ClearMatsButton:ClearAllPoints()
-	frame.Detail.ClearMatsButton:SetPoint("LEFT", frame.Detail.UseTradeButton, "RIGHT", 6, 0)
+	frame.Detail.AllMatsButton:Hide()
+	frame.Detail.UseTradeButton:Hide()
+	frame.Detail.ClearMatsButton:Hide()
 	frame.Detail.ReadyText:ClearAllPoints()
 	frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
 	frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 
 	if #materials > 0 then
-		frame.Detail.AllMatsButton:Show()
-		if activeTrade and offeredChecked > 0 then
-			frame.Detail.UseTradeButton:Show()
-		else
-			frame.Detail.UseTradeButton:Hide()
-		end
-		frame.Detail.ClearMatsButton:Show()
 		local statusBits = {}
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
@@ -2731,19 +2724,16 @@ function Workbench.Refresh()
 		end
 
 		if manualChecked == total then
-			statusBits[#statusBits + 1] = "|cFF74D06CAll mats are checked off.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CAll mats are tracked.|r"
 		elseif offeredChecked == total and total > 0 then
-			statusBits[#statusBits + 1] = "|cFF74D06CTrade has all queued mats. Accepted trades will carry them forward automatically.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CTrade has all queued mats ready to be tracked when the trade completes.|r"
 		elseif offeredChecked > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26ATrade is moving " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats toward completion.|r"
 		elseif total > 0 then
-			statusBits[#statusBits + 1] = "|cFFFFD26AUse the checklist as the customer hands you materials.|r"
+			statusBits[#statusBits + 1] = "|cFFFFD26AMaterials will flip from ? to a green check as trades are tracked.|r"
 		end
 		frame.Detail.ReadyText:SetText(table.concat(statusBits, "  "))
 	else
-		frame.Detail.AllMatsButton:Hide()
-		frame.Detail.UseTradeButton:Hide()
-		frame.Detail.ClearMatsButton:Hide()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
@@ -2774,9 +2764,14 @@ function Workbench.Refresh()
 		if combinedCount > 0 and combinedCount < requiredCount then
 			materialText = materialText .. " |cFFFFD26A(" .. tostring(combinedCount) .. "/" .. tostring(requiredCount) .. " tracked)|r"
 		end
-		line.Check.OrderId = order.Id
-		line.Check.MaterialKey = material.Key
-		line.Check:SetChecked(combinedCount >= requiredCount)
+		if combinedCount >= requiredCount then
+			line.StatusCheck:Show()
+			line.StatusText:Hide()
+		else
+			line.StatusCheck:Hide()
+			line.StatusText:SetText("?")
+			line.StatusText:Show()
+		end
 		line.Text:SetText(materialText)
 		line:ClearAllPoints()
 		if index == 1 then
