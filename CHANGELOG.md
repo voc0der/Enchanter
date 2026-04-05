@@ -1,3 +1,19 @@
+## [2.1.22] - 2026-04-05
+
+### Fixed
+- Replaced the workbench queue alert's fragile reforging sound with Blizzard UI sounds that exist on Vanilla, TBC, and Wrath client trees, so `Sound` uses a much safer default alert
+- Made the workbench `Sound` toggle play an immediate preview ping and print a warning if none of the alert sound fallbacks can play, so silent clients are much easier to diagnose
+
+### Changed
+- Reworked the workbench lock control into a compact padlock button next to the close `X`, and made it behave like the `Sound` toggle by showing `Lock` / `No Lock` state text directly on the button
+
+## [2.1.19] - 2026-04-05
+
+### Fixed
+- Made recipe scans temporarily clear Blizzard trade-skill and craft filters so `/ec scan` can capture your real enchanting list even when the profession UI is filtered or searched
+- Stopped printing `Scan Completed` when the scan captured zero supported recipes; failed scans now stay on `Scan` with a more accurate warning instead
+- Replaced the workbench `Resize` text button with the native diagonal resize grip so the corner affordance reads like a real window handle again
+
 ## [2.1.18] - 2026-04-05
 
 ### Fixed

@@ -12,9 +12,12 @@ local MAX_FRAME_HEIGHT = 960
 local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
 local QUEUE_ALERT_SOUND_CHANNEL = "Master"
+local LOCK_BUTTON_ICON_TEXTURE = "Interface\\PetBattles\\PetBattle-LockIcon"
 local ORDER_ALERT_SOUND_FALLBACKS = {
-	{ key = "UI_REFORGING_REFORGE", id = 23291 },
-	{ key = "AUCTION_WINDOW_OPEN", id = 5274 },
+	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
+	{ key = "U_CHAT_SCROLL_BUTTON", id = 1115, legacy = "UChatScrollButton" },
+	{ key = "IG_CHARACTER_INFO_OPEN", id = 839, legacy = "igCharacterInfoOpen" },
+	{ key = "AUCTION_WINDOW_OPEN", id = 5274, legacy = "AuctionWindowOpen" },
 }
 local TRADE_CAST_RETRY_DELAYS = { 0.2, 0.5, 1.0 }
 
@@ -1001,13 +1004,30 @@ local function PlayQueueAlertSound()
 		return false
 	end
 
-	for _, candidate in ipairs(ORDER_ALERT_SOUND_FALLBACKS) do
-		local soundKit = candidate.id
-		if type(SOUNDKIT) == "table" and SOUNDKIT[candidate.key] then
-			soundKit = SOUNDKIT[candidate.key]
+	local tried = {}
+	local function RegisterSoundToken(tokens, token)
+		if token == nil then
+			return
 		end
 
-		if soundKit then
+		local tokenKey = type(token) .. ":" .. tostring(token)
+		if tried[tokenKey] then
+			return
+		end
+
+		tried[tokenKey] = true
+		tokens[#tokens + 1] = token
+	end
+
+	for _, candidate in ipairs(ORDER_ALERT_SOUND_FALLBACKS) do
+		local soundTokens = {}
+		if type(SOUNDKIT) == "table" and SOUNDKIT[candidate.key] then
+			RegisterSoundToken(soundTokens, SOUNDKIT[candidate.key])
+		end
+		RegisterSoundToken(soundTokens, candidate.id)
+		RegisterSoundToken(soundTokens, candidate.legacy)
+
+		for _, soundKit in ipairs(soundTokens) do
 			local ok, willPlay = pcall(PlaySound, soundKit, QUEUE_ALERT_SOUND_CHANNEL)
 			if ok and willPlay ~= false then
 				return true
@@ -1018,6 +1038,22 @@ local function PlayQueueAlertSound()
 				return true
 			end
 		end
+	end
+
+	return false
+end
+
+local function PreviewQueueAlertSound()
+	if not IsQueueSoundEnabled() then
+		return false
+	end
+
+	if PlayQueueAlertSound() then
+		return true
+	end
+
+	if print then
+		print("|cFFFF1C1CEnchanter|r Queue alert sound preview failed. If you still want alerts, try reloading and toggling Sound on again.")
 	end
 
 	return false
@@ -2177,6 +2213,22 @@ local function TryCastRecipe(recipeName)
 			return
 		end
 
+		local function GetSelectedFilterIndex(filterValues)
+			local selectedIndex = 0
+
+			for index, selected in pairs(filterValues or {}) do
+				local filterIndex = tonumber(index) or 0
+				if filterIndex > 0 and (selected == 1 or selected == true) then
+					return filterIndex
+				end
+				if filterIndex == 0 and (selected == 1 or selected == true) then
+					selectedIndex = 0
+				end
+			end
+
+			return selectedIndex
+		end
+
 		if snapshot.available ~= nil and TradeSkillOnlyShowMakeable then
 			TradeSkillOnlyShowMakeable(snapshot.available)
 			if TradeSkillFrameAvailableFilterCheckButton and TradeSkillFrameAvailableFilterCheckButton.SetChecked then
@@ -2185,15 +2237,11 @@ local function TryCastRecipe(recipeName)
 		end
 
 		if SetTradeSkillSubClassFilter then
-			for index, selected in pairs(snapshot.subClass or {}) do
-				SetTradeSkillSubClassFilter(index, selected or 0, 1)
-			end
+			SetTradeSkillSubClassFilter(GetSelectedFilterIndex(snapshot.subClass), 1, 1)
 		end
 
 		if SetTradeSkillInvSlotFilter then
-			for index, selected in pairs(snapshot.invSlot or {}) do
-				SetTradeSkillInvSlotFilter(index, selected or 0, 1)
-			end
+			SetTradeSkillInvSlotFilter(GetSelectedFilterIndex(snapshot.invSlot), 1, 1)
 		end
 	end
 
@@ -2406,13 +2454,23 @@ function Workbench.CastRecipe(recipeName)
 	return false
 end
 
-local function UpdateLockButtonText()
+local function UpdateLockButtonVisual()
 	if not Workbench.Frame or not Workbench.Frame.LockButton then
 		return
 	end
 
 	local state = Workbench.EnsureState()
-	Workbench.Frame.LockButton:SetText(state.Locked and "Unlock" or "Lock")
+	local button = Workbench.Frame.LockButton
+	button:SetText(state.Locked and "Lock" or "No Lock")
+
+	if button.Icon then
+		button.Icon:SetTexture(LOCK_BUTTON_ICON_TEXTURE)
+		if state.Locked then
+			button.Icon:SetVertexColor(1, 0.82, 0.18, 1)
+		else
+			button.Icon:SetVertexColor(0.72, 0.72, 0.72, 0.75)
+		end
+	end
 end
 
 local function UpdateSoundButtonText()
@@ -2638,10 +2696,14 @@ function Workbench.CreateFrame()
 		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
 	ApplyElvUISkin(frame.LockButton, "button")
+	frame.LockButton:SetTextInsets(20, 0, 0, 0)
+	frame.LockButton.Icon = frame.LockButton:CreateTexture(nil, "ARTWORK")
+	frame.LockButton.Icon:SetSize(12, 12)
+	frame.LockButton.Icon:SetPoint("LEFT", frame.LockButton, "LEFT", 6, 0)
 	frame.LockButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
-		UpdateLockButtonText()
+		UpdateLockButtonVisual()
 		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
 
@@ -2669,6 +2731,9 @@ function Workbench.CreateFrame()
 		state.SoundEnabled = not state.SoundEnabled
 		UpdateSoundButtonText()
 		WorkbenchDebug("queue sound", state.SoundEnabled and "enabled" or "disabled")
+		if state.SoundEnabled then
+			PreviewQueueAlertSound()
+		end
 	end)
 
 	frame.ScanButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
@@ -2822,12 +2887,19 @@ function Workbench.CreateFrame()
 	frame.Detail.Empty:SetJustifyH("LEFT")
 	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and automatic material tracking.")
 
-	frame.ResizeHandle = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	frame.ResizeHandle:SetSize(54, 18)
-	frame.ResizeHandle:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
-	frame.ResizeHandle:SetText("Resize")
+	frame.ResizeHandle = CreateFrame("Button", nil, frame)
+	frame.ResizeHandle:SetSize(16, 16)
+	frame.ResizeHandle:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 10)
+	if frame.ResizeHandle.SetNormalTexture then
+		frame.ResizeHandle:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+	end
+	if frame.ResizeHandle.SetHighlightTexture then
+		frame.ResizeHandle:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+	end
+	if frame.ResizeHandle.SetPushedTexture then
+		frame.ResizeHandle:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+	end
 	frame.ResizeHandle:RegisterForDrag("LeftButton")
-	ApplyElvUISkin(frame.ResizeHandle, "button")
 	frame.ResizeHandle:SetScript("OnDragStart", function()
 		WorkbenchDebug("resize start")
 		if frame.StartSizing then
@@ -2843,7 +2915,7 @@ function Workbench.CreateFrame()
 
 	frame.QueueCountText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.QueueCountText:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 16, 20)
-	frame.QueueCountText:SetPoint("RIGHT", frame.ResizeHandle, "LEFT", -14, 0)
+	frame.QueueCountText:SetPoint("RIGHT", frame.ResizeHandle, "LEFT", -10, 0)
 	frame.QueueCountText:SetJustifyH("LEFT")
 	frame.QueueCountText:SetText(BuildHeaderStatusText())
 
@@ -2863,7 +2935,7 @@ function Workbench.CreateFrame()
 	end)
 
 	ApplyFrameLayout(frame)
-	UpdateLockButtonText()
+	UpdateLockButtonVisual()
 	UpdateSoundButtonText()
 	UpdateScanButtonText()
 	if not Workbench.EnsureState().Visible then
@@ -2881,7 +2953,7 @@ function Workbench.Refresh()
 
 	frame.QueueCountText:SetText(BuildHeaderStatusText(state))
 	SetRegionShown(frame.EmptyQueueText, #state.Orders == 0)
-	UpdateLockButtonText()
+	UpdateLockButtonVisual()
 	UpdateSoundButtonText()
 	UpdateScanButtonText()
 	ApplyFrameLayout(frame)

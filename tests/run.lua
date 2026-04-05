@@ -83,6 +83,12 @@ local function setup_env(opts)
         frames = {},
         selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
+        trade_skill_available_only = opts.trade_skill_available_only and true or false,
+        trade_skill_subclass_filter = tonumber(opts.trade_skill_subclass_filter) or 0,
+        trade_skill_invslot_filter = tonumber(opts.trade_skill_invslot_filter) or 0,
+        trade_skill_search_text = opts.trade_skill_search_text,
+        trade_skill_item_level_min = tonumber(opts.trade_skill_item_level_min) or 0,
+        trade_skill_item_level_max = tonumber(opts.trade_skill_item_level_max) or 0,
     }
 
     local function new_font_string()
@@ -216,6 +222,12 @@ local function setup_env(opts)
         function frame:GetVerticalScroll() return self.vertical_scroll or 0 end
         function frame:SetText(text) self.text = text end
         function frame:GetText() return self.text end
+        function frame:SetNormalTexture(value) self.normal_texture = value end
+        function frame:GetNormalTexture() return self.normal_texture end
+        function frame:SetHighlightTexture(value) self.highlight_texture = value end
+        function frame:GetHighlightTexture() return self.highlight_texture end
+        function frame:SetPushedTexture(value) self.pushed_texture = value end
+        function frame:GetPushedTexture() return self.pushed_texture end
         function frame:SetAutoFocus(value) self.auto_focus = value and true or false end
         function frame:SetNumeric(value) self.numeric = value and true or false end
         function frame:SetMaxLetters(value) self.max_letters = value end
@@ -302,7 +314,9 @@ local function setup_env(opts)
         }
     end
     _G.SOUNDKIT = {
-        UI_REFORGING_REFORGE = 23291,
+        IG_MAINMENU_OPTION_CHECKBOX_ON = 856,
+        U_CHAT_SCROLL_BUTTON = 1115,
+        IG_CHARACTER_INFO_OPEN = 839,
         AUCTION_WINDOW_OPEN = 5274,
     }
     _G.ERR_TRADE_COMPLETE = "Trade complete."
@@ -315,6 +329,9 @@ local function setup_env(opts)
             sound_kit = sound_kit,
             channel = channel,
         }
+        if opts.play_sound_returns_false then
+            return false
+        end
         return true
     end
     _G.CastSpellByName = function(name)
@@ -435,6 +452,15 @@ local function setup_env(opts)
     _G.TradeSkillFrame = {
         selectedSkill = nil,
     }
+    _G.TradeSearchInputBox = {
+        text = opts.trade_skill_search_text or "",
+    }
+    function _G.TradeSearchInputBox:SetText(value)
+        self.text = value or ""
+    end
+    function _G.TradeSearchInputBox:GetText()
+        return self.text or ""
+    end
     _G.TradeSkillInputBox = {
         value = 1,
     }
@@ -448,13 +474,36 @@ local function setup_env(opts)
         self.cleared_focus = true
     end
     _G.TradeSkillFrameAvailableFilterCheckButton = {
-        checked = false,
+        checked = state.trade_skill_available_only and true or false,
     }
     function _G.TradeSkillFrameAvailableFilterCheckButton:GetChecked()
         return self.checked and true or false
     end
     function _G.TradeSkillFrameAvailableFilterCheckButton:SetChecked(value)
         self.checked = value and true or false
+    end
+    local function get_visible_trade_skills()
+        local visible = {}
+
+        for _, skill in ipairs(state.trade_skills) do
+            local skillType = skill.skill_type or "optimal"
+            local subClassIndex = tonumber(skill.sub_class_index) or 0
+            local invSlotIndex = tonumber(skill.inv_slot_index) or 0
+            local numAvailable = math.max(0, math.floor(tonumber(skill.num_available) or 0))
+            local itemLevel = math.max(0, math.floor(tonumber(skill.item_level) or 0))
+            local searchText = state.trade_skill_search_text
+            local matchesSubClass = state.trade_skill_subclass_filter == 0 or subClassIndex == state.trade_skill_subclass_filter or skillType == "header"
+            local matchesInvSlot = state.trade_skill_invslot_filter == 0 or invSlotIndex == state.trade_skill_invslot_filter or skillType == "header"
+            local matchesAvailable = not state.trade_skill_available_only or skillType == "header" or numAvailable > 0
+            local matchesLevel = (state.trade_skill_item_level_min <= 0 and state.trade_skill_item_level_max <= 0) or skillType == "header" or (itemLevel >= state.trade_skill_item_level_min and itemLevel <= state.trade_skill_item_level_max)
+            local matchesSearch = searchText == nil or searchText == "" or skillType == "header" or string.find(string.lower(skill.name or ""), string.lower(searchText), 1, true) ~= nil
+
+            if matchesSubClass and matchesInvSlot and matchesAvailable and matchesLevel and matchesSearch then
+                visible[#visible + 1] = skill
+            end
+        end
+
+        return visible
     end
     _G.GetTradeSkillSubClasses = function()
         return table.unpack(opts.trade_skill_subclasses or {})
@@ -463,31 +512,72 @@ local function setup_env(opts)
         return table.unpack(opts.trade_skill_invslots or {})
     end
     _G.GetTradeSkillSubClassFilter = function(index)
-        return index == 0 and 1 or 0
+        index = tonumber(index) or 0
+        if state.trade_skill_subclass_filter == 0 then
+            return index == 0 and 1 or 0
+        end
+        return index == state.trade_skill_subclass_filter and 1 or 0
     end
     _G.GetTradeSkillInvSlotFilter = function(index)
-        return index == 0 and 1 or 0
+        index = tonumber(index) or 0
+        if state.trade_skill_invslot_filter == 0 then
+            return index == 0 and 1 or 0
+        end
+        return index == state.trade_skill_invslot_filter and 1 or 0
     end
-    _G.SetTradeSkillSubClassFilter = function() end
-    _G.SetTradeSkillInvSlotFilter = function() end
+    _G.SetTradeSkillSubClassFilter = function(index, on, exclusive)
+        index = tonumber(index) or 0
+        if exclusive == 1 or exclusive == true then
+            state.trade_skill_subclass_filter = (on == 1 or on == true) and index or 0
+        elseif on == 1 or on == true then
+            state.trade_skill_subclass_filter = index
+        elseif state.trade_skill_subclass_filter == index then
+            state.trade_skill_subclass_filter = 0
+        end
+    end
+    _G.SetTradeSkillInvSlotFilter = function(index, on, exclusive)
+        index = tonumber(index) or 0
+        if exclusive == 1 or exclusive == true then
+            state.trade_skill_invslot_filter = (on == 1 or on == true) and index or 0
+        elseif on == 1 or on == true then
+            state.trade_skill_invslot_filter = index
+        elseif state.trade_skill_invslot_filter == index then
+            state.trade_skill_invslot_filter = 0
+        end
+    end
     _G.ExpandTradeSkillSubClass = function(index)
         state.expanded_trade_skill_subclass = index
     end
     _G.TradeSkillOnlyShowMakeable = function(value)
-        _G.TradeSkillFrameAvailableFilterCheckButton.checked = value and true or false
+        state.trade_skill_available_only = value and true or false
+        _G.TradeSkillFrameAvailableFilterCheckButton.checked = state.trade_skill_available_only
+    end
+    _G.SetTradeSkillItemNameFilter = function(value)
+        state.trade_skill_search_text = value
+    end
+    _G.SetTradeSkillItemLevelFilter = function(min_level, max_level)
+        state.trade_skill_item_level_min = tonumber(min_level) or 0
+        state.trade_skill_item_level_max = tonumber(max_level) or 0
+    end
+    _G.TradeSkillFilter_OnTextChanged = function(self)
+        local text = self and self.GetText and self:GetText() or ""
+        state.trade_skill_search_text = text ~= "" and text or ""
+        state.trade_skill_item_level_min = 0
+        state.trade_skill_item_level_max = 0
     end
     _G.GetNumTradeSkills = function()
-        return #state.trade_skills
+        return #get_visible_trade_skills()
     end
     _G.GetTradeSkillInfo = function(index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill then
             return nil
         end
         return skill.name, skill.skill_type
     end
     _G.GetTradeSkillRecipeLink = function(index)
-        return state.trade_skills[index] and state.trade_skills[index].link or nil
+        local skill = get_visible_trade_skills()[index]
+        return skill and skill.link or nil
     end
     _G.SelectTradeSkill = function(index)
         state.selected_trade_skill = index
@@ -505,7 +595,7 @@ local function setup_env(opts)
         }
     end
     _G.GetTradeSkillNumReagents = function(index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return 0
         end
@@ -515,7 +605,7 @@ local function setup_env(opts)
         return #skill.reagents
     end
     _G.GetTradeSkillReagentInfo = function(index, reagent_index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return nil
         end
@@ -529,7 +619,7 @@ local function setup_env(opts)
         return reagent.name, reagent.texture, reagent.count
     end
     _G.GetTradeSkillReagentItemLink = function(index, reagent_index)
-        local skill = state.trade_skills[index]
+        local skill = get_visible_trade_skills()[index]
         if not skill or not skill.reagents then
             return nil
         end
@@ -991,6 +1081,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     local addon = setup_env()
 
     local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
 
     assert_not_nil(frame, "workbench frame should be created when UI helpers exist")
     assert_equal(frame.frame_strata, "DIALOG", "workbench should use dialog strata so it stays interactable")
@@ -1001,26 +1092,62 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+    assert_equal(frame.LockButton.text, "Lock", "lock control should show the current locked state like the sound toggle")
+    assert_equal(frame.LockButton.width, 66, "lock control should stay compact while leaving room for the padlock and state text")
+    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture")
+    assert_true(workbenchState.Locked, "workbench should start locked by default")
+    assert_equal(frame.LockButton.Icon.vertex_color[1], 1, "locked state should render the padlock brightly")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
+
+    frame.LockButton.scripts["OnClick"]()
+
+    assert_true(not workbenchState.Locked, "clicking the padlock should still unlock the workbench")
+    assert_equal(frame.LockButton.text, "No Lock", "unlocked state should read like the sound toggle instead of requiring a tooltip")
+    assert_equal(frame.LockButton.Icon.vertex_color[1], 0.72, "unlocked state should dim the padlock while keeping the button readable")
 end
 
 local function test_workbench_sound_button_defaults_off_and_toggles()
-    local addon = setup_env()
+    local addon, state = setup_env()
 
     local frame = addon.Workbench.CreateFrame()
     local workbenchState = addon.Workbench.EnsureState()
 
     assert_true(not workbenchState.SoundEnabled, "queue sound should default to disabled")
     assert_equal(frame.SoundButton.text, "No Sound", "header button should show No Sound when alerts are disabled")
+    assert_equal(#state.played_sounds, 0, "sound preview should stay idle until the toggle is enabled")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(workbenchState.SoundEnabled, "sound toggle should persist as enabled after clicking")
     assert_equal(frame.SoundButton.text, "Sound", "header button should flip to Sound when alerts are enabled")
+    assert_equal(#state.played_sounds, 1, "enabling queue sounds should play an immediate preview so the user can hear it")
+    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "sound preview should start with the most client-safe Blizzard UI sound")
+    assert_equal(state.played_sound_calls[1].channel, "Master", "sound preview should use the Master channel when available")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(not workbenchState.SoundEnabled, "sound toggle should persist as disabled after a second click")
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
+    assert_equal(#state.played_sounds, 1, "disabling queue sounds should not play any extra preview")
+end
+
+local function test_workbench_sound_button_warns_when_preview_cannot_play()
+    local addon, state = setup_env({
+        play_sound_returns_false = true,
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    frame.SoundButton.scripts["OnClick"]()
+
+    local foundWarning = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Queue alert sound preview failed", 1, true) ~= nil then
+            foundWarning = true
+            break
+        end
+    end
+
+    assert_true(foundWarning, "enabling queue sounds should warn when none of the preview fallbacks can actually play")
 end
 
 local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
@@ -1636,7 +1763,11 @@ local function test_workbench_applies_elvui_skin_when_available()
 
     assert_true(frame.elvui_frame_skinned, "main workbench frame should use the ElvUI frame template when available")
     assert_true(frame.LockButton.elvui_button_skinned, "lock button should use the ElvUI button template when available")
-    assert_true(frame.ResizeHandle.elvui_button_skinned, "resize handle should use the ElvUI button template when available")
+    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock button should keep its padlock icon even when ElvUI is active")
+    assert_equal(frame.ResizeHandle.normal_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up", "resize handle should use the native size-grabber texture instead of a text button")
+    assert_equal(frame.ResizeHandle.highlight_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight", "resize handle should expose the native highlight grip texture")
+    assert_equal(frame.ResizeHandle.pushed_texture, "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down", "resize handle should expose the native pressed grip texture")
+    assert_true(frame.ResizeHandle.text == nil, "resize handle should not render a Resize text label")
 end
 
 local function test_scan_selects_trade_skill_before_capturing_materials()
@@ -1662,6 +1793,68 @@ local function test_scan_selects_trade_skill_before_capturing_materials()
     assert_not_nil(materials, "scan should store a mats snapshot for the selected recipe")
     assert_equal(#materials, 2, "scan should capture reagent data after selecting the recipe")
     assert_equal(materials[1].Name, "Soul Dust", "captured mats should include the first reagent")
+end
+
+local function test_scan_clears_trade_skill_filters_and_restores_them_afterward()
+    local addon = setup_env({
+        trade_skill_available_only = true,
+        trade_skill_subclasses = { "Boots" },
+        trade_skill_invslots = { "Boots" },
+        trade_skill_subclass_filter = 1,
+        trade_skill_invslot_filter = 1,
+        trade_skill_search_text = "zzz",
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                num_available = 0,
+                sub_class_index = 1,
+                inv_slot_index = 1,
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+
+    assert_true(ok, "scan should still succeed after temporarily clearing trade-skill filters")
+    assert_not_nil(EnchanterDBChar.RecipeList["Enchant Boots - Minor Speed"], "scan should capture recipes even when filters would otherwise hide them")
+    assert_true(TradeSkillFrameAvailableFilterCheckButton:GetChecked(), "trade-skill makeable filter should be restored after scanning")
+    assert_equal(GetTradeSkillSubClassFilter(1), 1, "trade-skill subclass filter should be restored after scanning")
+    assert_equal(GetTradeSkillInvSlotFilter(1), 1, "trade-skill inventory-slot filter should be restored after scanning")
+    assert_equal(TradeSearchInputBox:GetText(), "zzz", "trade-skill search text should be restored after scanning")
+end
+
+local function test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
+    local addon, state = setup_env({
+        trade_skills = {
+            {
+                name = "Completely Unknown Recipe",
+                link = "spell:99999",
+            },
+        },
+    })
+
+    local ok = addon.RunRecipeScan()
+
+    assert_true(not ok, "scan should fail when no supported enchanting recipes were captured")
+    assert_true(addon.NeedsRecipeScan(), "missing supported recipes should keep the scan-required state")
+
+    local sawSuccess = false
+    local sawFailure = false
+    for _, line in ipairs(state.prints) do
+        if line == "Scan Completed" then
+            sawSuccess = true
+        end
+        if string.find(line, "Scan found no supported enchanting recipes", 1, true) ~= nil then
+            sawFailure = true
+        end
+    end
+
+    assert_true(not sawSuccess, "scan should not print a success message when zero supported recipes were captured")
+    assert_true(sawFailure, "scan should explain why it stayed in the scan-required state")
 end
 
 local function test_workbench_timestamps_follow_clock_style()
@@ -1733,8 +1926,8 @@ local function test_workbench_queue_alert_only_plays_for_new_orders_when_enabled
     })
 
     assert_equal(#state.played_sounds, 2, "queue alert should only play for newly queued customers")
-    assert_equal(state.played_sounds[1], SOUNDKIT.UI_REFORGING_REFORGE, "queue alert should use the enchanting-themed WoW sound first")
-    assert_equal(state.played_sounds[2], SOUNDKIT.UI_REFORGING_REFORGE, "each new queued customer should reuse the same alert sound")
+    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "queue alert should use a Blizzard UI sound that exists on Classic and TBC clients")
+    assert_equal(state.played_sounds[2], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "each new queued customer should reuse the same first-choice alert sound")
     assert_equal(state.played_sound_calls[1].channel, "Master", "queue alerts should play on the Master channel so they can be heard with muted SFX")
     assert_equal(state.played_sound_calls[2].channel, "Master", "each new queue alert should keep using the Master channel")
 end
@@ -2386,6 +2579,7 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_sound_button_warns_when_preview_cannot_play()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
 test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
@@ -2408,6 +2602,8 @@ test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
+test_scan_clears_trade_skill_filters_and_restores_them_afterward()
+test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
