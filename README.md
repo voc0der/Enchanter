@@ -67,7 +67,6 @@ Current version: `2.1.15`
 
 Development and contribution notes are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 Release workflow notes are in [`RELEASING.md`](RELEASING.md).
-Fork-specific migration notes are in [`TBC_ANNIVERSARY_NOTES.md`](TBC_ANNIVERSARY_NOTES.md).
 
 ## Scope
 
