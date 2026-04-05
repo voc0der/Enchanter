@@ -1451,6 +1451,46 @@ local function test_workbench_accepted_trade_commits_progress_and_waits_for_manu
     assert_nil(addon.Workbench.GetOrderById(order.Id), "manual completion should remove the finished zero-tip order")
 end
 
+local function test_workbench_persists_trade_progress_after_accept_flags_reset_during_close()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-AcceptReset")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-AcceptReset")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.SetTradeAcceptState(0, 0)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderById(order.Id)
+    local checked, totalMats = addon.Workbench.GetMaterialProgress(order)
+    local verified, totalRecipes = addon.Workbench.GetRecipeVerificationProgress(order)
+
+    assert_equal(checked, 2, "a successful trade should keep received mats recorded even if the client clears accept flags before close")
+    assert_equal(totalMats, 2, "material totals should stay intact after the close-time accept reset")
+    assert_equal(verified, 1, "a detected in-trade enchant should still persist when accept flags reset during the close sequence")
+    assert_equal(totalRecipes, 1, "recipe totals should stay intact after the close-time accept reset")
+end
+
 local function test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
     local addon, state = setup_env({
         char_db = {
@@ -2380,6 +2420,30 @@ local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
     assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "auto-verified recipes should hide the question-mark indicator")
 end
 
+local function test_trade_detected_enchant_shows_as_checked_before_trade_closes()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-LiveEnchant")
+
+    addon.Workbench.BeginTrade("Buyer-LiveEnchant")
+    addon.Workbench.SyncActiveTrade()
+
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "a trade-detected enchant should flip the recipe row to a green check before the trade closes")
+    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "a trade-detected enchant should hide the question mark immediately")
+    assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should reflect the live verified state while the trade is still open")
+end
+
 local function test_trade_offer_marks_live_material_progress()
     local addon = setup_env({
         char_db = {
@@ -2667,6 +2731,7 @@ test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
 test_trade_completion_message_falls_back_to_recorded_cast_when_enchant_text_never_appears()
 test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+test_workbench_persists_trade_progress_after_accept_flags_reset_during_close()
 test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
 test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
 test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
@@ -2701,6 +2766,7 @@ test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
+test_trade_detected_enchant_shows_as_checked_before_trade_closes()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
 test_trade_material_helper_copies_live_offer_into_recorded_progress()
