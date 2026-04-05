@@ -231,7 +231,9 @@ local function setup_env(opts)
         function frame:SetAutoFocus(value) self.auto_focus = value and true or false end
         function frame:SetNumeric(value) self.numeric = value and true or false end
         function frame:SetMaxLetters(value) self.max_letters = value end
-        function frame:SetTextInsets(...) self.text_insets = { ... } end
+        if not opts.omit_text_insets then
+            function frame:SetTextInsets(...) self.text_insets = { ... } end
+        end
         function frame:ClearFocus() self.cleared_focus = true end
         function frame:HighlightText(...) self.highlight = { ... } end
         function frame:GetNumber() return tonumber(self.text) or 0 end
@@ -1148,6 +1150,23 @@ local function test_workbench_sound_button_warns_when_preview_cannot_play()
     end
 
     assert_true(foundWarning, "enabling queue sounds should warn when none of the preview fallbacks can actually play")
+end
+
+local function test_workbench_lock_button_survives_clients_without_text_insets()
+    local addon = setup_env({
+        omit_text_insets = true,
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_not_nil(frame, "workbench frame should still load when buttons do not expose SetTextInsets")
+    assert_equal(frame.LockButton.text, "   Lock", "lock control should fall back to a padded label when text insets are unavailable")
+
+    frame.LockButton.scripts["OnClick"]()
+
+    assert_true(not workbenchState.Locked, "lock toggle should still work without text inset support")
+    assert_equal(frame.LockButton.text, "   No Lock", "unlocked fallback label should remain readable without text inset support")
 end
 
 local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
@@ -2580,6 +2599,7 @@ test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
 test_workbench_sound_button_warns_when_preview_cannot_play()
+test_workbench_lock_button_survives_clients_without_text_insets()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
 test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
