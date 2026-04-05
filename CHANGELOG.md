@@ -1,3 +1,16 @@
+## [2.1.8] - 2026-04-05
+
+### Added
+- Added a workbench header toggle that switches between `No Sound` and `Sound`, with queue alerts disabled by default
+- Added a WoW-native queue alert sound for newly queued customers so fresh orders are easier to notice without reusing the normal whisper alert
+- Added a verified-order `Complete` flow with a tip entry box plus persisted workbench totals for completed orders and tips earned
+
+### Changed
+- The workbench header now keeps a running `orders / done / tips` summary, and `Clear` resets both the queue and those totals
+
+### Fixed
+- Reworked the workbench `Cast` flow so it selects the exact trade-skill recipe, uses the Blizzard create call shape, and retries longer after opening enchanting
+
 ## [2.1.7] - 2026-04-04
 
 ### Fixed

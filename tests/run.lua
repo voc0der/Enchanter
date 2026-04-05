@@ -64,6 +64,8 @@ local function setup_env(opts)
     local state = {
         invites = {},
         prints = {},
+        played_sounds = {},
+        do_trade_skill_calls = {},
         slash = nil,
         timer_delays = {},
         timer_callbacks = {},
@@ -181,8 +183,18 @@ local function setup_env(opts)
         function frame:GetVerticalScroll() return self.vertical_scroll or 0 end
         function frame:SetText(text) self.text = text end
         function frame:GetText() return self.text end
+        function frame:SetAutoFocus(value) self.auto_focus = value and true or false end
+        function frame:SetNumeric(value) self.numeric = value and true or false end
+        function frame:SetMaxLetters(value) self.max_letters = value end
+        function frame:SetTextInsets(...) self.text_insets = { ... } end
+        function frame:ClearFocus() self.cleared_focus = true end
+        function frame:HighlightText(...) self.highlight = { ... } end
+        function frame:GetNumber() return tonumber(self.text) or 0 end
         function frame:SetChecked(value) self.checked = value and true or false end
         function frame:GetChecked() return self.checked end
+        function frame:Enable() self.enabled = true end
+        function frame:Disable() self.enabled = false end
+        function frame:IsEnabled() return self.enabled ~= false end
         function frame:Show() self.shown = true end
         function frame:Hide() self.shown = false end
         function frame:IsShown() return self.shown end
@@ -256,8 +268,60 @@ local function setup_env(opts)
             target = target,
         }
     end
+    _G.SOUNDKIT = {
+        UI_REFORGING_REFORGE = 23291,
+        AUCTION_WINDOW_OPEN = 5274,
+    }
+    _G.PlaySound = function(sound_kit)
+        state.played_sounds[#state.played_sounds + 1] = sound_kit
+        return true
+    end
     _G.CastSpellByName = function(name)
         state.last_cast = name
+    end
+    _G.TradeSkillFrame = {
+        selectedSkill = nil,
+    }
+    _G.TradeSkillInputBox = {
+        value = 1,
+    }
+    function _G.TradeSkillInputBox:SetNumber(value)
+        self.value = tonumber(value) or 1
+    end
+    function _G.TradeSkillInputBox:GetNumber()
+        return self.value or 1
+    end
+    function _G.TradeSkillInputBox:ClearFocus()
+        self.cleared_focus = true
+    end
+    _G.TradeSkillFrameAvailableFilterCheckButton = {
+        checked = false,
+    }
+    function _G.TradeSkillFrameAvailableFilterCheckButton:GetChecked()
+        return self.checked and true or false
+    end
+    function _G.TradeSkillFrameAvailableFilterCheckButton:SetChecked(value)
+        self.checked = value and true or false
+    end
+    _G.GetTradeSkillSubClasses = function()
+        return table.unpack(opts.trade_skill_subclasses or {})
+    end
+    _G.GetTradeSkillInvSlots = function()
+        return table.unpack(opts.trade_skill_invslots or {})
+    end
+    _G.GetTradeSkillSubClassFilter = function(index)
+        return index == 0 and 1 or 0
+    end
+    _G.GetTradeSkillInvSlotFilter = function(index)
+        return index == 0 and 1 or 0
+    end
+    _G.SetTradeSkillSubClassFilter = function() end
+    _G.SetTradeSkillInvSlotFilter = function() end
+    _G.ExpandTradeSkillSubClass = function(index)
+        state.expanded_trade_skill_subclass = index
+    end
+    _G.TradeSkillOnlyShowMakeable = function(value)
+        _G.TradeSkillFrameAvailableFilterCheckButton.checked = value and true or false
     end
     _G.GetNumTradeSkills = function()
         return #state.trade_skills
@@ -274,6 +338,18 @@ local function setup_env(opts)
     end
     _G.SelectTradeSkill = function(index)
         state.selected_trade_skill = index
+        _G.TradeSkillFrame.selectedSkill = index
+    end
+    _G.DoTradeSkill = function(index, count)
+        state.do_trade_skill_calls[#state.do_trade_skill_calls + 1] = {
+            index = index,
+            count = count,
+            selected = state.selected_trade_skill,
+        }
+        state.last_do_trade_skill = {
+            index = index,
+            count = count,
+        }
     end
     _G.GetTradeSkillNumReagents = function(index)
         local skill = state.trade_skills[index]
@@ -610,9 +686,62 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
     assert_equal(frame.ClearButton.parent, frame.Header, "clear button should also live on the header so it stays clickable")
+    assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
+end
+
+local function test_workbench_sound_button_defaults_off_and_toggles()
+    local addon = setup_env()
+
+    local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_true(not workbenchState.SoundEnabled, "queue sound should default to disabled")
+    assert_equal(frame.SoundButton.text, "No Sound", "header button should show No Sound when alerts are disabled")
+
+    frame.SoundButton.scripts["OnClick"]()
+    assert_true(workbenchState.SoundEnabled, "sound toggle should persist as enabled after clicking")
+    assert_equal(frame.SoundButton.text, "Sound", "header button should flip to Sound when alerts are enabled")
+
+    frame.SoundButton.scripts["OnClick"]()
+    assert_true(not workbenchState.SoundEnabled, "sound toggle should persist as disabled after a second click")
+    assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
+end
+
+local function test_workbench_complete_order_tracks_tip_totals_and_clear_resets_them()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Tip")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+    frame.Detail.TipInput:SetText("12g 34s")
+    frame.Detail.TipInput.scripts["OnTextChanged"](frame.Detail.TipInput)
+    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
+
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_equal(workbenchState.CompletedOrders, 1, "completing a verified order should increment the running completed count")
+    assert_equal(workbenchState.CompletedTipsCopper, 123400, "completed orders should add the parsed tip to the running total")
+    assert_equal(#workbenchState.Orders, 0, "completed orders should leave the active queue")
+    assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "header summary should show the completed count")
+    assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "header summary should show the running tips total")
+
+    frame.ClearButton.scripts["OnClick"]()
+
+    assert_equal(workbenchState.CompletedOrders, 0, "clear should reset the running completed count")
+    assert_equal(workbenchState.CompletedTipsCopper, 0, "clear should reset the running tips total")
+    assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "header summary should return to zero after clear")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -812,6 +941,51 @@ local function test_workbench_timestamps_honor_military_and_local_clock_settings
 
     assert_not_nil(order, "queued order should exist for local clock checks")
     assert_equal(order.CreatedAt, "06:05", "timestamps should honor local clock and military time settings when enabled")
+end
+
+local function test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
+    local addon, state = setup_env({
+        char_db = {
+            Workbench = {
+                SoundEnabled = true,
+            },
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Sound", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+    addon.Workbench.AddOrUpdateOrder("Buyer-Sound", "LF mongoose again", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+        ["Enchant Boots - Minor Speed"] = "minor speed",
+    })
+    addon.Workbench.AddOrUpdateOrder("Buyer-Sound-Two", "LF speed pst", {
+        ["Enchant Boots - Minor Speed"] = "minor speed",
+    })
+
+    assert_equal(#state.played_sounds, 2, "queue alert should only play for newly queued customers")
+    assert_equal(state.played_sounds[1], SOUNDKIT.UI_REFORGING_REFORGE, "queue alert should use the enchanting-themed WoW sound first")
+    assert_equal(state.played_sounds[2], SOUNDKIT.UI_REFORGING_REFORGE, "each new queued customer should reuse the same alert sound")
+end
+
+local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
+    local addon, state = setup_env({
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+            },
+        },
+    })
+
+    local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
+
+    assert_true(casted, "cast should start immediately when the trade skill recipe is already visible")
+    assert_equal(state.selected_trade_skill, 1, "cast should explicitly select the matched trade skill before creating it")
+    assert_equal(TradeSkillFrame.selectedSkill, 1, "cast should keep TradeSkillFrame.selectedSkill aligned with the chosen recipe")
+    assert_equal(TradeSkillInputBox.value, 1, "cast should reset the trade skill repeat count to one")
+    assert_equal(state.last_do_trade_skill.index, 1, "cast should create the selected trade skill")
+    assert_equal(state.last_do_trade_skill.count, 1, "cast should use the Blizzard create count instead of omitting it")
 end
 
 local function test_workbench_legacy_timestamps_are_reformatted_on_load()
@@ -1323,6 +1497,8 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_complete_order_tracks_tip_totals_and_clear_resets_them()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
@@ -1332,6 +1508,8 @@ test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
+test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
+test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_trade_cast_keeps_order_until_verified()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
