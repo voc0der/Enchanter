@@ -1,3 +1,9 @@
+## [2.1.17] - 2026-04-05
+
+### Added
+- Added `Warn if Incomplete Order`, enabled by default, so recipe whispers can prepend `matched/requested` counts like `3/4` before the links when a request includes enchants you cannot cover
+- Added `Invite Incomplete Order`, enabled by default, so partial matches can be left unflagged and unhandled automatically when you only want to auto-respond to fully covered orders
+
 ## [2.1.16] - 2026-04-05
 
 ### Fixed

@@ -4,6 +4,7 @@ Enchanter_Addon = EC
 EC.Initalized = false
 EC.PlayerList = {}
 EC.LfRecipeList = {}
+EC.LfRequestedRecipeCounts = {}
 EC.SessionGold = 0
 EC.DefaultMsg = "I can do "
 EC.DefaultLfWhisperMsg = "What you looking for?"
@@ -16,6 +17,8 @@ EC.PrefixTagsCompiled = {}
 EC.BlacklistCompiled = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
+EC.RequestRecipeTagsMap = {}
+EC.RequestRecipeTagList = {}
 EC.PendingInvites = {}
 EC.SimulatedPlayers = {}
 EC.Simulation = EC.Simulation or {}
@@ -213,6 +216,25 @@ local function TrimText(value)
 		return ""
 	end
 	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function SplitStoredCSV(value)
+	local out = {}
+	if not value or value == "" then
+		return out
+	end
+
+	value = tostring(value):lower()
+
+	if EC and EC.Tool and EC.Tool.Split then
+		return EC.Tool.Split(value, ",")
+	end
+
+	for token in string.gmatch(value, "([^,]+)") do
+		out[#out + 1] = token
+	end
+
+	return out
 end
 
 local function Now()
@@ -472,18 +494,92 @@ function EC.DebugPrint(...)
 	print("Debug mode:", table.concat(parts, " "))
 end
 
-function EC.BuildRecipeWhisper(recipeNames)
-	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
+local function CountRecipeEntries(recipeMap)
+	local count = 0
+	if type(recipeMap) ~= "table" then
+		return 0
+	end
 
-	for _, recipeName in ipairs(EC.GetMatchedRecipeNames(recipeNames)) do
+	for _ in pairs(recipeMap) do
+		count = count + 1
+	end
+
+	return count
+end
+
+local function AddRecipeTagsToLookup(tagMap, tagList, recipeName, tags)
+	if type(recipeName) ~= "string" or recipeName == "" or type(tags) ~= "table" then
+		return
+	end
+
+	for _, tag in ipairs(tags) do
+		if tag and tag ~= "" then
+			tagMap[tag] = recipeName
+			tagList[#tagList + 1] = tag
+		end
+	end
+end
+
+local function GetConfiguredRecipeTags(recipeName)
+	local customText = EC.DB and EC.DB.Custom and EC.DB.Custom[recipeName]
+	if customText ~= nil and customText ~= "" then
+		return SplitStoredCSV(customText)
+	end
+
+	if EC.RecipeTags and EC.RecipeTags["enGB"] then
+		return EC.RecipeTags["enGB"][recipeName]
+	end
+
+	return nil
+end
+
+local function MatchRecipeTags(parsedMessage, tagList, tagMap)
+	local matches = {}
+
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return matches
+	end
+
+	for _, tag in ipairs(tagList or {}) do
+		if string.find(parsedMessage, tag, 1, true) then
+			local recipeName = tagMap[tag]
+			if recipeName then
+				matches[recipeName] = tag
+			end
+		end
+	end
+
+	return matches
+end
+
+local function GetRecipeRequestDetails(parsedMessage)
+	local matchedRecipeMap = MatchRecipeTags(parsedMessage, EC.RecipeTagList, EC.RecipeTagsMap)
+	local requestedRecipeMap = MatchRecipeTags(parsedMessage, EC.RequestRecipeTagList, EC.RequestRecipeTagsMap)
+	local matchedCount = CountRecipeEntries(matchedRecipeMap)
+	local requestedCount = math.max(matchedCount, CountRecipeEntries(requestedRecipeMap))
+
+	return matchedRecipeMap, matchedCount, requestedCount
+end
+
+function EC.BuildRecipeWhisper(recipeNames, requestedRecipeCount)
+	local matchedRecipeNames = EC.GetMatchedRecipeNames(recipeNames)
+	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
+	local matchedCount = #matchedRecipeNames
+	local requestedCount = math.max(matchedCount, math.floor(tonumber(requestedRecipeCount) or 0))
+
+	if EC.DB.WarnIncompleteOrder ~= false and requestedCount > matchedCount then
+		msg = msg .. matchedCount .. "/" .. requestedCount .. " "
+	end
+
+	for _, recipeName in ipairs(matchedRecipeNames) do
 		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
 	end
 
 	return msg
 end
 
-function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel)
-	local msg = EC.BuildRecipeWhisper(recipeNames)
+function EC.SendRecipeWhisperTo(name, recipeNames, sourceLabel, requestedRecipeCount)
+	local msg = EC.BuildRecipeWhisper(recipeNames, requestedRecipeCount)
 
 	if IsSimulatedCustomer(name) then
 		EC.DebugPrint((sourceLabel or "simulated whisper") .. " to " .. name .. ": " .. msg)
@@ -590,6 +686,8 @@ local function EnsureSavedVariables()
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
+	if EC.DB.WarnIncompleteOrder == nil then EC.DB.WarnIncompleteOrder = true end
+	if EC.DB.InviteIncompleteOrder == nil then EC.DB.InviteIncompleteOrder = true end
 	if EC.DB.NetherRecipes == nil then EC.DB.NetherRecipes = false end
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
 	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
@@ -607,6 +705,8 @@ function EC.RefreshCompiledData()
 	EC.BlacklistCompiled = {}
 	EC.RecipeTagsMap = {}
 	EC.RecipeTagList = {}
+	EC.RequestRecipeTagsMap = {}
+	EC.RequestRecipeTagList = {}
 
 	for _, value in ipairs(EC.PrefixTags or {}) do
 		if value and value ~= "" then
@@ -620,13 +720,12 @@ function EC.RefreshCompiledData()
 		end
 	end
 
+	for recipeName in pairs(EC.RecipeTags and EC.RecipeTags["enGB"] or {}) do
+		AddRecipeTagsToLookup(EC.RequestRecipeTagsMap, EC.RequestRecipeTagList, recipeName, GetConfiguredRecipeTags(recipeName))
+	end
+
 	for recipeName, tags in pairs(EC.DBChar.RecipeList or {}) do
-		for _, tag in ipairs(tags) do
-			if tag and tag ~= "" then
-				EC.RecipeTagsMap[tag] = recipeName
-				table.insert(EC.RecipeTagList, tag)
-			end
-		end
+		AddRecipeTagsToLookup(EC.RecipeTagsMap, EC.RecipeTagList, recipeName, tags)
 	end
 
 	if EC.Workbench and EC.Workbench.Refresh then
@@ -879,12 +978,14 @@ end
 
 function EC.SendMsg(name)
 	if not EC.LfRecipeList[name] then
+		EC.LfRequestedRecipeCounts[name] = nil
 		return
 	end
 
-	EC.SendRecipeWhisperTo(name, EC.LfRecipeList[name], "would whisper")
+	EC.SendRecipeWhisperTo(name, EC.LfRecipeList[name], "would whisper", EC.LfRequestedRecipeCounts[name])
 
 	EC.LfRecipeList[name] = nil
+	EC.LfRequestedRecipeCounts[name] = nil
 end
 
 function EC.ParseMessage(msg, name)
@@ -915,45 +1016,50 @@ function EC.ParseMessage(msg, name)
 		end
 	end
 
-	local matchedRecipes = false
-	for _, tag in ipairs(EC.RecipeTagList) do
-		if string.find(parsedMessage, tag, 1, true) then
-			local recipeName = EC.RecipeTagsMap[tag]
-			if recipeName then
-				EC.LfRecipeList[name] = EC.LfRecipeList[name] or {}
-				EC.LfRecipeList[name][recipeName] = tag
-				matchedRecipes = true
-				if EC.DBChar.Debug then
-					EC.DebugPrint("User should be invited for msg:", msg)
-					EC.DebugPrint("Due to tag:", tag, "-> recipe", tostring(recipeName))
-				end
-			end
-		end
-	end
+	local matchedRecipeMap, matchedRecipeCount, requestedRecipeCount = GetRecipeRequestDetails(parsedMessage)
+	local matchedRecipes = matchedRecipeCount > 0
 
 	if matchedRecipes then
+		local isIncompleteOrder = requestedRecipeCount > matchedRecipeCount
+
+		if EC.DBChar.Debug then
+			EC.DebugPrint("User should be invited for msg:", msg)
+			EC.DebugPrint("Matched", tostring(matchedRecipeCount), "recipe(s) out of", tostring(requestedRecipeCount), "requested")
+		end
+
 		if EC.Workbench and EC.Workbench.AddOrUpdateOrder then
-			EC.Workbench.AddOrUpdateOrder(name, msg, EC.LfRecipeList[name])
+			EC.Workbench.AddOrUpdateOrder(name, msg, matchedRecipeMap, requestedRecipeCount)
 		end
 
 		if EC.PlayerList[name] == nil then
-			EC.PlayerList[name] = 1
-
-			if EC.DBChar.Debug then
-				EC.DebugPrint("suppressed invite/whisper to " .. name)
-				EC.SendMsg(name)
+			if isIncompleteOrder and EC.DB.InviteIncompleteOrder == false then
+				EC.LfRecipeList[name] = nil
+				EC.LfRequestedRecipeCounts[name] = nil
+				if EC.DBChar.Debug then
+					EC.DebugPrint("left incomplete order unflagged for " .. name .. " (" .. tostring(matchedRecipeCount) .. "/" .. tostring(requestedRecipeCount) .. ")")
+				end
 			else
-				if EC.DB.AutoInvite then
-				After(EC.DB.InviteTimeDelay, function()
-						EC.InviteCustomer(name)
+				EC.LfRecipeList[name] = matchedRecipeMap
+				EC.LfRequestedRecipeCounts[name] = requestedRecipeCount
+				EC.PlayerList[name] = 1
+
+				if EC.DBChar.Debug then
+					EC.DebugPrint("suppressed invite/whisper to " .. name)
+					EC.SendMsg(name)
+				else
+					if EC.DB.AutoInvite then
+						After(EC.DB.InviteTimeDelay, function()
+							EC.InviteCustomer(name)
+						end)
+					end
+					After(EC.DB.WhisperTimeDelay, function()
+						EC.SendMsg(name)
 					end)
 				end
-				After(EC.DB.WhisperTimeDelay, function()
-					EC.SendMsg(name)
-				end)
 			end
 		else
 			EC.LfRecipeList[name] = nil
+			EC.LfRequestedRecipeCounts[name] = nil
 		end
 		return
 	end
@@ -1014,6 +1120,9 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 end
 
 local function Event_CHAT_MSG_SYSTEM(msg)
+	if msg == ERR_TRADE_COMPLETE and EC.Workbench and EC.Workbench.MarkTradeCompleted then
+		EC.Workbench.MarkTradeCompleted()
+	end
 	EC.HandleInviteFailureMessage(msg)
 end
 

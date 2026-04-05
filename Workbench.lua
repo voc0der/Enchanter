@@ -580,6 +580,7 @@ local function EnsureOrderFields(order)
 	order.MaterialCounts = order.MaterialCounts or {}
 	order.MaterialState = order.MaterialState or {}
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
+	order.RequestedRecipeCount = math.max(#order.Recipes, math.floor(tonumber(order.RequestedRecipeCount) or 0))
 	order.Message = order.Message or ""
 	order.PendingTipText = order.PendingTipText or ""
 	order.NoTipConfirmed = order.NoTipConfirmed and true or false
@@ -1420,6 +1421,27 @@ local function TrackTradeAppliedRecipe(order, activeTrade)
 	return true
 end
 
+local function TrackCompletedTradeCast(order, activeTrade)
+	local recipeName
+
+	if not order or not activeTrade or not activeTrade.CompletedSignal then
+		return false
+	end
+
+	recipeName = activeTrade.CastedRecipeName
+	if not recipeName or recipeName == "" or not OrderHasRecipe(order, recipeName) then
+		return false
+	end
+
+	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
+	if not activeTrade.AppliedRecipes[recipeName] then
+		activeTrade.AppliedRecipes[recipeName] = true
+		WorkbenchDebug("trade completion fell back to the recorded cast for", recipeName, "on", order.Customer)
+	end
+	activeTrade.CastedRecipeName = nil
+	return true
+end
+
 local function CommitTradeState(order, activeTrade)
 	local appliedRecipeCount = 0
 	local appliedMaterialCount = 0
@@ -1726,6 +1748,7 @@ function Workbench.MarkTradeCompleted()
 	local order = GetOrderForActiveTrade(activeTrade)
 	if order then
 		TrackTradeAppliedRecipe(order, activeTrade)
+		TrackCompletedTradeCast(order, activeTrade)
 	end
 	SnapshotTradeCompletionState(activeTrade)
 	WorkbenchDebug("trade completion confirmed by UI_INFO_MESSAGE")
@@ -1806,6 +1829,7 @@ function Workbench.FinishTrade(goldDelta)
 
 	TrackTradeAppliedRecipe(order, activeTrade)
 	SnapshotTradeCompletionState(activeTrade)
+	TrackCompletedTradeCast(order, activeTrade)
 
 	tradeTipCopper = math.max(tradeTipCopper, math.max(
 		math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)),
@@ -2037,14 +2061,14 @@ function Workbench.WhisperOrder(orderId)
 
 	WorkbenchDebug("manual whisper for", order.Customer)
 	if EC and EC.SendRecipeWhisperTo then
-		EC.SendRecipeWhisperTo(order.Customer, order.Recipes, "[Workbench] whisper")
+		EC.SendRecipeWhisperTo(order.Customer, order.Recipes, "[Workbench] whisper", order.RequestedRecipeCount)
 		return true
 	end
 
 	return false
 end
 
-function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
+function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecipeCount)
 	local state = Workbench.EnsureState()
 	local recipeNames = CopyRecipeNames(recipeMap)
 	local order
@@ -2083,6 +2107,7 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap)
 	end
 
 	table.sort(order.Recipes)
+	order.RequestedRecipeCount = math.max(#order.Recipes, math.floor(tonumber(requestedRecipeCount) or 0))
 	order.Message = TrimText(message)
 	order.UpdatedAt = TimestampText()
 

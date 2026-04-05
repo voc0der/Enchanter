@@ -744,6 +744,13 @@ local function test_options_update_rebuilds_compiled_tags()
     assert_equal(addon.DBChar.RecipeList["Enchant Weapon - Mongoose"][2], "weapon mongoose", "custom recipe tags should replace stale tags")
 end
 
+local function test_incomplete_order_settings_default_on()
+    local addon = setup_env()
+
+    assert_true(addon.DB.WarnIncompleteOrder, "incomplete-order warnings should default to enabled")
+    assert_true(addon.DB.InviteIncompleteOrder, "incomplete-order invites should default to enabled")
+end
+
 local function test_parse_message_invites_once_and_whispers_link()
     local addon, state = setup_env({
         db = {
@@ -773,6 +780,111 @@ local function test_parse_message_invites_once_and_whispers_link()
     assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "whisper should include recipe link text")
     assert_equal(state.timer_delays[1], 2, "invite delay should flow through the timer helper")
     assert_equal(state.timer_delays[2], 1, "whisper delay should flow through the timer helper")
+end
+
+local function test_parse_message_warns_for_incomplete_order()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "Sending inv, can do ",
+            WarnIncompleteOrder = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+                ["Enchant Cloak - Dodge"] = { "dodge" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+                ["Enchant Cloak - Dodge"] = "[Enchant Cloak - Dodge] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose boar dodge savagery pst", "Buyer-Incomplete")
+
+    assert_equal(#state.invites, 1, "incomplete orders should still invite by default")
+    assert_equal(#state.whispers, 1, "incomplete orders should still whisper by default")
+    assert_true(string.find(state.whispers[1].message, "Sending inv, can do 3/4 ", 1, true) ~= nil, "whisper should include the matched/requested recipe count when incomplete warnings are enabled")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "incomplete-order whisper should still include recipe links")
+end
+
+local function test_parse_message_skips_incomplete_warning_when_disabled()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "Sending inv, can do ",
+            WarnIncompleteOrder = false,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose boar savagery pst", "Buyer-NoWarn")
+
+    assert_equal(#state.whispers, 1, "incomplete orders should still whisper when only the warning text is disabled")
+    assert_true(string.find(state.whispers[1].message, "2/3", 1, true) == nil, "whisper should omit the matched/requested count when incomplete warnings are disabled")
+end
+
+local function test_incomplete_order_can_be_left_unflagged_until_corrected()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "Sending inv, can do ",
+            WarnIncompleteOrder = true,
+            InviteIncompleteOrder = false,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose savagery pst", "Buyer-Hold")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Hold")
+
+    assert_equal(#state.invites, 0, "incomplete orders should skip auto-invite when the option is disabled")
+    assert_equal(#state.whispers, 0, "incomplete orders should skip auto-whisper when the option is disabled")
+    assert_nil(addon.PlayerList["Buyer-Hold"], "skipped incomplete orders should not trip the anti-spam player gate")
+    assert_not_nil(order, "incomplete orders should still be added to the workbench queue")
+    assert_equal(order.RequestedRecipeCount, 2, "workbench should remember the full requested recipe count for manual follow-up")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "repeated incomplete requests should still reuse the same queued order")
+
+    addon.Workbench.WhisperOrder(order.Id)
+
+    assert_equal(#state.whispers, 1, "manual workbench whisper should still be available for incomplete orders")
+    assert_true(string.find(state.whispers[1].message, "1/2", 1, true) ~= nil, "manual workbench whisper should include the incomplete-order warning")
+
+    addon.ParseMessage("LF mongoose pst", "Buyer-Hold")
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-Hold")
+
+    assert_equal(#state.invites, 1, "a later corrected request should invite once the order is complete")
+    assert_equal(#state.whispers, 2, "a later corrected request should whisper once the anti-spam gate stays open")
+    assert_equal(addon.PlayerList["Buyer-Hold"], 1, "completed follow-up requests should still be flagged after handling")
+    assert_equal(order.RequestedRecipeCount, 1, "latest complete requests should clear the stored incomplete count when the queued recipes still match")
+    assert_true(string.find(state.whispers[2].message, "1/2", 1, true) == nil, "corrected complete requests should not keep the stale incomplete warning")
 end
 
 local function test_generic_lf_enchanter_whisper()
@@ -1091,6 +1203,34 @@ local function test_trade_enchant_slot_requires_real_enchantment_before_auto_ver
     local verified, total = addon.Workbench.GetRecipeVerificationProgress(addon.Workbench.GetOrderById(order.Id))
     assert_equal(verified, 0, "an item merely sitting in the enchant slot should not auto-verify the recipe")
     assert_equal(total, 1, "the order should still track the single requested recipe")
+end
+
+local function test_trade_completion_message_falls_back_to_recorded_cast_when_enchant_text_never_appears()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-CompletionFallback")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-CompletionFallback")
+    addon.Workbench.NoteRecipeCast("Enchant Boots - Minor Speed")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.MarkTradeCompleted()
+    addon.Workbench.FinishTrade(0)
+
+    local verified, total = addon.Workbench.GetRecipeVerificationProgress(addon.Workbench.GetOrderById(order.Id))
+    assert_equal(verified, 1, "the completion signal should trust the recorded cast when the trade slot never exposes enchant text")
+    assert_equal(total, 1, "completion-signal fallback should preserve the queued recipe total")
 end
 
 local function test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
@@ -2218,7 +2358,11 @@ end
 test_scan_filters_unknown_and_nether_recipes()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_options_update_rebuilds_compiled_tags()
+test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
+test_parse_message_warns_for_incomplete_order()
+test_parse_message_skips_incomplete_warning_when_disabled()
+test_incomplete_order_can_be_left_unflagged_until_corrected()
 test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
@@ -2232,6 +2376,7 @@ test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
 test_workbench_complete_allows_zero_tip_without_a_separate_button()
 test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
+test_trade_completion_message_falls_back_to_recorded_cast_when_enchant_text_never_appears()
 test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
 test_workbench_trade_completion_message_captures_final_enchant_without_extra_trade_sync()
 test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
