@@ -1,3 +1,13 @@
+## [2.1.12] - 2026-04-05
+
+### Changed
+- Switched workbench trade completion over to the live trade APIs so accepted trades now use `TRADE_MONEY_CHANGED`, `TRADE_ACCEPT_UPDATE`, and the trade slots instead of guessing from the player's post-trade wallet
+- Let verified workbench orders finish automatically when an accepted trade closes, carrying forward offered mats, applied enchants, and any earlier split-tip payment
+
+### Fixed
+- Stopped showing manual `No tip` and `Complete` controls during an active trade so the detail pane no longer invites premature clicks while the trade is still settling
+- Kept zero-tip and split-tip orders queued only until the trade APIs show the actual finished state, which fixes missed tips and makes the flow more mechanical
+
 ## [2.1.11] - 2026-04-05
 
 ### Fixed

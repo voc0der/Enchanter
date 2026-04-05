@@ -20,7 +20,6 @@ EC.PendingInvites = {}
 EC.SimulatedPlayers = {}
 EC.Simulation = EC.Simulation or {}
 
-local preTradeGold = nil
 local pendingInviteWindow = 10
 local simulationInterval = 180
 local simulationSeeded = false
@@ -927,7 +926,6 @@ function EC.ParseMessage(msg, name)
 end
 
 local function Event_TRADE_SHOW()
-	preTradeGold = GetMoney()
 	if EC.Workbench and EC.Workbench.BeginTrade then
 		EC.Workbench.BeginTrade(EC.Workbench.GetTradePartnerName and EC.Workbench.GetTradePartnerName() or nil)
 	end
@@ -939,20 +937,17 @@ local function Event_TRADE_STATE_CHANGED()
 	end
 end
 
+local function Event_TRADE_ACCEPT_UPDATE(playerAccepted, targetAccepted)
+	if EC.Workbench and EC.Workbench.SetTradeAcceptState then
+		EC.Workbench.SetTradeAcceptState(playerAccepted, targetAccepted)
+	end
+	if EC.Workbench and EC.Workbench.SyncActiveTrade then
+		EC.Workbench.SyncActiveTrade()
+	end
+end
+
 local function Event_TRADE_CLOSED()
-	if preTradeGold ~= nil then
-		local snapshot = preTradeGold
-		preTradeGold = nil
-		After(1, function()
-			local delta = GetMoney() - snapshot
-			if delta > 0 then
-				EC.SessionGold = EC.SessionGold + delta
-			end
-			if EC.Workbench and EC.Workbench.FinishTrade then
-				EC.Workbench.FinishTrade(delta)
-			end
-		end)
-	elseif EC.Workbench and EC.Workbench.FinishTrade then
+	if EC.Workbench and EC.Workbench.FinishTrade then
 		EC.Workbench.FinishTrade(0)
 	end
 end
@@ -996,9 +991,10 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
 	EC.Tool.RegisterEvent("UI_ERROR_MESSAGE", Event_UI_ERROR_MESSAGE)
 	EC.Tool.RegisterEvent("TRADE_SHOW", Event_TRADE_SHOW)
+	EC.Tool.RegisterEvent("TRADE_MONEY_CHANGED", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_TARGET_ITEM_CHANGED", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_PLAYER_ITEM_CHANGED", Event_TRADE_STATE_CHANGED)
-	EC.Tool.RegisterEvent("TRADE_ACCEPT_UPDATE", Event_TRADE_STATE_CHANGED)
+	EC.Tool.RegisterEvent("TRADE_ACCEPT_UPDATE", Event_TRADE_ACCEPT_UPDATE)
 	EC.Tool.RegisterEvent("TRADE_UPDATE", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
 end

@@ -67,11 +67,14 @@ local function setup_env(opts)
         played_sounds = {},
         played_sound_calls = {},
         do_trade_skill_calls = {},
+        events = {},
         slash = nil,
         timer_delays = {},
         timer_callbacks = {},
         trade_skills = copy_table(opts.trade_skills or {}),
         trade_target_items = copy_table(opts.trade_target_items or {}),
+        trade_player_items = copy_table(opts.trade_player_items or {}),
+        trade_target_money = tonumber(opts.trade_target_money) or 0,
         whispers = {},
         frames = {},
         selected_trade_skill = nil,
@@ -412,17 +415,32 @@ local function setup_env(opts)
         local reagent = skill.reagents[reagent_index]
         return reagent and reagent.link or nil
     end
-    _G.MAX_TRADE_ITEMS = 6
+    _G.MAX_TRADE_ITEMS = 7
+    _G.MAX_TRADABLE_ITEMS = 6
+    _G.TRADE_ENCHANT_SLOT = 7
     _G.GetTradeTargetItemInfo = function(index)
         local item = state.trade_target_items[index]
         if not item then
             return nil
         end
-        return item.name, item.texture, item.count
+        return item.name, item.texture, item.count, item.quality, item.is_usable, item.enchantment, item.item_id
     end
     _G.GetTradeTargetItemLink = function(index)
         local item = state.trade_target_items[index]
         return item and item.link or nil
+    end
+    _G.GetTradePlayerItemInfo = function(index)
+        local item = state.trade_player_items[index]
+        if not item then
+            return nil
+        end
+        return item.name, item.texture, item.count, item.quality, item.enchantment, item.can_lose_transmog, item.is_bound, item.item_id
+    end
+    _G.GetTargetTradeMoney = function()
+        return state.trade_target_money or 0
+    end
+    _G.GetPlayerTradeMoney = function()
+        return state.trade_player_money or 0
     end
     _G.GetGameTime = function()
         if opts.game_time then
@@ -506,7 +524,9 @@ local function setup_env(opts)
         }
     end
 
-    function addon.Tool.RegisterEvent() end
+    function addon.Tool.RegisterEvent(event)
+        state.events[#state.events + 1] = event
+    end
 
     load_chunk("Tags.lua", "Enchanter", addon)
     load_chunk("Options.lua", "Enchanter", addon)
@@ -737,8 +757,29 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
 end
 
-local function test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
-    local addon = setup_env({
+local function test_trade_events_register_even_when_chat_scanning_is_stopped()
+    local addon, state = setup_env({
+        char_db = {
+            Stop = true,
+        },
+    })
+
+    addon.OnLoad()
+
+    local seen = {}
+    for _, event_name in ipairs(state.events) do
+        seen[event_name] = true
+    end
+
+    assert_true(seen["TRADE_SHOW"], "trade open should be registered even when chat scanning is stopped")
+    assert_true(seen["TRADE_MONEY_CHANGED"], "trade money changes should be registered independently of /ec start")
+    assert_true(seen["TRADE_ACCEPT_UPDATE"], "trade accept updates should be registered independently of /ec start")
+    assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
+end
+
+local function test_workbench_auto_completes_verified_trade_using_trade_money_api()
+    local addon, state = setup_env({
+        trade_target_money = 123400,
         char_db = {
             RecipeList = {
                 ["Enchant Weapon - Mongoose"] = { "mongoose" },
@@ -753,21 +794,18 @@ local function test_workbench_complete_order_uses_observed_tip_and_clear_resets_
     local order = addon.Workbench.GetSelectedOrder()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
     addon.Workbench.BeginTrade("Buyer-Tip")
-    addon.Workbench.FinishTrade(123400)
-
-    assert_equal(frame.Detail.TipStatus.text, "Tip: 12g 34s", "detail pane should show the tracked trade gold instead of asking for manual tip entry")
-    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide once trade gold has been recorded")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete button should enable after the order is verified and the tip is settled")
-
-    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.FinishTrade(0)
 
     local workbenchState = addon.Workbench.EnsureState()
 
-    assert_equal(workbenchState.CompletedOrders, 1, "completing a verified order should increment the running completed count")
-    assert_equal(workbenchState.CompletedTipsCopper, 123400, "completed orders should add the parsed tip to the running total")
-    assert_equal(#workbenchState.Orders, 0, "completed orders should leave the active queue")
+    assert_equal(workbenchState.CompletedOrders, 1, "accepted verified trades should auto-complete without a manual click")
+    assert_equal(workbenchState.CompletedTipsCopper, 123400, "accepted trades should bank the target trade money in the running total")
+    assert_equal(#workbenchState.Orders, 0, "accepted verified trades should leave the active queue automatically")
     assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "footer summary should show the completed count")
     assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "footer summary should show the running tips total")
+    assert_equal(state.trade_target_money, 123400, "trade money test should use the target trade money api path")
 
     frame.ClearButton.scripts["OnClick"]()
 
@@ -807,6 +845,102 @@ local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
     local workbenchState = addon.Workbench.EnsureState()
     assert_equal(workbenchState.CompletedOrders, 1, "zero-tip completions should still count as completed orders")
     assert_equal(workbenchState.CompletedTipsCopper, 0, "no-tip completions should not add to the running tips total")
+end
+
+local function test_workbench_active_trade_hides_manual_completion_controls()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-LiveTrade")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+    addon.Workbench.BeginTrade("Buyer-LiveTrade")
+
+    assert_equal(frame.Detail.TipStatus.text, "Tip in trade: 50s", "active trades should show the live trade gold amount")
+    assert_true(frame.Detail.NoTipButton.shown == false, "active trades should hide the manual no-tip override")
+    assert_true(frame.Detail.CompleteButton.shown == false, "active trades should hide the manual completion fallback")
+    assert_true(string.find(frame.Detail.ReadyText.text or "", "finish this verified order automatically") ~= nil, "active verified trades should explain the automatic completion flow")
+    assert_equal(state.trade_target_money, 5000, "active trade ui test should rely on the trade money api state")
+end
+
+local function test_workbench_auto_commits_trade_progress_and_finishes_zero_tip_orders()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+            [7] = { name = "Enchant Boots - Minor Speed", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Auto")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-Auto")
+    addon.Workbench.NoteRecipeCast("Enchant Boots - Minor Speed")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    local state = addon.Workbench.EnsureState()
+
+    assert_equal(state.CompletedOrders, 1, "successful zero-tip trades should auto-complete once the enchant was applied")
+    assert_equal(state.CompletedTipsCopper, 0, "successful zero-tip trades should not add to the running tip total")
+    assert_equal(#state.Orders, 0, "successful automated trades should remove the order from the queue")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "auto-completed trades should remove the original order")
+end
+
+local function test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-SplitTip")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-SplitTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    assert_not_nil(order, "orders without a finished enchant should stay queued after an earlier tip trade")
+    assert_equal(order.LastObservedTipCopper, 5000, "trade tips should accumulate on the order even before the final trade finishes the work")
+
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+    state.trade_target_money = 0
+    addon.Workbench.BeginTrade("Buyer-SplitTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    local workbenchState = addon.Workbench.EnsureState()
+    assert_equal(workbenchState.CompletedOrders, 1, "the later successful trade should auto-complete the already-paid order")
+    assert_equal(workbenchState.CompletedTipsCopper, 5000, "the earlier tip should still be counted when the order finally completes")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -1589,8 +1723,12 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
-test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
+test_trade_events_register_even_when_chat_scanning_is_stopped()
+test_workbench_auto_completes_verified_trade_using_trade_money_api()
 test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+test_workbench_active_trade_hides_manual_completion_controls()
+test_workbench_auto_commits_trade_progress_and_finishes_zero_tip_orders()
+test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
