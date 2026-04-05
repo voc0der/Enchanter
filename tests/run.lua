@@ -1546,6 +1546,23 @@ local function test_workbench_header_button_toggles_start_and_stop_after_scan_da
     assert_equal(frame.ScanButton.text, "Stop", "resumed chat matching should flip the header button back to Stop")
 end
 
+local function test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
+    local addon = setup_env({
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {},
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_true(addon.NeedsRecipeScan() == false, "existing scanned recipes should satisfy the scan gate even if reagent snapshots are unavailable")
+    assert_equal(frame.ScanButton.text, "Stop", "header button should follow chat scanning state instead of staying on Scan when only material snapshots are missing")
+end
+
 local function test_workbench_refresh_survives_without_fontstring_setshown()
     local addon = setup_env({
         omit_fontstring_setshown = true,
@@ -2385,6 +2402,7 @@ test_workbench_accumulates_split_material_counts_across_accepted_trades()
 test_workbench_keeps_last_accepted_trade_material_snapshot_when_trade_slots_clear_before_close()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
+test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
 test_workbench_refresh_survives_without_fontstring_setshown()
 test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()

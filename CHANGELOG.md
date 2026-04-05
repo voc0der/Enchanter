@@ -1,3 +1,8 @@
+## [2.1.18] - 2026-04-05
+
+### Fixed
+- Stopped the workbench header button from getting stuck on `Scan` just because some saved recipes are missing reagent snapshots; once scanned recipes exist, the header now returns to `Start` or `Stop` as expected
+
 ## [2.1.17] - 2026-04-05
 
 ### Added
