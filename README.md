@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.10`
+Current version: `2.1.11`
 
 ## What It Does
 
@@ -44,7 +44,7 @@ Current version: `2.1.10`
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials checklist.
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
-- Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound`.
+- Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound` and now plays through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench tracks traded gold automatically; click `No tip` if they do not pay gold, then click `Complete` to bank the order in the running totals.
 - A footer line near `Resize` keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.

@@ -11,6 +11,7 @@ local MAX_FRAME_WIDTH = 960
 local MAX_FRAME_HEIGHT = 960
 local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
+local QUEUE_ALERT_SOUND_CHANNEL = "Master"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "UI_REFORGING_REFORGE", id = 23291 },
 	{ key = "AUCTION_WINDOW_OPEN", id = 5274 },
@@ -819,8 +820,13 @@ local function PlayQueueAlertSound()
 		end
 
 		if soundKit then
-			local ok = pcall(PlaySound, soundKit)
-			if ok then
+			local ok, willPlay = pcall(PlaySound, soundKit, QUEUE_ALERT_SOUND_CHANNEL)
+			if ok and willPlay ~= false then
+				return true
+			end
+
+			ok, willPlay = pcall(PlaySound, soundKit)
+			if ok and willPlay ~= false then
 				return true
 			end
 		end
