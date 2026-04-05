@@ -45,13 +45,13 @@ Current version: `2.1.12`
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound` and now plays through the `Master` channel so muted sound effects do not suppress the queue ping.
-- When every requested enchant is verified, the workbench watches live trade gold automatically and finishes accepted trades on its own.
+- When every requested enchant is verified, the workbench watches live trade gold automatically, but you still choose when to click `Complete`.
 - A footer line near `Resize` keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
-- Click `Apply`, then click the customer's item in the trade window. Once both sides accept, the workbench records the trade gold, carries over matching mats, and auto-completes verified orders.
-- If they tip during an earlier mats trade, that payment stays attached to the order and is counted when the final verified trade finishes.
+- Click `Apply`, then click the customer's item in the trade window. Once both sides accept, the workbench records the trade gold and carries over matching mats automatically.
+- If they tip during earlier mat trades or across multiple follow-up trades, that gold stays attached to the order until you click `Complete`.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Check the green checkbox next to each requested enchant once you have verified that specific enchant is fully paid and done.
 - Multi-enchant orders only turn green once every requested enchant has been checked off.
@@ -59,7 +59,7 @@ Current version: `2.1.12`
 - Click `Use Trade` to copy the mats currently offered in the trade window into the persistent checklist.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
-- Accepted trades only retire the order once the requested enchants have actually been verified; partial mats trades and early tip trades stay queued and carry their progress forward automatically.
+- Accepted trades never retire the order by themselves; partial mats trades, repeated tip trades, and applied enchants stay attached to the queue entry until you click `Complete`.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.

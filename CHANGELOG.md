@@ -2,11 +2,12 @@
 
 ### Changed
 - Switched workbench trade completion over to the live trade APIs so accepted trades now use `TRADE_MONEY_CHANGED`, `TRADE_ACCEPT_UPDATE`, and the trade slots instead of guessing from the player's post-trade wallet
-- Let verified workbench orders finish automatically when an accepted trade closes, carrying forward offered mats, applied enchants, and any earlier split-tip payment
+- Let accepted trades carry forward offered mats, applied enchants, and repeated split-tip payments while the order stays queued until you click `Complete`
 
 ### Fixed
 - Stopped showing manual `No tip` and `Complete` controls during an active trade so the detail pane no longer invites premature clicks while the trade is still settling
-- Kept zero-tip and split-tip orders queued only until the trade APIs show the actual finished state, which fixes missed tips and makes the flow more mechanical
+- Only auto-verified an applied enchant once Blizzard reports a real enchantment in the trade slot, instead of treating an unmodified slot item as finished work
+- Accumulated shared reagent counts across multiple accepted trades, which fixes multi-enchant orders that are paid out in separate mat handoffs
 
 ## [2.1.11] - 2026-04-05
 

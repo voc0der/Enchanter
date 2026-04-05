@@ -315,6 +315,64 @@ local function GetResolvedTipCopper(order)
 	return 0, false
 end
 
+local function NormalizeItemCount(value)
+	return math.max(0, math.floor(tonumber(value) or 0))
+end
+
+local function GetRequiredMaterialCount(material)
+	local requiredCount = NormalizeItemCount(material and material.Count or 0)
+	if requiredCount > 0 then
+		return requiredCount
+	end
+	return 1
+end
+
+local function GetRecordedMaterialCount(order, material, requiredCount)
+	local materialKey
+	local storedCount
+
+	if not order or not material then
+		return 0
+	end
+
+	requiredCount = math.max(1, NormalizeItemCount(requiredCount or GetRequiredMaterialCount(material)))
+	materialKey = type(material) == "table" and material.Key or material
+	storedCount = NormalizeItemCount(order.MaterialCounts and order.MaterialCounts[materialKey] or 0)
+	if storedCount <= 0 and order.MaterialState and order.MaterialState[materialKey] then
+		storedCount = requiredCount
+	end
+	return math.min(requiredCount, storedCount)
+end
+
+local function SetRecordedMaterialCount(order, materialKey, count, requiredCount)
+	if not order or not materialKey or materialKey == "" then
+		return 0
+	end
+
+	count = NormalizeItemCount(count)
+	requiredCount = math.max(1, NormalizeItemCount(requiredCount))
+	count = math.min(requiredCount, count)
+
+	order.MaterialCounts = order.MaterialCounts or {}
+	order.MaterialState = order.MaterialState or {}
+	order.MaterialCounts[materialKey] = count > 0 and count or nil
+	order.MaterialState[materialKey] = count >= requiredCount and true or nil
+	return count
+end
+
+local function GetManuallyRecordedTradeMaterialCount(activeTrade, materialKey)
+	if not activeTrade or type(activeTrade.ManuallyRecordedMaterialCounts) ~= "table" then
+		return 0
+	end
+	return NormalizeItemCount(activeTrade.ManuallyRecordedMaterialCounts[materialKey] or 0)
+end
+
+local function GetDisplayedTradeMaterialCount(activeTrade, materialKey)
+	local offeredCount = NormalizeItemCount(activeTrade and activeTrade.OfferedMaterialCounts and activeTrade.OfferedMaterialCounts[materialKey] or 0)
+	local recordedCount = GetManuallyRecordedTradeMaterialCount(activeTrade, materialKey)
+	return math.max(0, offeredCount - recordedCount)
+end
+
 local function HasResolvedTip(order)
 	local _, resolved = GetResolvedTipCopper(order)
 	return resolved
@@ -361,15 +419,15 @@ local function TradeEnchantSlotHasItem()
 	local enchantSlotIndex = GetTradeEnchantSlotIndex()
 
 	if GetTradeTargetItemInfo then
-		local targetName, _, _, _, _, targetEnchantment = GetTradeTargetItemInfo(enchantSlotIndex)
-		if TrimText(targetName) ~= "" or TrimText(targetEnchantment) ~= "" then
+		local _, _, _, _, _, targetEnchantment = GetTradeTargetItemInfo(enchantSlotIndex)
+		if TrimText(targetEnchantment) ~= "" then
 			return true
 		end
 	end
 
 	if GetTradePlayerItemInfo then
-		local playerName, _, _, _, playerEnchantment = GetTradePlayerItemInfo(enchantSlotIndex)
-		if TrimText(playerName) ~= "" or TrimText(playerEnchantment) ~= "" then
+		local _, _, _, _, playerEnchantment = GetTradePlayerItemInfo(enchantSlotIndex)
+		if TrimText(playerEnchantment) ~= "" then
 			return true
 		end
 	end
@@ -434,6 +492,7 @@ end
 
 local function EnsureOrderFields(order)
 	order.Recipes = order.Recipes or {}
+	order.MaterialCounts = order.MaterialCounts or {}
 	order.MaterialState = order.MaterialState or {}
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
 	order.Message = order.Message or ""
@@ -1037,17 +1096,29 @@ local function SetRecipeVerifiedInternal(order, recipeName, verified)
 	return true
 end
 
-local function MergeTradeMaterialState(order, offeredState)
+local function MergeTradeMaterialCounts(order, offeredMaterialCounts, alreadyRecordedCounts)
 	local changed = 0
-	if not order or type(offeredState) ~= "table" then
-		return changed
+	local appliedCounts = {}
+
+	if not order or type(offeredMaterialCounts) ~= "table" then
+		return changed, appliedCounts
 	end
 
-	order.MaterialState = order.MaterialState or {}
-	for materialKey, isOffered in pairs(offeredState) do
-		if isOffered and not order.MaterialState[materialKey] then
-			order.MaterialState[materialKey] = true
-			changed = changed + 1
+	for _, material in ipairs(Workbench.GetMaterialSnapshot(order)) do
+		local requiredCount = GetRequiredMaterialCount(material)
+		local offeredCount = NormalizeItemCount(offeredMaterialCounts[material.Key] or 0)
+		local alreadyRecordedCount = NormalizeItemCount(alreadyRecordedCounts and alreadyRecordedCounts[material.Key] or 0)
+		local pendingCount = math.max(0, offeredCount - alreadyRecordedCount)
+
+		if pendingCount > 0 then
+			local existingCount = GetRecordedMaterialCount(order, material, requiredCount)
+			local mergedCount = math.min(requiredCount, existingCount + pendingCount)
+			local appliedCount = math.max(0, mergedCount - existingCount)
+			if appliedCount > 0 then
+				SetRecordedMaterialCount(order, material.Key, mergedCount, requiredCount)
+				appliedCounts[material.Key] = appliedCount
+				changed = changed + 1
+			end
 		end
 	end
 
@@ -1055,7 +1126,19 @@ local function MergeTradeMaterialState(order, offeredState)
 		order.UpdatedAt = TimestampText()
 	end
 
-	return changed
+	return changed, appliedCounts
+end
+
+local function AddRecordedTradeMaterialCounts(activeTrade, appliedCounts)
+	if not activeTrade or type(appliedCounts) ~= "table" then
+		return
+	end
+
+	activeTrade.ManuallyRecordedMaterialCounts = activeTrade.ManuallyRecordedMaterialCounts or {}
+	for materialKey, appliedCount in pairs(appliedCounts) do
+		local currentCount = NormalizeItemCount(activeTrade.ManuallyRecordedMaterialCounts[materialKey] or 0)
+		activeTrade.ManuallyRecordedMaterialCounts[materialKey] = currentCount + NormalizeItemCount(appliedCount)
+	end
 end
 
 local function TrackTradeAppliedRecipe(order, activeTrade)
@@ -1090,7 +1173,7 @@ local function CommitTradeState(order, activeTrade)
 		end
 	end
 
-	appliedMaterialCount = MergeTradeMaterialState(order, activeTrade.OfferedMaterialState)
+	appliedMaterialCount = select(1, MergeTradeMaterialCounts(order, activeTrade.OfferedMaterialCounts, activeTrade.ManuallyRecordedMaterialCounts))
 	return appliedRecipeCount, appliedMaterialCount
 end
 
@@ -1146,7 +1229,7 @@ function Workbench.GetMaterialProgress(order)
 	end
 
 	for _, material in ipairs(materials) do
-		if order.MaterialState and order.MaterialState[material.Key] then
+		if GetRecordedMaterialCount(order, material, GetRequiredMaterialCount(material)) >= GetRequiredMaterialCount(material) then
 			checked = checked + 1
 		end
 	end
@@ -1183,28 +1266,33 @@ function Workbench.GetTradeMaterialProgress(order)
 	local total = #materials
 	local checked = 0
 	local offeredState = {}
+	local offeredMaterialCounts = {}
 	local activeTrade = GetActiveTradeForOrder(order)
 
 	order = order or Workbench.GetSelectedOrder()
 	if not order or not activeTrade or total == 0 then
-		return 0, total, offeredState
+		return 0, total, offeredState, offeredMaterialCounts
 	end
 
 	local offeredCounts = CaptureTradeTargetCounts()
 	for _, material in ipairs(materials) do
+		local requiredCount = GetRequiredMaterialCount(material)
 		local offeredCount = offeredCounts[material.Key] or offeredCounts[material.Link or ""] or offeredCounts[material.Name or ""] or 0
-		if offeredCount >= (tonumber(material.Count) or 1) then
+		offeredCount = NormalizeItemCount(offeredCount)
+		offeredMaterialCounts[material.Key] = offeredCount
+		if offeredCount >= requiredCount then
 			offeredState[material.Key] = true
 			checked = checked + 1
 		end
 	end
 
 	activeTrade.OfferedMaterialState = offeredState
+	activeTrade.OfferedMaterialCounts = offeredMaterialCounts
 	activeTrade.OfferedCounts = offeredCounts
 	activeTrade.OfferedChecked = checked
 	activeTrade.OfferedTotal = total
 
-	return checked, total, offeredState
+	return checked, total, offeredState, offeredMaterialCounts
 end
 
 local function GetDisplayedMaterialProgress(order)
@@ -1212,25 +1300,28 @@ local function GetDisplayedMaterialProgress(order)
 	local total = #materials
 	local manualChecked = 0
 	local combinedChecked = 0
-	local offeredChecked, _, offeredState = Workbench.GetTradeMaterialProgress(order)
+	local offeredChecked, _, offeredState, offeredMaterialCounts = Workbench.GetTradeMaterialProgress(order)
+	local activeTrade = GetActiveTradeForOrder(order)
 
 	order = order or Workbench.GetSelectedOrder()
 	if not order then
-		return 0, total, offeredState, 0, offeredChecked
+		return 0, total, offeredState, 0, offeredChecked, offeredMaterialCounts
 	end
 
 	for _, material in ipairs(materials) do
-		local hasManual = order.MaterialState and order.MaterialState[material.Key]
-		local hasOffered = offeredState[material.Key]
-		if hasManual then
+		local requiredCount = GetRequiredMaterialCount(material)
+		local manualCount = GetRecordedMaterialCount(order, material, requiredCount)
+		local offeredCount = GetDisplayedTradeMaterialCount(activeTrade, material.Key)
+		local combinedCount = math.min(requiredCount, manualCount + offeredCount)
+		if manualCount >= requiredCount then
 			manualChecked = manualChecked + 1
 		end
-		if hasManual or hasOffered then
+		if combinedCount >= requiredCount then
 			combinedChecked = combinedChecked + 1
 		end
 	end
 
-	return combinedChecked, total, offeredState, manualChecked, offeredChecked
+	return combinedChecked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts
 end
 
 function Workbench.GetTradePartnerName()
@@ -1279,9 +1370,11 @@ function Workbench.BeginTrade(customerName)
 		CastedRecipeName = nil,
 		AppliedRecipes = {},
 		OfferedMaterialState = {},
+		OfferedMaterialCounts = {},
 		OfferedCounts = {},
 		OfferedChecked = 0,
 		OfferedTotal = 0,
+		ManuallyRecordedMaterialCounts = {},
 		TargetTradeMoneyCopper = GetTargetTradeMoneyCopper(),
 		PlayerAccepted = false,
 		TargetAccepted = false,
@@ -1328,6 +1421,7 @@ function Workbench.SyncActiveTrade()
 		TrackTradeAppliedRecipe(order, activeTrade)
 	else
 		activeTrade.OfferedMaterialState = {}
+		activeTrade.OfferedMaterialCounts = {}
 		activeTrade.OfferedCounts = {}
 		activeTrade.OfferedChecked = 0
 		activeTrade.OfferedTotal = 0
@@ -1405,7 +1499,6 @@ end
 function Workbench.FinishTrade(goldDelta)
 	local runtime = EnsureRuntime()
 	local activeTrade = runtime.ActiveTrade
-	local completedOrder = nil
 	local tradeTipCopper = math.max(0, math.floor(tonumber(goldDelta) or 0))
 	local tradeSucceeded
 	local persistedRecipes = 0
@@ -1446,46 +1539,38 @@ function Workbench.FinishTrade(goldDelta)
 	local checked, total = Workbench.GetMaterialProgress(order)
 	local isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
 
-	if tradeSucceeded and GetRecordedTipCopper(order) <= 0 and isVerified then
-		order.PendingTipText = ""
-		order.NoTipConfirmed = true
-		order.UpdatedAt = TimestampText()
-		WorkbenchDebug("recorded no-tip completion for", order.Customer)
-	end
-
-	if tradeSucceeded and isVerified and Workbench.CompleteOrder(order.Id) then
-		WorkbenchDebug("auto-completed trade for", order.Customer, "(" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ", " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats)")
-		completedOrder = order
-	elseif tradeSucceeded then
-		WorkbenchDebug("trade closed for", order.Customer, "and stayed queued (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats)")
+	if tradeSucceeded then
+		WorkbenchDebug("trade closed for", order.Customer, "and updated the queue (" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " verified, " .. tostring(persistedRecipes) .. " recipes, " .. tostring(persistedMaterials) .. " mats, tip " .. FormatMoneyCompact(GetRecordedTipCopper(order)) .. ")")
 	else
 		WorkbenchDebug("trade closed for", order.Customer, "without a completed exchange (tip=" .. FormatMoneyCompact(tradeTipCopper) .. ", mats=" .. tostring(checked) .. "/" .. tostring(total) .. ", verified=" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. ")")
 	end
 
-	if not completedOrder then
-		Workbench.Refresh()
-	end
-	return completedOrder
+	Workbench.Refresh()
+	return tradeSucceeded and order or nil
 end
 
 function Workbench.UseTradeMaterials(orderId)
 	local order = Workbench.GetOrderById(orderId)
+	local activeTrade
+	local offeredChecked, total, _, offeredMaterialCounts
+	local changed
+	local appliedCounts
 	if not order then
 		return false
 	end
 
-	local offeredChecked, total, offeredState = Workbench.GetTradeMaterialProgress(order)
-	if total == 0 or offeredChecked == 0 then
+	activeTrade = GetActiveTradeForOrder(order)
+	offeredChecked, total, _, offeredMaterialCounts = Workbench.GetTradeMaterialProgress(order)
+	if total == 0 or offeredChecked == 0 or not activeTrade then
 		return false
 	end
 
-	order.MaterialState = order.MaterialState or {}
-	for materialKey, isOffered in pairs(offeredState) do
-		if isOffered then
-			order.MaterialState[materialKey] = true
-		end
+	changed, appliedCounts = MergeTradeMaterialCounts(order, offeredMaterialCounts, activeTrade.ManuallyRecordedMaterialCounts)
+	if changed <= 0 then
+		return false
 	end
-	order.UpdatedAt = TimestampText()
+
+	AddRecordedTradeMaterialCounts(activeTrade, appliedCounts)
 	WorkbenchDebug("copied trade mats for", order.Customer, "(" .. tostring(offeredChecked) .. "/" .. tostring(total) .. ")")
 	Workbench.Refresh()
 	return true
@@ -1495,8 +1580,14 @@ function Workbench.SetMaterialChecked(orderId, materialKey, checked)
 	local state = Workbench.EnsureState()
 	for _, order in ipairs(state.Orders) do
 		if order.Id == orderId then
-			order.MaterialState = order.MaterialState or {}
-			order.MaterialState[materialKey] = checked and true or nil
+			local requiredCount = 1
+			for _, material in ipairs(Workbench.GetMaterialSnapshot(order)) do
+				if material.Key == materialKey then
+					requiredCount = GetRequiredMaterialCount(material)
+					break
+				end
+			end
+			SetRecordedMaterialCount(order, materialKey, checked and requiredCount or 0, requiredCount)
 			order.UpdatedAt = TimestampText()
 			WorkbenchDebug((checked and "checked" or "cleared"), "material", materialKey, "for", order.Customer)
 			break
@@ -1557,10 +1648,12 @@ function Workbench.SetAllMaterials(orderId, checked)
 	local state = Workbench.EnsureState()
 	for _, order in ipairs(state.Orders) do
 		if order.Id == orderId then
+			order.MaterialCounts = order.MaterialCounts or {}
 			order.MaterialState = order.MaterialState or {}
 			local materials = Workbench.GetMaterialSnapshot(order)
 			for _, material in ipairs(materials) do
-				order.MaterialState[material.Key] = checked and true or nil
+				local requiredCount = GetRequiredMaterialCount(material)
+				SetRecordedMaterialCount(order, material.Key, checked and requiredCount or 0, requiredCount)
 			end
 			order.UpdatedAt = TimestampText()
 			WorkbenchDebug((checked and "checked" or "cleared"), "all mats for", order.Customer, "(" .. tostring(#materials) .. " items)")
@@ -2497,7 +2590,7 @@ function Workbench.Refresh()
 	frame.Detail.Empty:Hide()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
 
-	local checked, total, offeredState, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
+	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
 	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
 	local tipResolved = HasResolvedTip(order)
@@ -2509,7 +2602,7 @@ function Workbench.Refresh()
 	frame.Detail.Meta:SetText(string.format("Queued %s  •  Updated %s  •  %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", verificationText, readyText))
 	frame.Detail.Message:SetText("Last chat: " .. (order.Message ~= "" and order.Message or "No raw message captured"))
 	if activeTrade then
-		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Click Apply, then click the customer's item. Accepted trades settle automatically.|r")
+		frame.Detail.TradeHint:SetText("|cFFFFD26ATrade active. Click Apply, then click the customer's item. Accepted trades update mats and tips automatically; Complete stays manual.|r")
 		frame.Detail.TradeHint:Show()
 	else
 		frame.Detail.TradeHint:Hide()
@@ -2625,7 +2718,7 @@ function Workbench.Refresh()
 		local statusBits = {}
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
-				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will finish this verified order automatically.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r"
 			elseif tipResolved then
 				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r"
 			else
@@ -2640,9 +2733,9 @@ function Workbench.Refresh()
 		if manualChecked == total then
 			statusBits[#statusBits + 1] = "|cFF74D06CAll mats are checked off.|r"
 		elseif offeredChecked == total and total > 0 then
-			statusBits[#statusBits + 1] = "|cFF74D06CTrade has all queued mats. Click Use Trade to keep them checked.|r"
+			statusBits[#statusBits + 1] = "|cFF74D06CTrade has all queued mats. Accepted trades will carry them forward automatically.|r"
 		elseif offeredChecked > 0 then
-			statusBits[#statusBits + 1] = "|cFFFFD26ATrade has " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats. Click Use Trade to keep them checked.|r"
+			statusBits[#statusBits + 1] = "|cFFFFD26ATrade is moving " .. tostring(checked) .. "/" .. tostring(total) .. " queued mats toward completion.|r"
 		elseif total > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26AUse the checklist as the customer hands you materials.|r"
 		end
@@ -2653,7 +2746,7 @@ function Workbench.Refresh()
 		frame.Detail.ClearMatsButton:Hide()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
-				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will finish this verified order automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			elseif tipResolved then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			else
@@ -2673,10 +2766,18 @@ function Workbench.Refresh()
 			frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail.Content, index)
 		end
 		local line = frame.Detail.MaterialLines[index]
+		local requiredCount = GetRequiredMaterialCount(material)
+		local recordedCount = GetRecordedMaterialCount(order, material, requiredCount)
+		local offeredCount = GetDisplayedTradeMaterialCount(activeTrade, material.Key)
+		local combinedCount = math.min(requiredCount, recordedCount + offeredCount)
+		local materialText = string.format("%dx %s", requiredCount, material.Link or material.Name or "Unknown Material")
+		if combinedCount > 0 and combinedCount < requiredCount then
+			materialText = materialText .. " |cFFFFD26A(" .. tostring(combinedCount) .. "/" .. tostring(requiredCount) .. " tracked)|r"
+		end
 		line.Check.OrderId = order.Id
 		line.Check.MaterialKey = material.Key
-		line.Check:SetChecked((order.MaterialState and order.MaterialState[material.Key]) or offeredState[material.Key] or false)
-		line.Text:SetText(string.format("%dx %s", material.Count or 0, material.Link or material.Name or "Unknown Material"))
+		line.Check:SetChecked(combinedCount >= requiredCount)
+		line.Text:SetText(materialText)
 		line:ClearAllPoints()
 		if index == 1 then
 			line:SetPoint("TOPLEFT", materialAnchor, "BOTTOMLEFT", 0, -4)
