@@ -1,3 +1,9 @@
+## [2.1.16] - 2026-04-05
+
+### Fixed
+- Preferred the trade-skill recipe API consistently when the client exposes both trade-skill and legacy craft data, which keeps recipe links and reagent snapshots aligned during scans
+- Hardened the legacy craft fallback used by workbench `Cast` / `Apply` so it temporarily clears Blizzard's craft filters, uses the Craft UI selection helper, and avoids invalid reagent tooltip selections
+
 ## [2.1.15] - 2026-04-05
 
 ### Fixed

@@ -60,6 +60,49 @@ local function HasTradeSkillRecipeApi()
 	return GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillRecipeLink
 end
 
+local function GetRecipeApiCount(kind)
+	if kind == "trade" and HasTradeSkillRecipeApi() then
+		return math.max(0, math.floor(tonumber(GetNumTradeSkills and GetNumTradeSkills() or 0) or 0))
+	end
+	if kind == "craft" and HasCraftRecipeApi() then
+		return math.max(0, math.floor(tonumber(GetNumCrafts and GetNumCrafts() or 0) or 0))
+	end
+	return 0
+end
+
+local function ResolveRecipeApiKind(preferredKind)
+	local orderedKinds = {}
+	local seenKinds = {}
+
+	local function AddKind(kind)
+		if kind and not seenKinds[kind] then
+			seenKinds[kind] = true
+			orderedKinds[#orderedKinds + 1] = kind
+		end
+	end
+
+	AddKind(preferredKind)
+	AddKind("trade")
+	AddKind("craft")
+
+	for _, kind in ipairs(orderedKinds) do
+		if GetRecipeApiCount(kind) > 0 then
+			return kind
+		end
+	end
+
+	for _, kind in ipairs(orderedKinds) do
+		if kind == "trade" and HasTradeSkillRecipeApi() then
+			return kind
+		end
+		if kind == "craft" and HasCraftRecipeApi() then
+			return kind
+		end
+	end
+
+	return nil
+end
+
 local function GetAddOnMetadataCompat(addonName, field)
 	if C_AddOns and C_AddOns.GetAddOnMetadata then
 		return C_AddOns.GetAddOnMetadata(addonName, field)
@@ -87,53 +130,57 @@ local function InvitePlayer(name)
 	end
 end
 
-local function GetRecipeApi()
-	if HasCraftRecipeApi() then
-		return GetNumCrafts, GetCraftInfo, GetCraftRecipeLink
-	end
-	if HasTradeSkillRecipeApi() then
+local function GetRecipeApi(apiKind)
+	apiKind = ResolveRecipeApiKind(apiKind)
+	if apiKind == "trade" and HasTradeSkillRecipeApi() then
 		return GetNumTradeSkills, GetTradeSkillInfo, GetTradeSkillRecipeLink
+	end
+	if apiKind == "craft" and HasCraftRecipeApi() then
+		return GetNumCrafts, GetCraftInfo, GetCraftRecipeLink
 	end
 	return nil, nil, nil
 end
 
-local function GetRecipeSelectApi()
-	if HasCraftRecipeApi() and SelectCraft then
-		return SelectCraft
-	end
-	if HasTradeSkillRecipeApi() and SelectTradeSkill then
+local function GetRecipeSelectApi(apiKind)
+	apiKind = ResolveRecipeApiKind(apiKind)
+	if apiKind == "trade" and HasTradeSkillRecipeApi() and SelectTradeSkill then
 		return SelectTradeSkill
 	end
+	if apiKind == "craft" and HasCraftRecipeApi() and SelectCraft then
+		return SelectCraft
+	end
 	return nil
 end
 
-local function GetRecipeEntryType(index)
-	if HasCraftRecipeApi() then
-		return select(3, GetCraftInfo(index))
-	end
-	if HasTradeSkillRecipeApi() then
+local function GetRecipeEntryType(index, apiKind)
+	apiKind = ResolveRecipeApiKind(apiKind)
+	if apiKind == "trade" and HasTradeSkillRecipeApi() then
 		return select(2, GetTradeSkillInfo(index))
 	end
+	if apiKind == "craft" and HasCraftRecipeApi() then
+		return select(3, GetCraftInfo(index))
+	end
 	return nil
 end
 
-local function IsRecipeHeader(index)
-	local entryType = GetRecipeEntryType(index)
+local function IsRecipeHeader(index, apiKind)
+	local entryType = GetRecipeEntryType(index, apiKind)
 	return entryType == "header" or entryType == "subheader"
 end
 
-local function GetRecipeReagentApi()
-	if GetNumCrafts and GetCraftInfo and GetCraftNumReagents and GetCraftReagentInfo then
-		return GetCraftNumReagents, GetCraftReagentInfo, GetCraftReagentItemLink
-	end
-	if GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillNumReagents and GetTradeSkillReagentInfo then
+local function GetRecipeReagentApi(apiKind)
+	apiKind = ResolveRecipeApiKind(apiKind)
+	if apiKind == "trade" and GetNumTradeSkills and GetTradeSkillInfo and GetTradeSkillNumReagents and GetTradeSkillReagentInfo then
 		return GetTradeSkillNumReagents, GetTradeSkillReagentInfo, GetTradeSkillReagentItemLink
+	end
+	if apiKind == "craft" and GetNumCrafts and GetCraftInfo and GetCraftNumReagents and GetCraftReagentInfo then
+		return GetCraftNumReagents, GetCraftReagentInfo, GetCraftReagentItemLink
 	end
 	return nil, nil, nil
 end
 
-local function CaptureRecipeMaterials(recipeIndex)
-	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi()
+local function CaptureRecipeMaterials(recipeIndex, apiKind)
+	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi(apiKind)
 	local materials = {}
 
 	if not getNumReagents or not getReagentInfo then
@@ -588,8 +635,17 @@ function EC.RefreshCompiledData()
 end
 
 function EC.GetItems()
-	local getCount, getInfo, getLink = GetRecipeApi()
-	local selectRecipe = GetRecipeSelectApi()
+	local apiKind
+	local getCount, getInfo, getLink
+	local selectRecipe
+
+	if CastSpellByName then
+		CastSpellByName("Enchanting")
+	end
+
+	apiKind = ResolveRecipeApiKind("trade")
+	getCount, getInfo, getLink = GetRecipeApi(apiKind)
+	selectRecipe = GetRecipeSelectApi(apiKind)
 	if not getCount or not getInfo then
 		print("|cFFFF1C1CEnchanter|r could not find a supported enchanting scan API on this client.")
 		return false
@@ -599,16 +655,14 @@ function EC.GetItems()
 	EC.DBChar.RecipeLinks = {}
 	EC.DBChar.RecipeMats = {}
 
-	CastSpellByName("Enchanting")
-
 	for index = 1, getCount() or 0 do
 		local recipeName = getInfo(index)
-		if recipeName and not IsRecipeHeader(index) and EC.RecipeTags["enGB"][recipeName] then
+		if recipeName and not IsRecipeHeader(index, apiKind) and EC.RecipeTags["enGB"][recipeName] then
 			if selectRecipe then
 				selectRecipe(index)
 			end
 			EC.DBChar.RecipeLinks[recipeName] = getLink and getLink(index) or nil
-			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index)
+			EC.DBChar.RecipeMats[recipeName] = CaptureRecipeMaterials(index, apiKind)
 			EC.DBChar.RecipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
 		end
 	end

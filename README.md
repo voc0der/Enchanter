@@ -6,7 +6,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.15`
+Current version: `2.1.16`
 
 ## What It Does
 
@@ -51,6 +51,7 @@ Current version: `2.1.15`
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
 - `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it, including late completion updates.
+- If the client falls back to Blizzard's older Craft window, `Cast` / `Apply` now temporarily clears the Craft filters so queued enchants can still be selected reliably before the filters are restored.
 - If they tip during earlier mat trades or across multiple follow-up trades, that gold stays attached to the order until you click `Complete`.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
