@@ -17,7 +17,7 @@ Current version: `2.1.13`
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
 - Resize the workbench to fit your screen or chat flow, with the layout saved per character
-- Keep queued orders visible through the full trade flow so you can verify each requested enchant before clearing the order
+- Keep queued orders visible through the full trade flow so trades can verify each requested enchant automatically before you clear the order
 
 ## Install
 
@@ -50,11 +50,11 @@ Current version: `2.1.13`
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
-- Click `Apply`, then click the customer's item in the trade window. Once both sides accept, the workbench records the trade gold and carries over matching mats automatically.
+- `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it.
 - If they tip during earlier mat trades or across multiple follow-up trades, that gold stays attached to the order until you click `Complete`.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
-- Check the green checkbox next to each requested enchant once you have verified that specific enchant is fully paid and done.
-- Multi-enchant orders only turn green once every requested enchant has been checked off.
+- Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
+- Multi-enchant orders only turn green once every requested enchant has been confirmed automatically.
 - The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.

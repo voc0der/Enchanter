@@ -975,6 +975,21 @@ local function Event_UI_ERROR_MESSAGE(arg1, arg2, arg3)
 	EC.HandleInviteFailureMessage(message)
 end
 
+local function Event_UI_INFO_MESSAGE(arg1, arg2, arg3)
+	local message
+	if type(arg1) == "string" then
+		message = arg1
+	elseif type(arg2) == "string" then
+		message = arg2
+	elseif type(arg3) == "string" then
+		message = arg3
+	end
+
+	if message == ERR_TRADE_COMPLETE and EC.Workbench and EC.Workbench.MarkTradeCompleted then
+		EC.Workbench.MarkTradeCompleted()
+	end
+end
+
 local function Event_ADDON_LOADED(arg1)
 	if arg1 == TOCNAME then
 		EC.Init()
@@ -990,6 +1005,7 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("CHAT_MSG_OFFICER", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
 	EC.Tool.RegisterEvent("UI_ERROR_MESSAGE", Event_UI_ERROR_MESSAGE)
+	EC.Tool.RegisterEvent("UI_INFO_MESSAGE", Event_UI_INFO_MESSAGE)
 	EC.Tool.RegisterEvent("TRADE_SHOW", Event_TRADE_SHOW)
 	EC.Tool.RegisterEvent("TRADE_MONEY_CHANGED", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_TARGET_ITEM_CHANGED", Event_TRADE_STATE_CHANGED)

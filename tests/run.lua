@@ -300,6 +300,7 @@ local function setup_env(opts)
         UI_REFORGING_REFORGE = 23291,
         AUCTION_WINDOW_OPEN = 5274,
     }
+    _G.ERR_TRADE_COMPLETE = "Trade complete."
     _G.PlaySound = function(sound_kit, channel)
         if opts.play_sound_errors_on_channel and channel ~= nil then
             error("channel playback unsupported")
@@ -781,6 +782,7 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["TRADE_MONEY_CHANGED"], "trade money changes should be registered independently of /ec start")
     assert_true(seen["TRADE_ACCEPT_UPDATE"], "trade accept updates should be registered independently of /ec start")
     assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
+    assert_true(seen["UI_INFO_MESSAGE"], "trade completion messages should be registered independently of /ec start")
 end
 
 local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
@@ -1625,7 +1627,7 @@ local function test_order_only_turns_verified_when_all_recipes_are_checked()
     assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should also show the full-order verified state once all recipes are checked")
 end
 
-local function test_recipe_verify_checkbox_updates_order_state()
+local function test_recipe_lines_show_read_only_status_indicators()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -1638,14 +1640,45 @@ local function test_recipe_verify_checkbox_updates_order_state()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF minor speed pst", "Buyer-Check")
 
-    frame.Detail.RecipeLines[1].VerifyCheck:SetChecked(true)
-    frame.Detail.RecipeLines[1].VerifyCheck.scripts["OnClick"](frame.Detail.RecipeLines[1].VerifyCheck)
+    assert_nil(frame.Detail.RecipeLines[1].VerifyCheck, "recipe rows should no longer expose a clickable verify checkbox")
+    assert_equal(frame.Detail.RecipeLines[1].StatusText.text, "?", "unverified recipe rows should show a question-mark indicator")
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown == false, "unverified recipe rows should not show the green-check texture")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Boots - Minor Speed", true)
+
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "verified recipe rows should show the green-check texture")
+    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "verified recipe rows should hide the question-mark indicator")
+end
+
+local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-AutoVerify")
+
+    addon.Workbench.BeginTrade("Buyer-AutoVerify")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
 
     local order = addon.Workbench.GetSelectedOrder()
     local verified, total = addon.Workbench.GetRecipeVerificationProgress(order)
 
-    assert_equal(verified, 1, "recipe verify checkbox should persist the verified recipe count")
-    assert_equal(total, 1, "recipe verify progress should use the order recipe total")
+    assert_equal(verified, 1, "accepted trades should auto-verify a matching enchant even when Apply was not clicked first")
+    assert_equal(total, 1, "auto verification should still track the total queued recipe count")
+    assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "auto-verified recipes should show the green-check indicator")
+    assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "auto-verified recipes should hide the question-mark indicator")
 end
 
 local function test_trade_offer_marks_live_material_progress()
@@ -1950,7 +1983,8 @@ test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
-test_recipe_verify_checkbox_updates_order_state()
+test_recipe_lines_show_read_only_status_indicators()
+test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
 test_trade_material_helper_copies_live_offer_into_recorded_progress()
