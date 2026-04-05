@@ -65,6 +65,7 @@ local function setup_env(opts)
         invites = {},
         prints = {},
         played_sounds = {},
+        played_sound_calls = {},
         do_trade_skill_calls = {},
         slash = nil,
         timer_delays = {},
@@ -290,8 +291,15 @@ local function setup_env(opts)
         UI_REFORGING_REFORGE = 23291,
         AUCTION_WINDOW_OPEN = 5274,
     }
-    _G.PlaySound = function(sound_kit)
+    _G.PlaySound = function(sound_kit, channel)
+        if opts.play_sound_errors_on_channel and channel ~= nil then
+            error("channel playback unsupported")
+        end
         state.played_sounds[#state.played_sounds + 1] = sound_kit
+        state.played_sound_calls[#state.played_sound_calls + 1] = {
+            sound_kit = sound_kit,
+            channel = channel,
+        }
         return true
     end
     _G.CastSpellByName = function(name)
@@ -1026,6 +1034,29 @@ local function test_workbench_queue_alert_only_plays_for_new_orders_when_enabled
     assert_equal(#state.played_sounds, 2, "queue alert should only play for newly queued customers")
     assert_equal(state.played_sounds[1], SOUNDKIT.UI_REFORGING_REFORGE, "queue alert should use the enchanting-themed WoW sound first")
     assert_equal(state.played_sounds[2], SOUNDKIT.UI_REFORGING_REFORGE, "each new queued customer should reuse the same alert sound")
+    assert_equal(state.played_sound_calls[1].channel, "Master", "queue alerts should play on the Master channel so they can be heard with muted SFX")
+    assert_equal(state.played_sound_calls[2].channel, "Master", "each new queue alert should keep using the Master channel")
+end
+
+local function test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
+    local addon, state = setup_env({
+        play_sound_errors_on_channel = true,
+        char_db = {
+            Workbench = {
+                SoundEnabled = true,
+            },
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Sound-Fallback", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    assert_equal(#state.played_sounds, 1, "queue alert should still play when the client rejects explicit sound channels")
+    assert_equal(state.played_sound_calls[1].channel, nil, "unsupported channel playback should retry without a channel instead of failing silently")
 end
 
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
@@ -1570,6 +1601,7 @@ test_scan_selects_trade_skill_before_capturing_materials()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
+test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_trade_cast_keeps_order_until_verified()

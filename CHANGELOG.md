@@ -1,3 +1,9 @@
+## [2.1.11] - 2026-04-05
+
+### Fixed
+- Routed workbench queue alerts through the `Master` sound channel so the `Sound` toggle can still ping when sound effects are muted
+- Added a compatibility fallback so queue alerts still play on clients that reject an explicit sound channel argument
+
 ## [2.1.10] - 2026-04-05
 
 ### Changed
