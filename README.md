@@ -45,7 +45,7 @@ Current version: `2.1.14`
 - Use the small `Lock` or `Unlock` button to control whether the workbench frame can be dragged.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound` and now plays through the `Master` channel so muted sound effects do not suppress the queue ping.
-- When every requested enchant is verified, the workbench watches live trade gold automatically, but you still choose when to click `Complete`.
+- When every requested enchant is verified, the workbench watches live trade gold automatically, but you still choose when to click `Complete`, even if the final tip is `0g`.
 - A footer line near `Resize` keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.

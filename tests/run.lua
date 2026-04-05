@@ -834,7 +834,7 @@ local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manua
     assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should return to zero after clear")
 end
 
-local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+local function test_workbench_complete_allows_zero_tip_without_a_separate_button()
     local addon = setup_env({
         char_db = {
             RecipeList = {
@@ -851,14 +851,8 @@ local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
 
     assert_equal(frame.Detail.TipStatus.text, "Tip: not recorded", "untipped orders should show that no gold has been recorded yet")
-    assert_true(frame.Detail.NoTipButton.shown, "untipped orders should offer a compact no-tip override")
-    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until gold is recorded or no-tip is confirmed")
-
-    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
-
-    assert_equal(frame.Detail.TipStatus.text, "Tip: no tip", "clicking no-tip should settle the order at zero gold")
-    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide after zero tip is confirmed")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should enable after no-tip is confirmed")
+    assert_nil(frame.Detail.NoTipButton, "untipped orders should no longer render a separate no-tip button")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available for verified zero-tip orders")
 
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
@@ -886,7 +880,7 @@ local function test_workbench_active_trade_hides_manual_completion_controls()
     addon.Workbench.BeginTrade("Buyer-LiveTrade")
 
     assert_equal(frame.Detail.TipStatus.text, "Tip in trade: 50s", "active trades should show the live trade gold amount")
-    assert_true(frame.Detail.NoTipButton.shown == false, "active trades should hide the manual no-tip override")
+    assert_nil(frame.Detail.NoTipButton, "active trades should no longer render a separate no-tip override")
     assert_true(frame.Detail.CompleteButton.shown == false, "active trades should hide the manual completion fallback")
     assert_true(string.find(frame.Detail.ReadyText.text or "", "Complete stays manual") ~= nil, "active verified trades should explain that trade syncing is automatic but completion stays manual")
     assert_equal(state.trade_target_money, 5000, "active trade ui test should rely on the trade money api state")
@@ -960,12 +954,11 @@ local function test_workbench_accepted_trade_commits_progress_and_waits_for_manu
     assert_equal(totalRecipes, 1, "the order should still track the recipe total")
     assert_equal(checked, 2, "accepted trades should carry the matching mats forward into the order")
     assert_equal(totalMats, 2, "material progress should still use the order material total")
-    assert_true(frame.Detail.NoTipButton.shown, "after a zero-tip trade the manual no-tip confirmation should still be available")
-    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until you explicitly settle a zero-tip order")
+    assert_nil(frame.Detail.NoTipButton, "after a zero-tip trade there should still be no separate no-tip button")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should stay available after a verified zero-tip trade")
     assert_equal(state.CompletedOrders, 0, "accepted zero-tip trades should not auto-complete the order")
     assert_equal(state.CompletedTipsCopper, 0, "accepted zero-tip trades should not bank tips before manual completion")
 
-    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
     assert_equal(state.CompletedOrders, 1, "manual completion should still work after a zero-tip accepted trade")
@@ -1954,7 +1947,7 @@ test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
 test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
-test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+test_workbench_complete_allows_zero_tip_without_a_separate_button()
 test_workbench_active_trade_hides_manual_completion_controls()
 test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
 test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()

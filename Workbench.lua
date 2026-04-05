@@ -373,11 +373,6 @@ local function GetDisplayedTradeMaterialCount(activeTrade, materialKey)
 	return math.max(0, offeredCount - recordedCount)
 end
 
-local function HasResolvedTip(order)
-	local _, resolved = GetResolvedTipCopper(order)
-	return resolved
-end
-
 local function GetTipStatusText(order, activeTrade)
 	local pendingTradeTipCopper = activeTrade and math.max(0, math.floor(tonumber(activeTrade.TargetTradeMoneyCopper) or 0)) or 0
 	if pendingTradeTipCopper > 0 then
@@ -1828,21 +1823,6 @@ function Workbench.SetOrderTipText(orderId, value)
 	return true
 end
 
-function Workbench.MarkOrderNoTip(orderId)
-	local order = Workbench.GetOrderById(orderId)
-	if not order then
-		return false
-	end
-
-	order.PendingTipText = ""
-	order.LastObservedTipCopper = 0
-	order.NoTipConfirmed = true
-	order.UpdatedAt = TimestampText()
-	WorkbenchDebug("marked no tip for", order.Customer)
-	Workbench.Refresh()
-	return true
-end
-
 function Workbench.SetAllMaterials(orderId, checked)
 	local state = Workbench.EnsureState()
 	for _, order in ipairs(state.Orders) do
@@ -1868,7 +1848,6 @@ function Workbench.CompleteOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
 	local isVerified, verifiedCount, recipeTotal
 	local tipCopper
-	local tipResolved
 
 	if not order then
 		return false
@@ -1880,11 +1859,7 @@ function Workbench.CompleteOrder(orderId)
 		return false
 	end
 
-	tipCopper, tipResolved = GetResolvedTipCopper(order)
-	if not tipResolved then
-		WorkbenchDebug("refused to complete order without a settled tip for", order.Customer)
-		return false
-	end
+	tipCopper = select(1, GetResolvedTipCopper(order))
 
 	state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
 	state.CompletedTipsCopper = (tonumber(state.CompletedTipsCopper) or 0) + tipCopper
@@ -2576,17 +2551,6 @@ function Workbench.CreateFrame()
 	frame.Detail.TipStatus:SetJustifyH("LEFT")
 	frame.Detail.TipStatus:Hide()
 
-	frame.Detail.NoTipButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
-	frame.Detail.NoTipButton:SetSize(60, 20)
-	frame.Detail.NoTipButton:SetText("No tip")
-	ApplyElvUISkin(frame.Detail.NoTipButton, "button")
-	frame.Detail.NoTipButton:SetScript("OnClick", function(self)
-		if self.OrderId then
-			Workbench.MarkOrderNoTip(self.OrderId)
-		end
-	end)
-	frame.Detail.NoTipButton:Hide()
-
 	frame.Detail.CompleteButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
 	frame.Detail.CompleteButton:SetSize(72, 20)
 	frame.Detail.CompleteButton:SetText("Complete")
@@ -2771,7 +2735,6 @@ function Workbench.Refresh()
 		frame.Detail.TradeHint:Hide()
 		frame.Detail.ActionRow:Hide()
 		frame.Detail.TipStatus:Hide()
-		frame.Detail.NoTipButton:Hide()
 		frame.Detail.CompleteButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
@@ -2798,7 +2761,7 @@ function Workbench.Refresh()
 	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
 	local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 	local activeTrade = GetActiveTradeForOrder(order)
-	local tipResolved = HasResolvedTip(order)
+	local hasRecordedTip = GetRecordedTipCopper(order) > 0
 	local readyText = total > 0 and string.format("%d/%d materials ready", checked, total) or "No materials captured yet"
 	local verificationText = recipeTotal > 0 and string.format("%d/%d verified", verifiedCount, recipeTotal) or "No enchants queued"
 	if recipeTotal > 0 and verifiedCount == recipeTotal then
@@ -2819,13 +2782,12 @@ function Workbench.Refresh()
 	frame.Detail.ActionRow:Show()
 
 	local showManualComplete = not activeTrade
-	local showManualNoTip = showManualComplete and (not tipResolved)
 
 	frame.Detail.CompleteButton:ClearAllPoints()
 	frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	frame.Detail.CompleteButton.OrderId = order.Id
 	if showManualComplete then
-		if recipeTotal > 0 and verifiedCount == recipeTotal and tipResolved then
+		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if frame.Detail.CompleteButton.Enable then
 				frame.Detail.CompleteButton:Enable()
 			end
@@ -2847,19 +2809,10 @@ function Workbench.Refresh()
 	frame.Detail.TipStatus:SetText(GetTipStatusText(order, activeTrade))
 	frame.Detail.TipStatus:Show()
 
-	if not showManualNoTip then
-		frame.Detail.NoTipButton:Hide()
-		if showManualComplete then
-			frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
-		else
-			frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
-		end
+	if showManualComplete then
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
 	else
-		frame.Detail.NoTipButton:ClearAllPoints()
-		frame.Detail.NoTipButton:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -6, 0)
-		frame.Detail.NoTipButton.OrderId = order.Id
-		frame.Detail.NoTipButton:Show()
-		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.NoTipButton, "LEFT", -8, 0)
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	end
 
 	frame.Detail.RecipesHeader:ClearAllPoints()
@@ -2918,10 +2871,10 @@ function Workbench.Refresh()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
 				statusBits[#statusBits + 1] = "|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r"
-			elseif tipResolved then
+			elseif hasRecordedTip then
 				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r"
 			else
-				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. Open a trade to record the tip, or click No tip.|r"
+				statusBits[#statusBits + 1] = "|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r"
 			end
 		elseif recipeTotal > 0 and verifiedCount > 0 then
 			statusBits[#statusBits + 1] = "|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades flip each enchant from ? to a green check automatically.|r"
@@ -2943,10 +2896,10 @@ function Workbench.Refresh()
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			if activeTrade then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAccepted trades will keep this verified order updated automatically. Complete stays manual.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
-			elseif tipResolved then
+			elseif hasRecordedTip then
 				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Complete is ready if you need it.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			else
-				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. Open a trade to record the tip, or click No tip.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
+				frame.Detail.ReadyText:SetText("|cFF74D06CAll requested enchants are verified. If they still want to tip, open a trade and it will be tracked automatically; otherwise just click Complete.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
 			end
 		elseif recipeTotal > 0 then
 			frame.Detail.ReadyText:SetText("|cFFFFD26A" .. tostring(verifiedCount) .. "/" .. tostring(recipeTotal) .. " enchants verified. Accepted trades will flip the rest automatically.|r  |cFFFF9F5AMaterials snapshot unavailable until your recipe scan exposes reagent data.|r")
