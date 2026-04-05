@@ -67,11 +67,14 @@ local function setup_env(opts)
         played_sounds = {},
         played_sound_calls = {},
         do_trade_skill_calls = {},
+        events = {},
         slash = nil,
         timer_delays = {},
         timer_callbacks = {},
         trade_skills = copy_table(opts.trade_skills or {}),
         trade_target_items = copy_table(opts.trade_target_items or {}),
+        trade_player_items = copy_table(opts.trade_player_items or {}),
+        trade_target_money = tonumber(opts.trade_target_money) or 0,
         whispers = {},
         frames = {},
         selected_trade_skill = nil,
@@ -412,17 +415,32 @@ local function setup_env(opts)
         local reagent = skill.reagents[reagent_index]
         return reagent and reagent.link or nil
     end
-    _G.MAX_TRADE_ITEMS = 6
+    _G.MAX_TRADE_ITEMS = 7
+    _G.MAX_TRADABLE_ITEMS = 6
+    _G.TRADE_ENCHANT_SLOT = 7
     _G.GetTradeTargetItemInfo = function(index)
         local item = state.trade_target_items[index]
         if not item then
             return nil
         end
-        return item.name, item.texture, item.count
+        return item.name, item.texture, item.count, item.quality, item.is_usable, item.enchantment, item.item_id
     end
     _G.GetTradeTargetItemLink = function(index)
         local item = state.trade_target_items[index]
         return item and item.link or nil
+    end
+    _G.GetTradePlayerItemInfo = function(index)
+        local item = state.trade_player_items[index]
+        if not item then
+            return nil
+        end
+        return item.name, item.texture, item.count, item.quality, item.enchantment, item.can_lose_transmog, item.is_bound, item.item_id
+    end
+    _G.GetTargetTradeMoney = function()
+        return state.trade_target_money or 0
+    end
+    _G.GetPlayerTradeMoney = function()
+        return state.trade_player_money or 0
     end
     _G.GetGameTime = function()
         if opts.game_time then
@@ -506,7 +524,9 @@ local function setup_env(opts)
         }
     end
 
-    function addon.Tool.RegisterEvent() end
+    function addon.Tool.RegisterEvent(event)
+        state.events[#state.events + 1] = event
+    end
 
     load_chunk("Tags.lua", "Enchanter", addon)
     load_chunk("Options.lua", "Enchanter", addon)
@@ -737,8 +757,29 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
 end
 
-local function test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
-    local addon = setup_env({
+local function test_trade_events_register_even_when_chat_scanning_is_stopped()
+    local addon, state = setup_env({
+        char_db = {
+            Stop = true,
+        },
+    })
+
+    addon.OnLoad()
+
+    local seen = {}
+    for _, event_name in ipairs(state.events) do
+        seen[event_name] = true
+    end
+
+    assert_true(seen["TRADE_SHOW"], "trade open should be registered even when chat scanning is stopped")
+    assert_true(seen["TRADE_MONEY_CHANGED"], "trade money changes should be registered independently of /ec start")
+    assert_true(seen["TRADE_ACCEPT_UPDATE"], "trade accept updates should be registered independently of /ec start")
+    assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
+end
+
+local function test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
+    local addon, state = setup_env({
+        trade_target_money = 123400,
         char_db = {
             RecipeList = {
                 ["Enchant Weapon - Mongoose"] = { "mongoose" },
@@ -753,19 +794,28 @@ local function test_workbench_complete_order_uses_observed_tip_and_clear_resets_
     local order = addon.Workbench.GetSelectedOrder()
     addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
     addon.Workbench.BeginTrade("Buyer-Tip")
-    addon.Workbench.FinishTrade(123400)
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.FinishTrade(0)
 
-    assert_equal(frame.Detail.TipStatus.text, "Tip: 12g 34s", "detail pane should show the tracked trade gold instead of asking for manual tip entry")
-    assert_true(frame.Detail.NoTipButton.shown == false, "no-tip button should hide once trade gold has been recorded")
-    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete button should enable after the order is verified and the tip is settled")
+    order = addon.Workbench.GetSelectedOrder()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_not_nil(order, "accepted trades should leave the order queued until you click complete")
+    assert_equal(order.LastObservedTipCopper, 123400, "accepted trades should store the target trade money on the order")
+    assert_equal(frame.Detail.TipStatus.text, "Tip: 12g 34s", "the detail pane should show the recorded trade tip after the trade closes")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should enable after a verified order has a recorded tip")
+    assert_equal(workbenchState.CompletedOrders, 0, "accepted trades should not auto-complete the order")
+    assert_equal(workbenchState.CompletedTipsCopper, 0, "accepted trades should wait for manual completion before banking totals")
+    assert_equal(#workbenchState.Orders, 1, "accepted verified trades should stay queued until manually completed")
+    assert_true(string.find(frame.QueueCountText.text or "", "0 done") ~= nil, "footer summary should stay unbanked until manual completion")
+    assert_equal(state.trade_target_money, 123400, "trade money test should use the target trade money api path")
 
     frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
 
-    local workbenchState = addon.Workbench.EnsureState()
-
-    assert_equal(workbenchState.CompletedOrders, 1, "completing a verified order should increment the running completed count")
-    assert_equal(workbenchState.CompletedTipsCopper, 123400, "completed orders should add the parsed tip to the running total")
-    assert_equal(#workbenchState.Orders, 0, "completed orders should leave the active queue")
+    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should increment the running completed count")
+    assert_equal(workbenchState.CompletedTipsCopper, 123400, "manual completion should bank the tracked trade money in the running total")
+    assert_equal(#workbenchState.Orders, 0, "manual completion should remove the order from the queue")
     assert_true(string.find(frame.QueueCountText.text or "", "1 done") ~= nil, "footer summary should show the completed count")
     assert_true(string.find(frame.QueueCountText.text or "", "12g 34s tips") ~= nil, "footer summary should show the running tips total")
 
@@ -807,6 +857,245 @@ local function test_workbench_no_tip_button_allows_manual_zero_tip_completion()
     local workbenchState = addon.Workbench.EnsureState()
     assert_equal(workbenchState.CompletedOrders, 1, "zero-tip completions should still count as completed orders")
     assert_equal(workbenchState.CompletedTipsCopper, 0, "no-tip completions should not add to the running tips total")
+end
+
+local function test_workbench_active_trade_hides_manual_completion_controls()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-LiveTrade")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+    addon.Workbench.BeginTrade("Buyer-LiveTrade")
+
+    assert_equal(frame.Detail.TipStatus.text, "Tip in trade: 50s", "active trades should show the live trade gold amount")
+    assert_true(frame.Detail.NoTipButton.shown == false, "active trades should hide the manual no-tip override")
+    assert_true(frame.Detail.CompleteButton.shown == false, "active trades should hide the manual completion fallback")
+    assert_true(string.find(frame.Detail.ReadyText.text or "", "Complete stays manual") ~= nil, "active verified trades should explain that trade syncing is automatic but completion stays manual")
+    assert_equal(state.trade_target_money, 5000, "active trade ui test should rely on the trade money api state")
+end
+
+local function test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-NoEnchantYet")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-NoEnchantYet")
+    addon.Workbench.NoteRecipeCast("Enchant Boots - Minor Speed")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    local verified, total = addon.Workbench.GetRecipeVerificationProgress(addon.Workbench.GetOrderById(order.Id))
+    assert_equal(verified, 0, "an item merely sitting in the enchant slot should not auto-verify the recipe")
+    assert_equal(total, 1, "the order should still track the single requested recipe")
+end
+
+local function test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                    { Name = "Lesser Nether Essence", Count = 1, Link = "item:11174" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+            [2] = { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+            [7] = { name = "Enchant Boots - Minor Speed", enchantment = "Minor Speed" },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Auto")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-Auto")
+    addon.Workbench.NoteRecipeCast("Enchant Boots - Minor Speed")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderById(order.Id)
+    local state = addon.Workbench.EnsureState()
+    local verified, totalRecipes = addon.Workbench.GetRecipeVerificationProgress(order)
+    local checked, totalMats = addon.Workbench.GetMaterialProgress(order)
+
+    assert_not_nil(order, "accepted zero-tip trades should stay queued until you choose to complete them")
+    assert_equal(verified, 1, "accepted trades should auto-verify the applied recipe once the enchant slot shows the enchantment")
+    assert_equal(totalRecipes, 1, "the order should still track the recipe total")
+    assert_equal(checked, 2, "accepted trades should carry the matching mats forward into the order")
+    assert_equal(totalMats, 2, "material progress should still use the order material total")
+    assert_true(frame.Detail.NoTipButton.shown, "after a zero-tip trade the manual no-tip confirmation should still be available")
+    assert_true(not frame.Detail.CompleteButton:IsEnabled(), "complete should stay disabled until you explicitly settle a zero-tip order")
+    assert_equal(state.CompletedOrders, 0, "accepted zero-tip trades should not auto-complete the order")
+    assert_equal(state.CompletedTipsCopper, 0, "accepted zero-tip trades should not bank tips before manual completion")
+
+    frame.Detail.NoTipButton.scripts["OnClick"](frame.Detail.NoTipButton)
+    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
+
+    assert_equal(state.CompletedOrders, 1, "manual completion should still work after a zero-tip accepted trade")
+    assert_equal(state.CompletedTipsCopper, 0, "manual completion should bank zero tip for a no-tip order")
+    assert_nil(addon.Workbench.GetOrderById(order.Id), "manual completion should remove the finished zero-tip order")
+end
+
+local function test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-MultiTip")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+
+    addon.Workbench.BeginTrade("Buyer-MultiTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    state.trade_target_money = 2000
+    addon.Workbench.BeginTrade("Buyer-MultiTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_not_nil(order, "verified orders should stay queued so later tips can still attach")
+    assert_equal(order.LastObservedTipCopper, 7000, "multiple successful tip trades should accumulate until manual completion")
+    assert_equal(frame.Detail.TipStatus.text, "Tip: 70s", "the detail pane should show the accumulated tip total after multiple trades")
+    assert_true(frame.Detail.CompleteButton:IsEnabled(), "complete should be ready once the accumulated tip is recorded")
+    assert_equal(workbenchState.CompletedOrders, 0, "multiple accepted tip trades should not auto-complete the order")
+
+    frame.Detail.CompleteButton.scripts["OnClick"](frame.Detail.CompleteButton)
+
+    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should bank the accumulated multi-trade tip")
+    assert_equal(workbenchState.CompletedTipsCopper, 7000, "manual completion should use the full accumulated tip total")
+end
+
+local function test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
+    local addon, state = setup_env({
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-SplitTip")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-SplitTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    assert_not_nil(order, "orders without a finished enchant should stay queued after an earlier tip trade")
+    assert_equal(order.LastObservedTipCopper, 5000, "trade tips should accumulate on the order even before the final trade finishes the work")
+
+    addon.Workbench.SetRecipeVerified(order.Id, "Enchant Weapon - Mongoose", true)
+    state.trade_target_money = 0
+    addon.Workbench.BeginTrade("Buyer-SplitTip")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    local workbenchState = addon.Workbench.EnsureState()
+    assert_not_nil(order, "the later accepted trade should still leave the order queued for manual completion")
+    assert_equal(order.LastObservedTipCopper, 5000, "the earlier tip should stay attached to the order after the later accepted trade")
+    assert_equal(workbenchState.CompletedOrders, 0, "the later accepted trade should not auto-complete the already-paid order")
+
+    addon.Workbench.CompleteOrder(order.Id)
+
+    assert_equal(workbenchState.CompletedOrders, 1, "manual completion should bank the earlier split tip once the order is finished")
+    assert_equal(workbenchState.CompletedTipsCopper, 5000, "manual completion should still count the earlier tip total")
+end
+
+local function test_workbench_accumulates_split_material_counts_across_accepted_trades()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+                ["Enchant Cloak - Greater Agility"] = { "greater agility" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                },
+                ["Enchant Cloak - Greater Agility"] = {
+                    { Name = "Soul Dust", Count = 6, Link = "item:11083" },
+                },
+            },
+        },
+        trade_target_items = {
+            [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.Workbench.AddOrUpdateOrder("Buyer-SplitMats", "LF minor speed + greater agility", {
+        ["Enchant Boots - Minor Speed"] = true,
+        ["Enchant Cloak - Greater Agility"] = true,
+    })
+
+    local order = addon.Workbench.GetSelectedOrder()
+    addon.Workbench.BeginTrade("Buyer-SplitMats")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    local checked, total = addon.Workbench.GetMaterialProgress(order)
+    assert_equal(order.MaterialCounts["item:11083"], 6, "the first accepted trade should persist the partial material count")
+    assert_equal(checked, 0, "a partial material handoff should not mark the aggregated material row complete yet")
+    assert_equal(total, 1, "aggregated material progress should still treat the shared reagent as one row")
+
+    state.trade_target_items = {
+        [1] = { name = "Soul Dust", count = 6, link = "item:11083" },
+    }
+    addon.Workbench.BeginTrade("Buyer-SplitMats")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetSelectedOrder()
+    checked, total = addon.Workbench.GetMaterialProgress(order)
+    assert_equal(order.MaterialCounts["item:11083"], 12, "accepted trades should accumulate partial reagent counts across multiple handoffs")
+    assert_equal(checked, 1, "once the accumulated count reaches the required total the material row should complete")
+    assert_equal(total, 1, "the aggregated material row count should stay stable across repeated handoffs")
 end
 
 local function test_workbench_header_button_scans_when_recipe_data_is_missing()
@@ -1589,8 +1878,15 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_sound_button_defaults_off_and_toggles()
-test_workbench_complete_order_uses_observed_tip_and_clear_resets_them()
+test_trade_events_register_even_when_chat_scanning_is_stopped()
+test_workbench_tracks_trade_tip_using_trade_money_api_until_manual_completion()
 test_workbench_no_tip_button_allows_manual_zero_tip_completion()
+test_workbench_active_trade_hides_manual_completion_controls()
+test_trade_enchant_slot_requires_real_enchantment_before_auto_verify()
+test_workbench_accepted_trade_commits_progress_and_waits_for_manual_zero_tip_completion()
+test_workbench_accumulates_multiple_trade_tips_until_manual_completion()
+test_workbench_accumulates_trade_tip_before_the_final_successful_trade()
+test_workbench_accumulates_split_material_counts_across_accepted_trades()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_refresh_survives_without_fontstring_setshown()
