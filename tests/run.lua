@@ -800,7 +800,75 @@ local function assert_whisper_contains_recipe(message, recipe_name, context)
     )
 end
 
-local function test_default_request_matching_matrix()
+local function sorted_recipe_names(recipe_names)
+    local out = copy_table(recipe_names or {})
+    table.sort(out)
+    return out
+end
+
+local function assert_recipe_bucket_matches(order, expected_recipes, context)
+    assert_not_nil(order, (context or "order") .. " should exist")
+
+    local actual = sorted_recipe_names(order.Recipes or {})
+    local expected = sorted_recipe_names(expected_recipes or {})
+
+    assert_equal(#actual, #expected, (context or "order") .. " should have the expected recipe count")
+    for index = 1, #expected do
+        assert_equal(actual[index], expected[index], (context or "order") .. " should bucket the exact recipes")
+    end
+end
+
+local function run_request_matching_case(case, index, invalid)
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+    })
+
+    local customer_name = (invalid and "Buyer-Invalid-" or "Buyer-Valid-") .. tostring(index)
+    seed_scanned_recipes(addon, case.scanned)
+    addon.OptionsUpdate()
+    addon.ParseMessage(case.message, customer_name)
+
+    local order = addon.Workbench.GetOrderByCustomer(customer_name)
+
+    if invalid then
+        assert_equal(#state.whispers, 0, case.name .. " should not whisper for a blocked or invalid match")
+        assert_equal(#state.invites, 0, case.name .. " should not invite for a blocked or invalid match")
+        assert_nil(order, case.name .. " should not create a workbench order")
+        assert_equal(#addon.Workbench.EnsureState().Orders, 0, case.name .. " should not queue any orders")
+        return
+    end
+
+    assert_equal(#state.whispers, 1, case.name .. " should whisper exactly once")
+    assert_equal(#state.invites, 1, case.name .. " should invite exactly once")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, case.name .. " should queue exactly one order")
+    assert_recipe_bucket_matches(order, case.expected, case.name)
+
+    local matched_count = #case.expected
+    local requested_count = case.requested or matched_count
+    assert_equal(order.RequestedRecipeCount, requested_count, case.name .. " should track the correct requested count")
+
+    local whisper = state.whispers[1].message
+    for _, recipe_name in ipairs(case.expected or {}) do
+        assert_whisper_contains_recipe(whisper, recipe_name, case.name)
+    end
+
+    local warning_match = string.find(whisper, "%f[%d]%d+/%d+%f[%D]")
+    if requested_count > matched_count then
+        assert_true(
+            string.find(whisper, tostring(matched_count) .. "/" .. tostring(requested_count), 1, true) ~= nil,
+            case.name .. " should show the accurate incomplete warning"
+        )
+    else
+        assert_true(warning_match == nil, case.name .. " should not show an incomplete warning")
+    end
+end
+
+local function test_valid_request_matching_scenarios()
     local cases = {
         {
             name = "comma separated chest and weapon request",
@@ -831,7 +899,7 @@ local function test_default_request_matching_matrix()
             requested = 3,
         },
         {
-            name = "slash separated mixed request",
+            name = "slash separated chest and weapon request",
             message = "wtb enchant chest - restore mana prime / 81 heal wep",
             scanned = {
                 "Enchant Chest - Restore Mana Prime",
@@ -844,36 +912,58 @@ local function test_default_request_matching_matrix()
             requested = 2,
         },
         {
-            name = "default blacklist blocks glove healing on weapon ask",
-            message = "lf 35 heal wep",
+            name = "glove and weapon healing stay separate by segment",
+            message = "lf 35 heal gloves, 81 heal wep",
             scanned = {
                 "Enchant Gloves - Major Healing",
-            },
-            expected = {},
-        },
-        {
-            name = "default blacklist blocks weapon healing on chest ask",
-            message = "lf 81 heal chest",
-            scanned = {
                 "Enchant Weapon - Major Healing",
             },
-            expected = {},
-        },
-        {
-            name = "default blacklist blocks bracer mana prime on chest ask",
-            message = "lf restore mana prime to chest",
-            scanned = {
-                "Enchant Bracer - Restore Mana Prime",
+            expected = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
             },
-            expected = {},
+            requested = 2,
         },
         {
-            name = "default blacklist blocks glove major spellpower on weapon ask",
-            message = "lf major spellpower weapon",
+            name = "glove and weapon spellpower stay separate by segment",
+            message = "lf 20sp to glove, 30 sp wep",
             scanned = {
                 "Enchant Gloves - Major Spellpower",
+                "Enchant Weapon - Spell Power",
             },
-            expected = {},
+            expected = {
+                "Enchant Gloves - Major Spellpower",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 2,
+        },
+        {
+            name = "cloak boots and weapon list buckets three distinct requests",
+            message = "lf greater agility to cloak / boar / mongoose",
+            scanned = {
+                "Enchant Cloak - Greater Agility",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Cloak - Greater Agility",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 3,
+        },
+        {
+            name = "assault split between bracer and gloves",
+            message = "lf 24 ap bracer + 26 ap gloves",
+            scanned = {
+                "Enchant Bracer - Assault",
+                "Enchant Gloves - Assault",
+            },
+            expected = {
+                "Enchant Bracer - Assault",
+                "Enchant Gloves - Assault",
+            },
+            requested = 2,
         },
         {
             name = "segment list keeps spellpower variants distinct",
@@ -891,15 +981,17 @@ local function test_default_request_matching_matrix()
             requested = 3,
         },
         {
-            name = "specific restore mana prime recipe name does not double count",
-            message = "lf enchant chest - restore mana prime pst",
+            name = "chest mana prime and shield resilience pair correctly",
+            message = "lf mp5 to chest and 12 res to shield",
             scanned = {
                 "Enchant Chest - Restore Mana Prime",
+                "Enchant Shield - Resilience",
             },
             expected = {
                 "Enchant Chest - Restore Mana Prime",
+                "Enchant Shield - Resilience",
             },
-            requested = 1,
+            requested = 2,
         },
         {
             name = "incomplete list keeps accurate request count",
@@ -915,53 +1007,106 @@ local function test_default_request_matching_matrix()
             requested = 3,
         },
         {
+            name = "specific restore mana prime recipe name does not double count",
+            message = "lf enchant chest - restore mana prime pst",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            requested = 1,
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        run_request_matching_case(case, index, false)
+    end
+end
+
+local function test_invalid_request_matching_scenarios()
+    local cases = {
+        {
+            name = "default blacklist blocks glove healing on weapon ask",
+            message = "lf 35 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks weapon healing on chest ask",
+            message = "lf 81 heal chest",
+            scanned = {
+                "Enchant Weapon - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks bracer mana prime on chest ask",
+            message = "lf restore mana prime to chest",
+            scanned = {
+                "Enchant Bracer - Restore Mana Prime",
+            },
+        },
+        {
+            name = "default blacklist blocks glove major spellpower on weapon ask",
+            message = "lf major spellpower weapon",
+            scanned = {
+                "Enchant Gloves - Major Spellpower",
+            },
+        },
+        {
             name = "default blacklist blocks glove agility on weapon phrasing",
             message = "lf 15 agi to wep",
             scanned = {
                 "Enchant Gloves - Superior Agility",
             },
-            expected = {},
+        },
+        {
+            name = "default blacklist blocks glove healing on shield ask",
+            message = "lf 35 heal shield",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks weapon spell power on chest ask",
+            message = "lf 30 sp chest",
+            scanned = {
+                "Enchant Weapon - Spell Power",
+            },
+        },
+        {
+            name = "default blacklist blocks bracer spellpower on glove ask",
+            message = "lf 15 spell power gloves",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+            },
+        },
+        {
+            name = "default blacklist blocks shield resilience on chest ask",
+            message = "lf 12 res chest",
+            scanned = {
+                "Enchant Shield - Resilience",
+            },
+        },
+        {
+            name = "default blacklist blocks chest mana prime on wrist ask",
+            message = "lf mp5 to wrist",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+        },
+        {
+            name = "default blacklist blocks 2h agility on glove ask",
+            message = "lf 35 agi gloves",
+            scanned = {
+                "Enchant 2H Weapon - Major Agility",
+            },
         },
     }
 
     for index, case in ipairs(cases) do
-        local addon, state = setup_env({
-            db = {
-                InviteTimeDelay = 0,
-                WhisperTimeDelay = 0,
-                MsgPrefix = "I can do ",
-                WarnIncompleteOrder = true,
-            },
-        })
-
-        seed_scanned_recipes(addon, case.scanned)
-        addon.OptionsUpdate()
-        addon.ParseMessage(case.message, "Buyer-Matrix-" .. tostring(index))
-
-        if #case.expected == 0 then
-            assert_equal(#state.whispers, 0, case.name .. " should not whisper for a blocked or invalid match")
-            assert_equal(#state.invites, 0, case.name .. " should not invite for a blocked or invalid match")
-        else
-            assert_equal(#state.whispers, 1, case.name .. " should whisper exactly once")
-            assert_equal(#state.invites, 1, case.name .. " should invite exactly once")
-
-            local whisper = state.whispers[1].message
-            for _, recipe_name in ipairs(case.expected) do
-                assert_whisper_contains_recipe(whisper, recipe_name, case.name)
-            end
-
-            local warning_match = string.find(whisper, "%f[%d]%d+/%d+%f[%D]")
-            local matched_count = #case.expected
-            local requested_count = case.requested or matched_count
-            if requested_count > matched_count then
-                assert_true(
-                    string.find(whisper, tostring(matched_count) .. "/" .. tostring(requested_count), 1, true) ~= nil,
-                    case.name .. " should show the accurate incomplete warning"
-                )
-            else
-                assert_true(warning_match == nil, case.name .. " should not show an incomplete warning")
-            end
-        end
+        run_request_matching_case(case, index, true)
     end
 end
 
@@ -3035,7 +3180,8 @@ end
 test_scan_filters_unknown_and_nether_recipes()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
-test_default_request_matching_matrix()
+test_valid_request_matching_scenarios()
+test_invalid_request_matching_scenarios()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
 test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
