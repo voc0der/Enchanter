@@ -55,22 +55,22 @@ Current version: `2.1.27`
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A closed padlock means it is locked; the open padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
-- Use the speaker icon next to `Clear` and `Start` to decide whether brand new queued orders should play a WoW-native alert. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
-- When every requested enchant is verified, the workbench watches live trade gold automatically, but you still choose when to click `Complete`, even if the final tip is `0g`.
+- Use the speaker icon beside `Clear` to decide whether brand new queued orders should play a WoW-native alert. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
+- When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
 - When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
 - `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it, including late completion updates.
 - If the client falls back to Blizzard's older Craft window, `Cast` / `Apply` now temporarily clears the Craft filters so queued enchants can still be selected reliably before the filters are restored.
-- If they tip during earlier mat trades or across multiple follow-up trades, that gold stays attached to the order until you click `Complete`.
+- If they tip during earlier mat trades before the final enchant trade, that gold stays attached to the order until the verified trade retires it automatically.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
 - Multi-enchant orders only turn green once every requested enchant has been confirmed automatically.
 - The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
-- Accepted trades never retire the order by themselves; partial mats trades, repeated tip trades, and applied enchants stay attached to the queue entry until you click `Complete`, even if the live trade offer clears while the window is closing.
+- Accepted trades keep partial mats and early tips attached to the queue entry, and the order retires automatically as soon as a settled trade verifies every requested enchant, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.

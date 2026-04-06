@@ -6,10 +6,20 @@
 
 ### Changed
 - Switched enchant request parsing over to segment-aware matching so comma-, slash-, plus-, and `and`-separated asks are evaluated locally instead of as one giant message blob
+- Updated the workbench header to show the addon version and icon-based lock and sound toggles
 
 ### Fixed
 - Stopped nested or overlapping recipe tags from inflating incomplete-order counts like `1/2` when the customer only asked for one enchant
 - Tightened per-recipe blacklist handling so opposite-slot phrases block only the local request segment they belong to instead of suppressing unrelated enchants elsewhere in the same message
+
+## [2.1.26] - 2026-04-05
+
+### Changed
+- Retired fully verified workbench orders automatically so the old per-order `Complete` step is no longer needed after the final enchant trade settles
+
+### Fixed
+- Preserved accepted split-trade mats and tip snapshots even when `TRADE_CLOSED` arrives before the late trade completion signal, which keeps follow-up enchant trades from dropping green checks back to `?`
+- Carried earlier split-trade gold forward into the final verifying trade before the order auto-completes, so the running totals still bank the right tip amount
 
 ## [2.1.25] - 2026-04-05
 
