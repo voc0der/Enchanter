@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/enchanter-icon.svg" alt="Enchanter icon" width="180" />
+</p>
+
+<p align="center">
+  TBC Anniversary Classic trade-chat matching with an in-game enchanting workbench.
+</p>
+
 # Enchanter
 
 - Helps enchanters catch trade-chat requests that match recipes they actually know
@@ -45,9 +53,9 @@ Current version: `2.1.27`
 
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
-- Use the compact padlock `Lock` / `No Lock` button next to `X` to control whether the workbench frame can be dragged.
+- Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A closed padlock means it is locked; the open padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
-- Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound`, plays a short preview when you enable it, and still routes through the `Master` channel so muted sound effects do not suppress the queue ping.
+- Use the speaker icon next to `Clear` and `Start` to decide whether brand new queued orders should play a WoW-native alert. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically, but you still choose when to click `Complete`, even if the final tip is `0g`.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.

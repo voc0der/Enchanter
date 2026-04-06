@@ -50,6 +50,7 @@ bash ./.github/scripts/verify-release-package.sh
 - Prefer small, targeted changes over broad rewrites.
 - If you add a new runtime file, include it in [Enchanter.toc](Enchanter.toc).
 - Player-facing packages should only include files the game client actually needs.
+- README art and screenshots belong under `assets/`, and `assets/` should stay ignored in `.pkgmeta` so docs do not ship in addon packages.
 - Validate changes against the current TBC Anniversary client whenever behavior depends on Blizzard UI or profession APIs.
 - When touching the workbench, sanity-check the header `Scan` / `Start` / `Stop` flow, queue refresh behavior, and the active-trade `Apply` / `Use Trade` / verification flow in game when possible.
 
