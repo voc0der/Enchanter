@@ -1110,6 +1110,151 @@ local function test_invalid_request_matching_scenarios()
     end
 end
 
+local function test_requested_recipe_count_scenarios()
+    local cases = {
+        {
+            name = "two valid segmented requests count as two of two",
+            message = "lf 15 resil to chest, 81 heal wep",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "partial list counts missing third request",
+            message = "lf 15 resil to chest, 81 heal wep, mongoose",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 3,
+        },
+        {
+            name = "three matched and one missing count as three of four",
+            message = "lf mongoose, boar, dodge, savagery",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            requested = 4,
+        },
+        {
+            name = "blocked false positive does not inflate requested count",
+            message = "lf 35 heal gloves, 35 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+            expected = {
+                "Enchant Gloves - Major Healing",
+            },
+            requested = 1,
+        },
+        {
+            name = "mixed valid and invalid spellpower chunks count only real requests",
+            message = "lf 15 spell power bracer, 30 sp wep, major spellpower weapon",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            expected = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 2,
+        },
+        {
+            name = "invalid agility bait does not block a later valid request count",
+            message = "lf 15 agi to wep, mongoose",
+            scanned = {
+                "Enchant Gloves - Superior Agility",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 1,
+        },
+        {
+            name = "recognized unscanned bracer request still increments requested count",
+            message = "lf 15 res chest and 12 res shield and mp5 to wrist",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+            },
+            requested = 3,
+        },
+        {
+            name = "slash separated mixed known requests count accurately",
+            message = "lf mp5 to chest / 81 heal wep / 15 res chest",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+                "Enchant Chest - Major Resilience",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+                "Enchant Chest - Major Resilience",
+            },
+            requested = 3,
+        },
+        {
+            name = "multiple valid segments plus one unscanned valid chunk count as four",
+            message = "lf 35 heal gloves / 81 heal wep / 30 sp wep / 20sp to glove",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+                "Enchant Weapon - Spell Power",
+            },
+            expected = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 4,
+        },
+        {
+            name = "full four piece request counts as four of four",
+            message = "lf 15 resil chest, 12 res shield, mp5 to chest, mongoose",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Shield - Resilience",
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Shield - Resilience",
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 4,
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        run_request_matching_case(case, index + 100, false)
+    end
+end
+
 local function test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
     local addon = setup_env({
         db = {
@@ -3182,6 +3327,7 @@ test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
 test_valid_request_matching_scenarios()
 test_invalid_request_matching_scenarios()
+test_requested_recipe_count_scenarios()
 test_options_update_rebuilds_compiled_tags()
 test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
 test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
