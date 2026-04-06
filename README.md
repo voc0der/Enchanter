@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/enchanter-icon.svg" alt="Enchanter icon" width="180" />
+</p>
+
+<p align="center">
+  TBC Anniversary Classic trade-chat matching with an in-game enchanting workbench.
+</p>
+
 # Enchanter
 
 - Helps enchanters catch trade-chat requests that match recipes they actually know
@@ -6,16 +14,18 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.25`
+Current version: `2.1.27`
 
 ## What It Does
 
 - Run `/ec scan` once after learning recipes to build your known-enchant list
 - Match trade-chat requests against configured recipe tags
+- Split multi-enchant chat lines into local request segments so one phrase does not pollute the whole message
 - Auto-invite matched players when `Auto Invite` is enabled
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
+- Search and tune per-recipe search phrases plus additive per-recipe blacklist phrases from the settings panel
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
 - Resize the workbench to fit your screen or chat flow, with the layout saved per character
 - Keep queued orders visible through the full trade flow so accepted trades can carry mats and verify each requested enchant automatically, even across split handoff/enchant trades, before you clear the order
@@ -43,9 +53,9 @@ Current version: `2.1.25`
 
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
-- Use the compact padlock `Lock` / `No Lock` button next to `X` to control whether the workbench frame can be dragged.
+- Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A closed padlock means it is locked; the open padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
-- Use the small `No Sound` or `Sound` header button to decide whether brand new queued orders should play a WoW-native alert; it starts in `No Sound`, plays a short preview when you enable it, and still routes through the `Master` channel so muted sound effects do not suppress the queue ping.
+- Use the speaker icon beside `Clear` to decide whether brand new queued orders should play a WoW-native alert. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.

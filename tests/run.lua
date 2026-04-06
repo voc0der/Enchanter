@@ -22,6 +22,10 @@ local function assert_not_nil(value, message)
     end
 end
 
+local function escape_lua_pattern(value)
+    return (tostring(value):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
@@ -779,6 +783,498 @@ local function run_timer(state, index)
     callback()
 end
 
+local function seed_scanned_recipes(addon, recipe_names)
+    addon.DBChar.RecipeList = addon.DBChar.RecipeList or {}
+    addon.DBChar.RecipeLinks = addon.DBChar.RecipeLinks or {}
+
+    for _, recipe_name in ipairs(recipe_names or {}) do
+        addon.DBChar.RecipeList[recipe_name] = copy_table(addon.DefaultRecipeTags.enGB[recipe_name] or {})
+        addon.DBChar.RecipeLinks[recipe_name] = "[" .. recipe_name .. "] "
+    end
+end
+
+local function assert_whisper_contains_recipe(message, recipe_name, context)
+    assert_true(
+        string.find(message, "%[" .. escape_lua_pattern(recipe_name) .. "%]") ~= nil,
+        (context or "whisper") .. " should include " .. recipe_name
+    )
+end
+
+local function sorted_recipe_names(recipe_names)
+    local out = copy_table(recipe_names or {})
+    table.sort(out)
+    return out
+end
+
+local function assert_recipe_bucket_matches(order, expected_recipes, context)
+    assert_not_nil(order, (context or "order") .. " should exist")
+
+    local actual = sorted_recipe_names(order.Recipes or {})
+    local expected = sorted_recipe_names(expected_recipes or {})
+
+    assert_equal(#actual, #expected, (context or "order") .. " should have the expected recipe count")
+    for index = 1, #expected do
+        assert_equal(actual[index], expected[index], (context or "order") .. " should bucket the exact recipes")
+    end
+end
+
+local function run_request_matching_case(case, index, invalid)
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+    })
+
+    local customer_name = (invalid and "Buyer-Invalid-" or "Buyer-Valid-") .. tostring(index)
+    seed_scanned_recipes(addon, case.scanned)
+    addon.OptionsUpdate()
+    addon.ParseMessage(case.message, customer_name)
+
+    local order = addon.Workbench.GetOrderByCustomer(customer_name)
+
+    if invalid then
+        assert_equal(#state.whispers, 0, case.name .. " should not whisper for a blocked or invalid match")
+        assert_equal(#state.invites, 0, case.name .. " should not invite for a blocked or invalid match")
+        assert_nil(order, case.name .. " should not create a workbench order")
+        assert_equal(#addon.Workbench.EnsureState().Orders, 0, case.name .. " should not queue any orders")
+        return
+    end
+
+    assert_equal(#state.whispers, 1, case.name .. " should whisper exactly once")
+    assert_equal(#state.invites, 1, case.name .. " should invite exactly once")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, case.name .. " should queue exactly one order")
+    assert_recipe_bucket_matches(order, case.expected, case.name)
+
+    local matched_count = #case.expected
+    local requested_count = case.requested or matched_count
+    assert_equal(order.RequestedRecipeCount, requested_count, case.name .. " should track the correct requested count")
+
+    local whisper = state.whispers[1].message
+    for _, recipe_name in ipairs(case.expected or {}) do
+        assert_whisper_contains_recipe(whisper, recipe_name, case.name)
+    end
+
+    local warning_match = string.find(whisper, "%f[%d]%d+/%d+%f[%D]")
+    if requested_count > matched_count then
+        assert_true(
+            string.find(whisper, tostring(matched_count) .. "/" .. tostring(requested_count), 1, true) ~= nil,
+            case.name .. " should show the accurate incomplete warning"
+        )
+    else
+        assert_true(warning_match == nil, case.name .. " should not show an incomplete warning")
+    end
+end
+
+local function test_valid_request_matching_scenarios()
+    local cases = {
+        {
+            name = "comma separated chest and weapon request",
+            message = "lf enchanter 15 resil to chest, 81 heal wep",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "and separated multi list",
+            message = "looking for mongoose and boar and dodge",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            requested = 3,
+        },
+        {
+            name = "slash separated chest and weapon request",
+            message = "wtb enchant chest - restore mana prime / 81 heal wep",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "glove and weapon healing stay separate by segment",
+            message = "lf 35 heal gloves, 81 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "glove and weapon spellpower stay separate by segment",
+            message = "lf 20sp to glove, 30 sp wep",
+            scanned = {
+                "Enchant Gloves - Major Spellpower",
+                "Enchant Weapon - Spell Power",
+            },
+            expected = {
+                "Enchant Gloves - Major Spellpower",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 2,
+        },
+        {
+            name = "cloak boots and weapon list buckets three distinct requests",
+            message = "lf greater agility to cloak / boar / mongoose",
+            scanned = {
+                "Enchant Cloak - Greater Agility",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Cloak - Greater Agility",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 3,
+        },
+        {
+            name = "assault split between bracer and gloves",
+            message = "lf 24 ap bracer + 26 ap gloves",
+            scanned = {
+                "Enchant Bracer - Assault",
+                "Enchant Gloves - Assault",
+            },
+            expected = {
+                "Enchant Bracer - Assault",
+                "Enchant Gloves - Assault",
+            },
+            requested = 2,
+        },
+        {
+            name = "segment list keeps spellpower variants distinct",
+            message = "lf 15 spell power bracer, 30 sp wep, 20sp to glove",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            expected = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            requested = 3,
+        },
+        {
+            name = "chest mana prime and shield resilience pair correctly",
+            message = "lf mp5 to chest and 12 res to shield",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Shield - Resilience",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Shield - Resilience",
+            },
+            requested = 2,
+        },
+        {
+            name = "incomplete list keeps accurate request count",
+            message = "lf mongoose, boar, dodge",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+            },
+            requested = 3,
+        },
+        {
+            name = "specific restore mana prime recipe name does not double count",
+            message = "lf enchant chest - restore mana prime pst",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            requested = 1,
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        run_request_matching_case(case, index, false)
+    end
+end
+
+local function test_invalid_request_matching_scenarios()
+    local cases = {
+        {
+            name = "default blacklist blocks glove healing on weapon ask",
+            message = "lf 35 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks weapon healing on chest ask",
+            message = "lf 81 heal chest",
+            scanned = {
+                "Enchant Weapon - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks bracer mana prime on chest ask",
+            message = "lf restore mana prime to chest",
+            scanned = {
+                "Enchant Bracer - Restore Mana Prime",
+            },
+        },
+        {
+            name = "default blacklist blocks glove major spellpower on weapon ask",
+            message = "lf major spellpower weapon",
+            scanned = {
+                "Enchant Gloves - Major Spellpower",
+            },
+        },
+        {
+            name = "default blacklist blocks glove agility on weapon phrasing",
+            message = "lf 15 agi to wep",
+            scanned = {
+                "Enchant Gloves - Superior Agility",
+            },
+        },
+        {
+            name = "default blacklist blocks glove healing on shield ask",
+            message = "lf 35 heal shield",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+        },
+        {
+            name = "default blacklist blocks weapon spell power on chest ask",
+            message = "lf 30 sp chest",
+            scanned = {
+                "Enchant Weapon - Spell Power",
+            },
+        },
+        {
+            name = "default blacklist blocks bracer spellpower on glove ask",
+            message = "lf 15 spell power gloves",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+            },
+        },
+        {
+            name = "default blacklist blocks shield resilience on chest ask",
+            message = "lf 12 res chest",
+            scanned = {
+                "Enchant Shield - Resilience",
+            },
+        },
+        {
+            name = "default blacklist blocks chest mana prime on wrist ask",
+            message = "lf mp5 to wrist",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+        },
+        {
+            name = "default blacklist blocks 2h agility on glove ask",
+            message = "lf 35 agi gloves",
+            scanned = {
+                "Enchant 2H Weapon - Major Agility",
+            },
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        run_request_matching_case(case, index, true)
+    end
+end
+
+local function test_requested_recipe_count_scenarios()
+    local cases = {
+        {
+            name = "two valid segmented requests count as two of two",
+            message = "lf 15 resil to chest, 81 heal wep",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "partial list counts missing third request",
+            message = "lf 15 resil to chest, 81 heal wep, mongoose",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 3,
+        },
+        {
+            name = "three matched and one missing count as three of four",
+            message = "lf mongoose, boar, dodge, savagery",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            requested = 4,
+        },
+        {
+            name = "blocked false positive does not inflate requested count",
+            message = "lf 35 heal gloves, 35 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+            expected = {
+                "Enchant Gloves - Major Healing",
+            },
+            requested = 1,
+        },
+        {
+            name = "mixed valid and invalid spellpower chunks count only real requests",
+            message = "lf 15 spell power bracer, 30 sp wep, major spellpower weapon",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            expected = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 2,
+        },
+        {
+            name = "invalid agility bait does not block a later valid request count",
+            message = "lf 15 agi to wep, mongoose",
+            scanned = {
+                "Enchant Gloves - Superior Agility",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 1,
+        },
+        {
+            name = "recognized unscanned bracer request still increments requested count",
+            message = "lf 15 res chest and 12 res shield and mp5 to wrist",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+            },
+            requested = 3,
+        },
+        {
+            name = "slash separated mixed known requests count accurately",
+            message = "lf mp5 to chest / 81 heal wep / 15 res chest",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+                "Enchant Chest - Major Resilience",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+                "Enchant Chest - Major Resilience",
+            },
+            requested = 3,
+        },
+        {
+            name = "multiple valid segments plus one unscanned valid chunk count as four",
+            message = "lf 35 heal gloves / 81 heal wep / 30 sp wep / 20sp to glove",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+                "Enchant Weapon - Spell Power",
+            },
+            expected = {
+                "Enchant Gloves - Major Healing",
+                "Enchant Weapon - Major Healing",
+                "Enchant Weapon - Spell Power",
+            },
+            requested = 4,
+        },
+        {
+            name = "full four piece request counts as four of four",
+            message = "lf 15 resil chest, 12 res shield, mp5 to chest, mongoose",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Shield - Resilience",
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Shield - Resilience",
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 4,
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        run_request_matching_case(case, index + 100, false)
+    end
+end
+
+local function test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
+    local addon = setup_env({
+        db = {
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Major Healing"] = "focus",
+                },
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+
+    local blacklist = addon.RecipeBlacklistMap["Enchant Gloves - Major Healing"] or {}
+    local joined = table.concat(blacklist, ",")
+
+    assert_true(string.find(joined, "weapon", 1, true) ~= nil, "default recipe blacklists should compile even without custom overrides")
+    assert_true(string.find(joined, "focus", 1, true) ~= nil, "custom recipe blacklists should merge with built-in defaults")
+end
+
 local function test_scan_filters_unknown_and_nether_recipes()
     local addon, state = setup_env({
         db = {
@@ -837,6 +1333,9 @@ local function test_options_update_rebuilds_compiled_tags()
                 BlackList = "wts,portal",
                 SearchPrefix = "lf,need",
                 GenericPrefix = "lf enchanter,need enchanter",
+                RecipeBlackList = {
+                    ["Enchant Weapon - Mongoose"] = "staff,polearm",
+                },
                 ["Enchant Weapon - Mongoose"] = "mongoose,weapon mongoose",
             },
         },
@@ -851,8 +1350,125 @@ local function test_options_update_rebuilds_compiled_tags()
 
     assert_equal(#addon.PrefixTagsCompiled, 2, "custom prefixes should compile")
     assert_equal(#addon.BlacklistCompiled, 2, "custom blacklist should compile")
+    assert_equal(#addon.RecipeBlacklistMap["Enchant Weapon - Mongoose"], 2, "per-recipe blacklist phrases should compile")
     assert_equal(addon.RecipeTagsMap["mongoose"], "Enchant Weapon - Mongoose", "custom recipe tag should be mapped")
     assert_equal(addon.DBChar.RecipeList["Enchant Weapon - Mongoose"][2], "weapon mongoose", "custom recipe tags should replace stale tags")
+end
+
+local function test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
+    local addon, state = setup_env({
+        db = {
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Superior Agility"] = "wep,weapon",
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Gloves - Superior Agility"] = { "15 agi" },
+            },
+            RecipeLinks = {
+                ["Enchant Gloves - Superior Agility"] = "[Enchant Gloves - Superior Agility] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF 15 agi to wep pst", "Buyer-Blacklisted")
+
+    assert_equal(#state.invites, 0, "per-recipe blacklist phrases should block false-positive invites")
+    assert_equal(#state.whispers, 0, "per-recipe blacklist phrases should block false-positive whispers")
+end
+
+local function test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Major Healing"] = "weapon,wep,chest,bracer,boots,cloak,shield",
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Gloves - Major Healing"] = { "35 heal" },
+                ["Enchant Weapon - Spell Power"] = { "30 sp" },
+            },
+            RecipeLinks = {
+                ["Enchant Gloves - Major Healing"] = "[Enchant Gloves - Major Healing] ",
+                ["Enchant Weapon - Spell Power"] = "[Enchant Weapon - Spell Power] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF 35 heal gloves, 30 sp weapon pst", "Buyer-Segmented")
+
+    assert_equal(#state.invites, 1, "recipes should still match when a blacklist phrase appears in another request segment")
+    assert_equal(#state.whispers, 1, "segmented blacklist matching should still whisper the valid recipes")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Gloves %- Major Healing%]") ~= nil, "glove recipe should survive when the conflicting slot word is in another segment")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Spell Power%]") ~= nil, "other segmented recipe matches should still be included")
+end
+
+local function test_parse_message_does_not_double_count_nested_request_tags()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Restore Mana Prime"] = { "enchant chest - restore mana prime", "mp5 to chest" },
+            },
+            RecipeLinks = {
+                ["Enchant Chest - Restore Mana Prime"] = "[Enchant Chest - Restore Mana Prime] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF enchant chest - restore mana prime pst", "Buyer-Nested")
+
+    assert_equal(#state.whispers, 1, "single nested recipe requests should still whisper once")
+    assert_true(string.find(state.whispers[1].message, "1/2", 1, true) == nil, "longer nested recipe names should not inflate the requested recipe count")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Chest %- Restore Mana Prime%]") ~= nil, "nested recipe requests should still match the intended recipe")
+end
+
+local function test_parse_message_matches_multi_enchant_lists_by_segment()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+                ["Enchant Cloak - Dodge"] = { "dodge" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+                ["Enchant Cloak - Dodge"] = "[Enchant Cloak - Dodge] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose, boar, dodge pst", "Buyer-List")
+
+    assert_equal(#state.whispers, 1, "multi-enchant list requests should still produce one whisper")
+    assert_true(string.find(state.whispers[1].message, "1/2", 1, true) == nil, "segmented multi-enchant lists should not get a false incomplete warning")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "first segmented recipe should match")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Boots %- Boar's Speed%]") ~= nil, "second segmented recipe should match")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Cloak %- Dodge%]") ~= nil, "third segmented recipe should match")
 end
 
 local function test_incomplete_order_settings_default_on()
@@ -1113,19 +1729,38 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
-    assert_equal(frame.LockButton.text, "Lock", "lock control should show the current locked state like the sound toggle")
-    assert_equal(frame.LockButton.width, 66, "lock control should stay compact while leaving room for the padlock and state text")
-    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture")
+    assert_equal(frame.LockButton.text, "", "lock control should use icon-only state instead of a text label")
+    assert_equal(frame.LockButton.width, 24, "lock control should stay compact as an icon toggle")
+    assert_equal(frame.SoundButton.text, "", "sound control should also be icon-only")
+    assert_equal(frame.SoundButton.width, 24, "sound control should stay compact as an icon toggle")
+    assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture when locked")
+    assert_equal(frame.SoundButton.Icon.texture, "Interface\\Common\\VoiceChat-Speaker", "sound control should use the native speaker icon")
+    assert_equal(frame.SoundButton.Muted.texture, "Interface\\Common\\VoiceChat-Muted", "sound control should show the muted overlay when alerts are off")
     assert_true(workbenchState.Locked, "workbench should start locked by default")
-    assert_equal(frame.LockButton.Icon.vertex_color[1], 1, "locked state should render the padlock brightly")
+    assert_true(frame.LockButton.Icon.shown, "locked state should show the closed padlock icon")
+    assert_true(not frame.LockButton.OpenBody.shown, "locked state should hide the open padlock glyph")
+    assert_true(frame.SoundButton.Muted.shown, "sound-off state should show the muted overlay")
+    assert_true(not frame.SoundButton.SoundOn.shown, "sound-off state should hide the active sound overlay")
+    assert_equal(frame.SoundButton.point[2], frame.LockButton, "sound icon should sit immediately beside the lock icon")
+    assert_equal(frame.ClearButton.point[2], frame.SoundButton, "clear should sit next to the icon toggles")
+    assert_equal(frame.ScanButton.point[2], frame.ClearButton, "start/scan should sit next to clear")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 
     frame.LockButton.scripts["OnClick"]()
 
     assert_true(not workbenchState.Locked, "clicking the padlock should still unlock the workbench")
-    assert_equal(frame.LockButton.text, "No Lock", "unlocked state should read like the sound toggle instead of requiring a tooltip")
-    assert_equal(frame.LockButton.Icon.vertex_color[1], 0.72, "unlocked state should dim the padlock while keeping the button readable")
+    assert_equal(frame.LockButton.text, "", "unlocking should remain icon-only")
+    assert_true(not frame.LockButton.Icon.shown, "unlocked state should hide the closed padlock")
+    assert_true(frame.LockButton.OpenBody.shown, "unlocked state should show the open padlock glyph")
+end
+
+local function test_workbench_title_includes_addon_version()
+    local addon = setup_env()
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_equal(frame.TitleText.text, "Enchanter vtest Workbench", "workbench title should include the addon version from metadata")
 end
 
 local function test_workbench_sound_button_defaults_off_and_toggles()
@@ -1135,19 +1770,25 @@ local function test_workbench_sound_button_defaults_off_and_toggles()
     local workbenchState = addon.Workbench.EnsureState()
 
     assert_true(not workbenchState.SoundEnabled, "queue sound should default to disabled")
-    assert_equal(frame.SoundButton.text, "No Sound", "header button should show No Sound when alerts are disabled")
+    assert_equal(frame.SoundButton.text, "", "header sound button should use icons instead of text")
+    assert_true(frame.SoundButton.Muted.shown, "muted overlay should show when alerts are disabled")
+    assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should stay hidden when alerts are disabled")
     assert_equal(#state.played_sounds, 0, "sound preview should stay idle until the toggle is enabled")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(workbenchState.SoundEnabled, "sound toggle should persist as enabled after clicking")
-    assert_equal(frame.SoundButton.text, "Sound", "header button should flip to Sound when alerts are enabled")
+    assert_equal(frame.SoundButton.text, "", "enabled sound state should remain icon-only")
+    assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are enabled")
+    assert_true(not frame.SoundButton.Muted.shown, "muted overlay should hide when alerts are enabled")
     assert_equal(#state.played_sounds, 1, "enabling queue sounds should play an immediate preview so the user can hear it")
     assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "sound preview should start with the most client-safe Blizzard UI sound")
     assert_equal(state.played_sound_calls[1].channel, "Master", "sound preview should use the Master channel when available")
 
     frame.SoundButton.scripts["OnClick"]()
     assert_true(not workbenchState.SoundEnabled, "sound toggle should persist as disabled after a second click")
-    assert_equal(frame.SoundButton.text, "No Sound", "header button should flip back to No Sound when alerts are disabled")
+    assert_equal(frame.SoundButton.text, "", "disabled sound state should remain icon-only")
+    assert_true(frame.SoundButton.Muted.shown, "muted overlay should return when alerts are disabled again")
+    assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should hide again when alerts are disabled")
     assert_equal(#state.played_sounds, 1, "disabling queue sounds should not play any extra preview")
 end
 
@@ -1180,12 +1821,14 @@ local function test_workbench_lock_button_survives_clients_without_text_insets()
     local workbenchState = addon.Workbench.EnsureState()
 
     assert_not_nil(frame, "workbench frame should still load when buttons do not expose SetTextInsets")
-    assert_equal(frame.LockButton.text, "   Lock", "lock control should fall back to a padded label when text insets are unavailable")
+    assert_equal(frame.LockButton.text, "", "lock control should not rely on fallback text labels when text insets are unavailable")
+    assert_true(frame.LockButton.Icon.shown, "locked icon should still render without text inset support")
 
     frame.LockButton.scripts["OnClick"]()
 
     assert_true(not workbenchState.Locked, "lock toggle should still work without text inset support")
-    assert_equal(frame.LockButton.text, "   No Lock", "unlocked fallback label should remain readable without text inset support")
+    assert_equal(frame.LockButton.text, "", "unlocking should remain icon-only without text inset support")
+    assert_true(frame.LockButton.OpenBody.shown, "unlocked glyph should still render without text inset support")
 end
 
 local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
@@ -2737,7 +3380,15 @@ end
 
 test_scan_filters_unknown_and_nether_recipes()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
+test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
+test_valid_request_matching_scenarios()
+test_invalid_request_matching_scenarios()
+test_requested_recipe_count_scenarios()
 test_options_update_rebuilds_compiled_tags()
+test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
+test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
+test_parse_message_does_not_double_count_nested_request_tags()
+test_parse_message_matches_multi_enchant_lists_by_segment()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
 test_parse_message_warns_for_incomplete_order()
@@ -2748,6 +3399,7 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_title_includes_addon_version()
 test_workbench_sound_button_defaults_off_and_toggles()
 test_workbench_sound_button_warns_when_preview_cannot_play()
 test_workbench_lock_button_survives_clients_without_text_insets()

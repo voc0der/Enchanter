@@ -1,3 +1,17 @@
+## [2.1.27] - 2026-04-06
+
+### Added
+- Added a searchable `Recipe Customizations` settings subcategory with per-recipe search phrases and additive per-recipe blacklist phrases
+- Added built-in default blacklist phrases for the highest-collision enchant families, plus an expanded request-scenario regression suite with 10+ valid and 10+ invalid matching cases
+
+### Changed
+- Switched enchant request parsing over to segment-aware matching so comma-, slash-, plus-, and `and`-separated asks are evaluated locally instead of as one giant message blob
+- Updated the workbench header to show the addon version and icon-based lock and sound toggles
+
+### Fixed
+- Stopped nested or overlapping recipe tags from inflating incomplete-order counts like `1/2` when the customer only asked for one enchant
+- Tightened per-recipe blacklist handling so opposite-slot phrases block only the local request segment they belong to instead of suppressing unrelated enchants elsewhere in the same message
+
 ## [2.1.26] - 2026-04-05
 
 ### Changed

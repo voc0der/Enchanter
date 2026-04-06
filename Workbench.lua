@@ -13,6 +13,9 @@ local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
 local QUEUE_ALERT_SOUND_CHANNEL = "Master"
 local LOCK_BUTTON_ICON_TEXTURE = "Interface\\PetBattles\\PetBattle-LockIcon"
+local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
+local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
+local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
 	{ key = "U_CHAT_SCROLL_BUTTON", id = 1115, legacy = "UChatScrollButton" },
@@ -228,6 +231,25 @@ local function TrimText(value)
 		return ""
 	end
 	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function GetAddOnMetadataCompat(addonName, field)
+	if C_AddOns and C_AddOns.GetAddOnMetadata then
+		return C_AddOns.GetAddOnMetadata(addonName, field)
+	end
+	if GetAddOnMetadata then
+		return GetAddOnMetadata(addonName, field)
+	end
+	return ""
+end
+
+local function GetWorkbenchTitleText()
+	local version = TrimText(GetAddOnMetadataCompat(TOCNAME, "Version"))
+	if version ~= "" then
+		return "Enchanter v" .. version .. " Workbench"
+	end
+
+	return "Enchanter Workbench"
 end
 
 local function FormatMoneyCompact(copper)
@@ -2655,29 +2677,57 @@ local function UpdateLockButtonVisual()
 
 	local state = Workbench.EnsureState()
 	local button = Workbench.Frame.LockButton
-	local label = state.Locked and "Lock" or "No Lock"
-	if type(button.SetTextInsets) ~= "function" then
-		-- Older button templates on this client family do not expose SetTextInsets.
-		label = "   " .. label
-	end
-	button:SetText(label)
+	button:SetText("")
 
 	if button.Icon then
 		button.Icon:SetTexture(LOCK_BUTTON_ICON_TEXTURE)
-		if state.Locked then
-			button.Icon:SetVertexColor(1, 0.82, 0.18, 1)
-		else
-			button.Icon:SetVertexColor(0.72, 0.72, 0.72, 0.75)
-		end
+		button.Icon:SetVertexColor(1, 0.82, 0.18, 1)
+		SetRegionShown(button.Icon, state.Locked)
+	end
+
+	if button.OpenShackleLeft then
+		SetRegionShown(button.OpenShackleLeft, not state.Locked)
+	end
+	if button.OpenShackleTop then
+		SetRegionShown(button.OpenShackleTop, not state.Locked)
+	end
+	if button.OpenShackleRight then
+		SetRegionShown(button.OpenShackleRight, not state.Locked)
+	end
+	if button.OpenBody then
+		SetRegionShown(button.OpenBody, not state.Locked)
+	end
+	if button.OpenBodyCutout then
+		SetRegionShown(button.OpenBodyCutout, not state.Locked)
+	end
+	if button.OpenKeyhole then
+		SetRegionShown(button.OpenKeyhole, not state.Locked)
 	end
 end
 
-local function UpdateSoundButtonText()
+local function UpdateSoundButtonVisual()
 	if not Workbench.Frame or not Workbench.Frame.SoundButton then
 		return
 	end
 
-	Workbench.Frame.SoundButton:SetText(IsQueueSoundEnabled() and "Sound" or "No Sound")
+	local button = Workbench.Frame.SoundButton
+	local soundEnabled = IsQueueSoundEnabled()
+
+	button:SetText("")
+	if button.Icon then
+		button.Icon:SetTexture(SOUND_BUTTON_ICON_TEXTURE)
+		button.Icon:SetVertexColor(1, 1, 1, soundEnabled and 1 or 0.8)
+	end
+	if button.SoundOn then
+		button.SoundOn:SetTexture(SOUND_BUTTON_ON_TEXTURE)
+		button.SoundOn:SetVertexColor(1, 1, 1, 1)
+		SetRegionShown(button.SoundOn, soundEnabled)
+	end
+	if button.Muted then
+		button.Muted:SetTexture(SOUND_BUTTON_MUTED_TEXTURE)
+		button.Muted:SetVertexColor(1, 1, 1, 1)
+		SetRegionShown(button.Muted, not soundEnabled)
+	end
 end
 
 local function UpdateScanButtonText()
@@ -2889,18 +2939,39 @@ function Workbench.CreateFrame()
 	end)
 
 	frame.LockButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
-	frame.LockButton:SetSize(66, 20)
+	frame.LockButton:SetSize(24, 20)
 	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -6, 0)
 	if frame.LockButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
 	ApplyElvUISkin(frame.LockButton, "button")
-	if frame.LockButton.SetTextInsets then
-		frame.LockButton:SetTextInsets(20, 0, 0, 0)
-	end
 	frame.LockButton.Icon = frame.LockButton:CreateTexture(nil, "ARTWORK")
-	frame.LockButton.Icon:SetSize(12, 12)
-	frame.LockButton.Icon:SetPoint("LEFT", frame.LockButton, "LEFT", 6, 0)
+	frame.LockButton.Icon:SetSize(14, 14)
+	frame.LockButton.Icon:SetPoint("CENTER", frame.LockButton, "CENTER", 0, 0)
+	frame.LockButton.OpenShackleLeft = frame.LockButton:CreateTexture(nil, "ARTWORK")
+	frame.LockButton.OpenShackleLeft:SetSize(2, 2)
+	frame.LockButton.OpenShackleLeft:SetPoint("CENTER", frame.LockButton, "CENTER", -3, 3)
+	frame.LockButton.OpenShackleLeft:SetColorTexture(1, 0.82, 0.18, 1)
+	frame.LockButton.OpenShackleTop = frame.LockButton:CreateTexture(nil, "ARTWORK")
+	frame.LockButton.OpenShackleTop:SetSize(7, 2)
+	frame.LockButton.OpenShackleTop:SetPoint("CENTER", frame.LockButton, "CENTER", 1, 5)
+	frame.LockButton.OpenShackleTop:SetColorTexture(1, 0.82, 0.18, 1)
+	frame.LockButton.OpenShackleRight = frame.LockButton:CreateTexture(nil, "ARTWORK")
+	frame.LockButton.OpenShackleRight:SetSize(2, 5)
+	frame.LockButton.OpenShackleRight:SetPoint("CENTER", frame.LockButton, "CENTER", 4, 2)
+	frame.LockButton.OpenShackleRight:SetColorTexture(1, 0.82, 0.18, 1)
+	frame.LockButton.OpenBody = frame.LockButton:CreateTexture(nil, "ARTWORK")
+	frame.LockButton.OpenBody:SetSize(10, 7)
+	frame.LockButton.OpenBody:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -2)
+	frame.LockButton.OpenBody:SetColorTexture(1, 0.82, 0.18, 1)
+	frame.LockButton.OpenBodyCutout = frame.LockButton:CreateTexture(nil, "OVERLAY")
+	frame.LockButton.OpenBodyCutout:SetSize(4, 2)
+	frame.LockButton.OpenBodyCutout:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -2)
+	frame.LockButton.OpenBodyCutout:SetColorTexture(0.12, 0.1, 0.08, 1)
+	frame.LockButton.OpenKeyhole = frame.LockButton:CreateTexture(nil, "OVERLAY")
+	frame.LockButton.OpenKeyhole:SetSize(2, 3)
+	frame.LockButton.OpenKeyhole:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -1)
+	frame.LockButton.OpenKeyhole:SetColorTexture(0.12, 0.1, 0.08, 1)
 	frame.LockButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
@@ -2908,9 +2979,35 @@ function Workbench.CreateFrame()
 		WorkbenchDebug("frame", state.Locked and "locked" or "unlocked")
 	end)
 
+	frame.SoundButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.SoundButton:SetSize(24, 20)
+	frame.SoundButton:SetPoint("RIGHT", frame.LockButton, "LEFT", -6, 0)
+	if frame.SoundButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.SoundButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.SoundButton, "button")
+	frame.SoundButton.Icon = frame.SoundButton:CreateTexture(nil, "ARTWORK")
+	frame.SoundButton.Icon:SetSize(14, 14)
+	frame.SoundButton.Icon:SetPoint("CENTER", frame.SoundButton, "CENTER", 0, 0)
+	frame.SoundButton.SoundOn = frame.SoundButton:CreateTexture(nil, "OVERLAY")
+	frame.SoundButton.SoundOn:SetSize(14, 14)
+	frame.SoundButton.SoundOn:SetPoint("CENTER", frame.SoundButton, "CENTER", 0, 0)
+	frame.SoundButton.Muted = frame.SoundButton:CreateTexture(nil, "OVERLAY")
+	frame.SoundButton.Muted:SetSize(14, 14)
+	frame.SoundButton.Muted:SetPoint("CENTER", frame.SoundButton, "CENTER", 0, 0)
+	frame.SoundButton:SetScript("OnClick", function()
+		local state = Workbench.EnsureState()
+		state.SoundEnabled = not state.SoundEnabled
+		UpdateSoundButtonVisual()
+		WorkbenchDebug("queue sound", state.SoundEnabled and "enabled" or "disabled")
+		if state.SoundEnabled then
+			PreviewQueueAlertSound()
+		end
+	end)
+
 	frame.ClearButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.ClearButton:SetSize(48, 20)
-	frame.ClearButton:SetPoint("RIGHT", frame.LockButton, "LEFT", -6, 0)
+	frame.ClearButton:SetPoint("RIGHT", frame.SoundButton, "LEFT", -6, 0)
 	frame.ClearButton:SetText("Clear")
 	if frame.ClearButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.ClearButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
@@ -2920,26 +3017,9 @@ function Workbench.CreateFrame()
 		Workbench.ClearOrders()
 	end)
 
-	frame.SoundButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
-	frame.SoundButton:SetSize(70, 20)
-	frame.SoundButton:SetPoint("RIGHT", frame.ClearButton, "LEFT", -6, 0)
-	if frame.SoundButton.SetFrameLevel and frame.Header.GetFrameLevel then
-		frame.SoundButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
-	end
-	ApplyElvUISkin(frame.SoundButton, "button")
-	frame.SoundButton:SetScript("OnClick", function()
-		local state = Workbench.EnsureState()
-		state.SoundEnabled = not state.SoundEnabled
-		UpdateSoundButtonText()
-		WorkbenchDebug("queue sound", state.SoundEnabled and "enabled" or "disabled")
-		if state.SoundEnabled then
-			PreviewQueueAlertSound()
-		end
-	end)
-
 	frame.ScanButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.ScanButton:SetSize(54, 20)
-	frame.ScanButton:SetPoint("RIGHT", frame.SoundButton, "LEFT", -6, 0)
+	frame.ScanButton:SetPoint("RIGHT", frame.ClearButton, "LEFT", -6, 0)
 	if frame.ScanButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.ScanButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
@@ -2956,7 +3036,7 @@ function Workbench.CreateFrame()
 
 	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
-	frame.TitleText:SetText("Enchanter Workbench")
+	frame.TitleText:SetText(GetWorkbenchTitleText())
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)
@@ -3137,7 +3217,7 @@ function Workbench.CreateFrame()
 
 	ApplyFrameLayout(frame)
 	UpdateLockButtonVisual()
-	UpdateSoundButtonText()
+	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
 	if not Workbench.EnsureState().Visible then
 		frame:Hide()
@@ -3155,7 +3235,7 @@ function Workbench.Refresh()
 	frame.QueueCountText:SetText(BuildHeaderStatusText(state))
 	SetRegionShown(frame.EmptyQueueText, #state.Orders == 0)
 	UpdateLockButtonVisual()
-	UpdateSoundButtonText()
+	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
