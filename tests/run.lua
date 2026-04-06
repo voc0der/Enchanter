@@ -22,6 +22,10 @@ local function assert_not_nil(value, message)
     end
 end
 
+local function escape_lua_pattern(value)
+    return (tostring(value):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
@@ -779,6 +783,208 @@ local function run_timer(state, index)
     callback()
 end
 
+local function seed_scanned_recipes(addon, recipe_names)
+    addon.DBChar.RecipeList = addon.DBChar.RecipeList or {}
+    addon.DBChar.RecipeLinks = addon.DBChar.RecipeLinks or {}
+
+    for _, recipe_name in ipairs(recipe_names or {}) do
+        addon.DBChar.RecipeList[recipe_name] = copy_table(addon.DefaultRecipeTags.enGB[recipe_name] or {})
+        addon.DBChar.RecipeLinks[recipe_name] = "[" .. recipe_name .. "] "
+    end
+end
+
+local function assert_whisper_contains_recipe(message, recipe_name, context)
+    assert_true(
+        string.find(message, "%[" .. escape_lua_pattern(recipe_name) .. "%]") ~= nil,
+        (context or "whisper") .. " should include " .. recipe_name
+    )
+end
+
+local function test_default_request_matching_matrix()
+    local cases = {
+        {
+            name = "comma separated chest and weapon request",
+            message = "lf enchanter 15 resil to chest, 81 heal wep",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Major Resilience",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "and separated multi list",
+            message = "looking for mongoose and boar and dodge",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+                "Enchant Cloak - Dodge",
+            },
+            requested = 3,
+        },
+        {
+            name = "slash separated mixed request",
+            message = "wtb enchant chest - restore mana prime / 81 heal wep",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+                "Enchant Weapon - Major Healing",
+            },
+            requested = 2,
+        },
+        {
+            name = "default blacklist blocks glove healing on weapon ask",
+            message = "lf 35 heal wep",
+            scanned = {
+                "Enchant Gloves - Major Healing",
+            },
+            expected = {},
+        },
+        {
+            name = "default blacklist blocks weapon healing on chest ask",
+            message = "lf 81 heal chest",
+            scanned = {
+                "Enchant Weapon - Major Healing",
+            },
+            expected = {},
+        },
+        {
+            name = "default blacklist blocks bracer mana prime on chest ask",
+            message = "lf restore mana prime to chest",
+            scanned = {
+                "Enchant Bracer - Restore Mana Prime",
+            },
+            expected = {},
+        },
+        {
+            name = "default blacklist blocks glove major spellpower on weapon ask",
+            message = "lf major spellpower weapon",
+            scanned = {
+                "Enchant Gloves - Major Spellpower",
+            },
+            expected = {},
+        },
+        {
+            name = "segment list keeps spellpower variants distinct",
+            message = "lf 15 spell power bracer, 30 sp wep, 20sp to glove",
+            scanned = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            expected = {
+                "Enchant Bracer - Spellpower",
+                "Enchant Weapon - Spell Power",
+                "Enchant Gloves - Major Spellpower",
+            },
+            requested = 3,
+        },
+        {
+            name = "specific restore mana prime recipe name does not double count",
+            message = "lf enchant chest - restore mana prime pst",
+            scanned = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            expected = {
+                "Enchant Chest - Restore Mana Prime",
+            },
+            requested = 1,
+        },
+        {
+            name = "incomplete list keeps accurate request count",
+            message = "lf mongoose, boar, dodge",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+                "Enchant Boots - Boar's Speed",
+            },
+            requested = 3,
+        },
+        {
+            name = "default blacklist blocks glove agility on weapon phrasing",
+            message = "lf 15 agi to wep",
+            scanned = {
+                "Enchant Gloves - Superior Agility",
+            },
+            expected = {},
+        },
+    }
+
+    for index, case in ipairs(cases) do
+        local addon, state = setup_env({
+            db = {
+                InviteTimeDelay = 0,
+                WhisperTimeDelay = 0,
+                MsgPrefix = "I can do ",
+                WarnIncompleteOrder = true,
+            },
+        })
+
+        seed_scanned_recipes(addon, case.scanned)
+        addon.OptionsUpdate()
+        addon.ParseMessage(case.message, "Buyer-Matrix-" .. tostring(index))
+
+        if #case.expected == 0 then
+            assert_equal(#state.whispers, 0, case.name .. " should not whisper for a blocked or invalid match")
+            assert_equal(#state.invites, 0, case.name .. " should not invite for a blocked or invalid match")
+        else
+            assert_equal(#state.whispers, 1, case.name .. " should whisper exactly once")
+            assert_equal(#state.invites, 1, case.name .. " should invite exactly once")
+
+            local whisper = state.whispers[1].message
+            for _, recipe_name in ipairs(case.expected) do
+                assert_whisper_contains_recipe(whisper, recipe_name, case.name)
+            end
+
+            local warning_match = string.find(whisper, "%f[%d]%d+/%d+%f[%D]")
+            local matched_count = #case.expected
+            local requested_count = case.requested or matched_count
+            if requested_count > matched_count then
+                assert_true(
+                    string.find(whisper, tostring(matched_count) .. "/" .. tostring(requested_count), 1, true) ~= nil,
+                    case.name .. " should show the accurate incomplete warning"
+                )
+            else
+                assert_true(warning_match == nil, case.name .. " should not show an incomplete warning")
+            end
+        end
+    end
+end
+
+local function test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
+    local addon = setup_env({
+        db = {
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Major Healing"] = "focus",
+                },
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+
+    local blacklist = addon.RecipeBlacklistMap["Enchant Gloves - Major Healing"] or {}
+    local joined = table.concat(blacklist, ",")
+
+    assert_true(string.find(joined, "weapon", 1, true) ~= nil, "default recipe blacklists should compile even without custom overrides")
+    assert_true(string.find(joined, "focus", 1, true) ~= nil, "custom recipe blacklists should merge with built-in defaults")
+end
+
 local function test_scan_filters_unknown_and_nether_recipes()
     local addon, state = setup_env({
         db = {
@@ -837,6 +1043,9 @@ local function test_options_update_rebuilds_compiled_tags()
                 BlackList = "wts,portal",
                 SearchPrefix = "lf,need",
                 GenericPrefix = "lf enchanter,need enchanter",
+                RecipeBlackList = {
+                    ["Enchant Weapon - Mongoose"] = "staff,polearm",
+                },
                 ["Enchant Weapon - Mongoose"] = "mongoose,weapon mongoose",
             },
         },
@@ -851,8 +1060,125 @@ local function test_options_update_rebuilds_compiled_tags()
 
     assert_equal(#addon.PrefixTagsCompiled, 2, "custom prefixes should compile")
     assert_equal(#addon.BlacklistCompiled, 2, "custom blacklist should compile")
+    assert_equal(#addon.RecipeBlacklistMap["Enchant Weapon - Mongoose"], 2, "per-recipe blacklist phrases should compile")
     assert_equal(addon.RecipeTagsMap["mongoose"], "Enchant Weapon - Mongoose", "custom recipe tag should be mapped")
     assert_equal(addon.DBChar.RecipeList["Enchant Weapon - Mongoose"][2], "weapon mongoose", "custom recipe tags should replace stale tags")
+end
+
+local function test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
+    local addon, state = setup_env({
+        db = {
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Superior Agility"] = "wep,weapon",
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Gloves - Superior Agility"] = { "15 agi" },
+            },
+            RecipeLinks = {
+                ["Enchant Gloves - Superior Agility"] = "[Enchant Gloves - Superior Agility] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF 15 agi to wep pst", "Buyer-Blacklisted")
+
+    assert_equal(#state.invites, 0, "per-recipe blacklist phrases should block false-positive invites")
+    assert_equal(#state.whispers, 0, "per-recipe blacklist phrases should block false-positive whispers")
+end
+
+local function test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                RecipeBlackList = {
+                    ["Enchant Gloves - Major Healing"] = "weapon,wep,chest,bracer,boots,cloak,shield",
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Gloves - Major Healing"] = { "35 heal" },
+                ["Enchant Weapon - Spell Power"] = { "30 sp" },
+            },
+            RecipeLinks = {
+                ["Enchant Gloves - Major Healing"] = "[Enchant Gloves - Major Healing] ",
+                ["Enchant Weapon - Spell Power"] = "[Enchant Weapon - Spell Power] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF 35 heal gloves, 30 sp weapon pst", "Buyer-Segmented")
+
+    assert_equal(#state.invites, 1, "recipes should still match when a blacklist phrase appears in another request segment")
+    assert_equal(#state.whispers, 1, "segmented blacklist matching should still whisper the valid recipes")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Gloves %- Major Healing%]") ~= nil, "glove recipe should survive when the conflicting slot word is in another segment")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Spell Power%]") ~= nil, "other segmented recipe matches should still be included")
+end
+
+local function test_parse_message_does_not_double_count_nested_request_tags()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Restore Mana Prime"] = { "enchant chest - restore mana prime", "mp5 to chest" },
+            },
+            RecipeLinks = {
+                ["Enchant Chest - Restore Mana Prime"] = "[Enchant Chest - Restore Mana Prime] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF enchant chest - restore mana prime pst", "Buyer-Nested")
+
+    assert_equal(#state.whispers, 1, "single nested recipe requests should still whisper once")
+    assert_true(string.find(state.whispers[1].message, "1/2", 1, true) == nil, "longer nested recipe names should not inflate the requested recipe count")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Chest %- Restore Mana Prime%]") ~= nil, "nested recipe requests should still match the intended recipe")
+end
+
+local function test_parse_message_matches_multi_enchant_lists_by_segment()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+            WarnIncompleteOrder = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Boar's Speed"] = { "boar" },
+                ["Enchant Cloak - Dodge"] = { "dodge" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+                ["Enchant Boots - Boar's Speed"] = "[Enchant Boots - Boar's Speed] ",
+                ["Enchant Cloak - Dodge"] = "[Enchant Cloak - Dodge] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose, boar, dodge pst", "Buyer-List")
+
+    assert_equal(#state.whispers, 1, "multi-enchant list requests should still produce one whisper")
+    assert_true(string.find(state.whispers[1].message, "1/2", 1, true) == nil, "segmented multi-enchant lists should not get a false incomplete warning")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "first segmented recipe should match")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Boots %- Boar's Speed%]") ~= nil, "second segmented recipe should match")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Cloak %- Dodge%]") ~= nil, "third segmented recipe should match")
 end
 
 local function test_incomplete_order_settings_default_on()
@@ -2708,7 +3034,13 @@ end
 
 test_scan_filters_unknown_and_nether_recipes()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
+test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
+test_default_request_matching_matrix()
 test_options_update_rebuilds_compiled_tags()
+test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
+test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
+test_parse_message_does_not_double_count_nested_request_tags()
+test_parse_message_matches_multi_enchant_lists_by_segment()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
 test_parse_message_warns_for_incomplete_order()

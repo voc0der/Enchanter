@@ -106,3 +106,20 @@ EC.DefaultRecipeTags={
 	--["Enchant Weapon - Deathfrost"] = " ",
 	}),
 }
+
+EC.DefaultRecipeBlacklists = {
+	enGB = langSplit({
+	["Enchant 2H Weapon - Major Agility"] = "glove,gloves,hand,hands,cloak,back,boots,feet,chest,bracer,wrist,shield",
+	["Enchant Gloves - Superior Agility"] = "weapon,wep,2h,staff,polearm,sword,axe,mace,dagger,bow,gun,crossbow,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Gloves - Major Healing"] = "weapon,wep,2h,staff,polearm,sword,axe,mace,dagger,bow,gun,crossbow,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Weapon - Major Healing"] = "glove,gloves,hand,hands,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Gloves - Major Spellpower"] = "weapon,wep,2h,staff,polearm,sword,axe,mace,dagger,bow,gun,crossbow,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Weapon - Major Spellpower"] = "glove,gloves,hand,hands,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Weapon - Spell Power"] = "glove,gloves,hand,hands,chest,bracer,wrist,cloak,back,boots,feet,shield",
+	["Enchant Bracer - Spellpower"] = "weapon,wep,glove,gloves,hand,hands,chest,cloak,back,boots,feet,shield",
+	["Enchant Bracer - Restore Mana Prime"] = "chest",
+	["Enchant Chest - Restore Mana Prime"] = "bracer,wrist",
+	["Enchant Chest - Major Resilience"] = "shield",
+	["Enchant Shield - Resilience"] = "chest",
+	}),
+}

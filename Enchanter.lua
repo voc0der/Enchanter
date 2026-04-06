@@ -15,6 +15,7 @@ EC.RecipeTags = EC.DefaultRecipeTags or {}
 EC.RecipesWithNether = {"Enchant Boots - Surefooted"}
 EC.PrefixTagsCompiled = {}
 EC.BlacklistCompiled = {}
+EC.RecipeBlacklistMap = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
 EC.RequestRecipeTagsMap = {}
@@ -481,11 +482,20 @@ local function SplitStoredCSV(value)
 	value = tostring(value):lower()
 
 	if EC and EC.Tool and EC.Tool.Split then
-		return EC.Tool.Split(value, ",")
+		for _, token in ipairs(EC.Tool.Split(value, ",")) do
+			local cleanedToken = TrimText(token)
+			if cleanedToken ~= "" then
+				out[#out + 1] = cleanedToken
+			end
+		end
+		return out
 	end
 
 	for token in string.gmatch(value, "([^,]+)") do
-		out[#out + 1] = token
+		local cleanedToken = TrimText(token)
+		if cleanedToken ~= "" then
+			out[#out + 1] = cleanedToken
+		end
 	end
 
 	return out
@@ -774,18 +784,248 @@ local function GetConfiguredRecipeTags(recipeName)
 	return nil
 end
 
+local function MergePhraseLists(...)
+	local merged = {}
+	local seen = {}
+
+	for index = 1, select("#", ...) do
+		local phraseList = select(index, ...)
+		if type(phraseList) == "table" then
+			for _, phrase in ipairs(phraseList) do
+				if phrase and phrase ~= "" and not seen[phrase] then
+					seen[phrase] = true
+					merged[#merged + 1] = phrase
+				end
+			end
+		end
+	end
+
+	if #merged == 0 then
+		return nil
+	end
+
+	return merged
+end
+
+local function GetConfiguredRecipeBlacklist(recipeName)
+	local defaultBlacklist = EC.DefaultRecipeBlacklists
+		and EC.DefaultRecipeBlacklists["enGB"]
+		and EC.DefaultRecipeBlacklists["enGB"][recipeName]
+	local blacklistMap = EC.DB and EC.DB.Custom and EC.DB.Custom.RecipeBlackList
+	local customText = blacklistMap and blacklistMap[recipeName]
+	if customText ~= nil and customText ~= "" then
+		return MergePhraseLists(defaultBlacklist, SplitStoredCSV(customText))
+	end
+
+	return MergePhraseLists(defaultBlacklist)
+end
+
+local function FindNextRecipeContextSeparator(message, startIndex)
+	local length = string.len(message or "")
+	local index = math.max(1, math.floor(tonumber(startIndex) or 1))
+
+	while index <= length do
+		local character = string.sub(message, index, index)
+		if string.find(",;/+&", character, 1, true) then
+			return index, index
+		end
+
+		if string.sub(message, index, index + 4) == " and " then
+			return index, index + 4
+		end
+
+		if string.sub(message, index, index + 3) == " or " then
+			return index, index + 3
+		end
+
+		if string.sub(message, index, index + 5) == " then " then
+			return index, index + 5
+		end
+
+		index = index + 1
+	end
+
+	return nil
+end
+
+local function GetRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return ""
+	end
+
+	matchStart = math.max(1, math.floor(tonumber(matchStart) or 1))
+	matchEnd = math.max(matchStart, math.floor(tonumber(matchEnd) or matchStart))
+
+	local contextStart = 1
+	local contextEnd = string.len(parsedMessage)
+	local scanIndex = 1
+
+	while true do
+		local boundaryStart, boundaryEnd = FindNextRecipeContextSeparator(parsedMessage, scanIndex)
+		if not boundaryStart then
+			break
+		end
+
+		if boundaryEnd < matchStart then
+			contextStart = boundaryEnd + 1
+			scanIndex = boundaryEnd + 1
+		elseif boundaryStart > matchEnd then
+			contextEnd = boundaryStart - 1
+			break
+		else
+			scanIndex = boundaryEnd + 1
+		end
+	end
+
+	return TrimText(string.sub(parsedMessage, contextStart, contextEnd))
+end
+
+local function SplitRecipeRequestSegments(parsedMessage)
+	local segments = {}
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return segments
+	end
+
+	local length = string.len(parsedMessage)
+	local segmentStart = 1
+
+	while segmentStart <= length do
+		local boundaryStart, boundaryEnd = FindNextRecipeContextSeparator(parsedMessage, segmentStart)
+		local segmentEnd = boundaryStart and (boundaryStart - 1) or length
+		local segmentText = TrimText(string.sub(parsedMessage, segmentStart, segmentEnd))
+		if segmentText ~= "" then
+			segments[#segments + 1] = segmentText
+		end
+
+		if not boundaryStart then
+			break
+		end
+
+		segmentStart = boundaryEnd + 1
+	end
+
+	return segments
+end
+
+local function GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd)
+	local blacklist = EC.RecipeBlacklistMap and EC.RecipeBlacklistMap[recipeName]
+	if type(blacklist) ~= "table" then
+		return nil
+	end
+
+	local matchContext = GetRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+	if matchContext == "" then
+		return nil
+	end
+
+	for _, phrase in ipairs(blacklist) do
+		if phrase and phrase ~= "" and string.find(matchContext, phrase, 1, true) then
+			return phrase
+		end
+	end
+
+	return nil
+end
+
+local function RangesOverlap(startA, finishA, startB, finishB)
+	return startA <= finishB and startB <= finishA
+end
+
+local function CompareRecipeTagCandidates(left, right)
+	if left.Length ~= right.Length then
+		return left.Length > right.Length
+	end
+	if left.Start ~= right.Start then
+		return left.Start < right.Start
+	end
+	if left.Finish ~= right.Finish then
+		return left.Finish < right.Finish
+	end
+	if left.RecipeName ~= right.RecipeName then
+		return left.RecipeName < right.RecipeName
+	end
+	return left.Tag < right.Tag
+end
+
+local function MergeRecipeMatches(targetMap, sourceMap)
+	if type(targetMap) ~= "table" or type(sourceMap) ~= "table" then
+		return targetMap
+	end
+
+	for recipeName, tag in pairs(sourceMap) do
+		if targetMap[recipeName] == nil then
+			targetMap[recipeName] = tag
+		end
+	end
+
+	return targetMap
+end
+
 local function MatchRecipeTags(parsedMessage, tagList, tagMap)
+	local candidates = {}
+	local candidateSeen = {}
 	local matches = {}
+	local matchedRecipes = {}
+	local acceptedRanges = {}
 
 	if type(parsedMessage) ~= "string" or parsedMessage == "" then
 		return matches
 	end
 
 	for _, tag in ipairs(tagList or {}) do
-		if string.find(parsedMessage, tag, 1, true) then
-			local recipeName = tagMap[tag]
-			if recipeName then
-				matches[recipeName] = tag
+		local recipeName = tagMap[tag]
+		if recipeName then
+			local searchStart = 1
+
+			while true do
+				local matchStart, matchEnd = string.find(parsedMessage, tag, searchStart, true)
+				if not matchStart then
+					break
+				end
+
+				if not GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd) then
+					local candidateKey = table.concat({
+						recipeName,
+						tag,
+						tostring(matchStart),
+						tostring(matchEnd),
+					}, "\31")
+					if not candidateSeen[candidateKey] then
+						candidateSeen[candidateKey] = true
+						candidates[#candidates + 1] = {
+							RecipeName = recipeName,
+							Tag = tag,
+							Start = matchStart,
+							Finish = matchEnd,
+							Length = matchEnd - matchStart + 1,
+						}
+					end
+				end
+
+				searchStart = matchStart + 1
+			end
+		end
+	end
+
+	table.sort(candidates, CompareRecipeTagCandidates)
+
+	for _, candidate in ipairs(candidates) do
+		if not matchedRecipes[candidate.RecipeName] then
+			local isOverlapping = false
+			for _, acceptedRange in ipairs(acceptedRanges) do
+				if RangesOverlap(candidate.Start, candidate.Finish, acceptedRange.Start, acceptedRange.Finish) then
+					isOverlapping = true
+					break
+				end
+			end
+
+			if not isOverlapping then
+				matchedRecipes[candidate.RecipeName] = true
+				matches[candidate.RecipeName] = candidate.Tag
+				acceptedRanges[#acceptedRanges + 1] = {
+					Start = candidate.Start,
+					Finish = candidate.Finish,
+				}
 			end
 		end
 	end
@@ -794,8 +1034,18 @@ local function MatchRecipeTags(parsedMessage, tagList, tagMap)
 end
 
 local function GetRecipeRequestDetails(parsedMessage)
-	local matchedRecipeMap = MatchRecipeTags(parsedMessage, EC.RecipeTagList, EC.RecipeTagsMap)
-	local requestedRecipeMap = MatchRecipeTags(parsedMessage, EC.RequestRecipeTagList, EC.RequestRecipeTagsMap)
+	local matchedRecipeMap = {}
+	local requestedRecipeMap = {}
+	local segments = SplitRecipeRequestSegments(parsedMessage)
+	if #segments == 0 then
+		segments[1] = parsedMessage
+	end
+
+	for _, segment in ipairs(segments) do
+		MergeRecipeMatches(matchedRecipeMap, MatchRecipeTags(segment, EC.RecipeTagList, EC.RecipeTagsMap))
+		MergeRecipeMatches(requestedRecipeMap, MatchRecipeTags(segment, EC.RequestRecipeTagList, EC.RequestRecipeTagsMap))
+	end
+
 	local matchedCount = CountRecipeEntries(matchedRecipeMap)
 	local requestedCount = math.max(matchedCount, CountRecipeEntries(requestedRecipeMap))
 
@@ -944,6 +1194,7 @@ end
 function EC.RefreshCompiledData()
 	EC.PrefixTagsCompiled = {}
 	EC.BlacklistCompiled = {}
+	EC.RecipeBlacklistMap = {}
 	EC.RecipeTagsMap = {}
 	EC.RecipeTagList = {}
 	EC.RequestRecipeTagsMap = {}
@@ -962,10 +1213,20 @@ function EC.RefreshCompiledData()
 	end
 
 	for recipeName in pairs(EC.RecipeTags and EC.RecipeTags["enGB"] or {}) do
+		local recipeBlacklist = GetConfiguredRecipeBlacklist(recipeName)
+		if recipeBlacklist and #recipeBlacklist > 0 then
+			EC.RecipeBlacklistMap[recipeName] = recipeBlacklist
+		end
 		AddRecipeTagsToLookup(EC.RequestRecipeTagsMap, EC.RequestRecipeTagList, recipeName, GetConfiguredRecipeTags(recipeName))
 	end
 
 	for recipeName, tags in pairs(EC.DBChar.RecipeList or {}) do
+		if not EC.RecipeBlacklistMap[recipeName] then
+			local recipeBlacklist = GetConfiguredRecipeBlacklist(recipeName)
+			if recipeBlacklist and #recipeBlacklist > 0 then
+				EC.RecipeBlacklistMap[recipeName] = recipeBlacklist
+			end
+		end
 		AddRecipeTagsToLookup(EC.RecipeTagsMap, EC.RecipeTagList, recipeName, tags)
 	end
 
