@@ -230,6 +230,25 @@ local function TrimText(value)
 	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+local function GetAddOnMetadataCompat(addonName, field)
+	if C_AddOns and C_AddOns.GetAddOnMetadata then
+		return C_AddOns.GetAddOnMetadata(addonName, field)
+	end
+	if GetAddOnMetadata then
+		return GetAddOnMetadata(addonName, field)
+	end
+	return ""
+end
+
+local function GetWorkbenchTitleText()
+	local version = TrimText(GetAddOnMetadataCompat(TOCNAME, "Version"))
+	if version ~= "" then
+		return "Enchanter v" .. version .. " Workbench"
+	end
+
+	return "Enchanter Workbench"
+end
+
 local function FormatMoneyCompact(copper)
 	copper = math.max(0, math.floor(tonumber(copper) or 0))
 
@@ -2806,7 +2825,7 @@ function Workbench.CreateFrame()
 
 	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
-	frame.TitleText:SetText("Enchanter Workbench")
+	frame.TitleText:SetText(GetWorkbenchTitleText())
 
 	frame.ListHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.ListHeader:SetPoint("TOPLEFT", frame.Header, "BOTTOMLEFT", 4, -12)

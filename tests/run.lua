@@ -1744,6 +1744,14 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.LockButton.Icon.vertex_color[1], 0.72, "unlocked state should dim the padlock while keeping the button readable")
 end
 
+local function test_workbench_title_includes_addon_version()
+    local addon = setup_env()
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_equal(frame.TitleText.text, "Enchanter vtest Workbench", "workbench title should include the addon version from metadata")
+end
+
 local function test_workbench_sound_button_defaults_off_and_toggles()
     local addon, state = setup_env()
 
@@ -3343,6 +3351,7 @@ test_workbench_tracks_and_merges_orders()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
+test_workbench_title_includes_addon_version()
 test_workbench_sound_button_defaults_off_and_toggles()
 test_workbench_sound_button_warns_when_preview_cannot_play()
 test_workbench_lock_button_survives_clients_without_text_insets()
