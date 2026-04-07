@@ -1,3 +1,9 @@
+## [2.1.29] - 2026-04-07
+
+### Fixed
+- Refreshed the open workbench immediately when grouped queue entries expire, so timed-out already-grouped orders disappear from the visible queue without needing to close and reopen the window
+- Added a small expiry-timer buffer plus tighter queue-row cleanup so grouped-order timeouts land past the configured deadline and stale rows are cleared more reliably
+
 ## [2.1.28] - 2026-04-07
 
 ### Added
