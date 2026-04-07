@@ -76,6 +76,7 @@ local function setup_env(opts)
         do_craft_calls = {},
         do_trade_skill_calls = {},
         events = {},
+        event_handlers = {},
         slash = nil,
         timer_delays = {},
         timer_callbacks = {},
@@ -85,6 +86,11 @@ local function setup_env(opts)
         trade_target_money = tonumber(opts.trade_target_money) or 0,
         whispers = {},
         frames = {},
+        current_time = tonumber(opts.current_time) or 0,
+        current_party_members = copy_table(opts.current_party_members or {}),
+        current_raid_members = copy_table(opts.current_raid_members or {}),
+        player_name = opts.player_name or "Enchanter-Test",
+        player_realm = opts.player_realm or "TestRealm",
         selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
         trade_skill_frame_selection = nil,
@@ -309,6 +315,9 @@ local function setup_env(opts)
             return "Test Author"
         end
         return ""
+    end
+    _G.GetTime = function()
+        return state.current_time or 0
     end
     _G.InviteUnit = function(name)
         state.invites[#state.invites + 1] = name
@@ -687,6 +696,66 @@ local function setup_env(opts)
         end
         return 13, 11
     end
+    local function unit_name_from_token(unit)
+        if unit == "player" then
+            return state.player_name
+        end
+
+        local party_index = tonumber(tostring(unit or ""):match("^party(%d+)$") or "")
+        if party_index then
+            return state.current_party_members[party_index]
+        end
+
+        local raid_index = tonumber(tostring(unit or ""):match("^raid(%d+)$") or "")
+        if raid_index then
+            return state.current_raid_members[raid_index]
+        end
+
+        return nil
+    end
+    local function names_match(left, right)
+        left = tostring(left or ""):lower()
+        right = tostring(right or ""):lower()
+        if left == "" or right == "" then
+            return false
+        end
+
+        local left_short = left:match("^([^%-]+)") or left
+        local right_short = right:match("^([^%-]+)") or right
+        return left == right
+            or left == right_short
+            or left_short == right
+            or left_short == right_short
+    end
+    _G.UnitName = function(unit)
+        return unit_name_from_token(unit)
+    end
+    _G.GetUnitName = function(unit, show_server_name)
+        local name = unit_name_from_token(unit)
+        if not name then
+            return nil
+        end
+        if show_server_name and string.find(name, "-", 1, true) == nil and state.player_realm ~= "" then
+            return name .. "-" .. state.player_realm
+        end
+        return name
+    end
+    _G.UnitInParty = function(name)
+        for _, member_name in ipairs(state.current_party_members or {}) do
+            if names_match(member_name, name) then
+                return true
+            end
+        end
+        return nil
+    end
+    _G.UnitInRaid = function(name)
+        for _, member_name in ipairs(state.current_raid_members or {}) do
+            if names_match(member_name, name) then
+                return true
+            end
+        end
+        return nil
+    end
     _G.GetCVarBool = function(name)
         if name == "timeMgrUseMilitaryTime" then
             return opts.use_military_time and true or false
@@ -763,8 +832,9 @@ local function setup_env(opts)
         }
     end
 
-    function addon.Tool.RegisterEvent(event)
+    function addon.Tool.RegisterEvent(event, handler)
         state.events[#state.events + 1] = event
+        state.event_handlers[event] = handler
     end
 
     load_chunk("Tags.lua", "Enchanter", addon)
@@ -1883,6 +1953,7 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["TRADE_ACCEPT_UPDATE"], "trade accept updates should be registered independently of /ec start")
     assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
     assert_true(seen["UI_INFO_MESSAGE"], "trade completion messages should be registered independently of /ec start")
+    assert_true(seen["GROUP_ROSTER_UPDATE"], "group roster changes should be registered so grouped queue state can refresh")
 end
 
 local function test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
@@ -2955,9 +3026,11 @@ local function test_grouped_follow_up_whispers_after_invite_failure()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF mongoose pst", "Buyer-Grouped")
 
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Grouped")
     local handled = addon.HandleInviteFailureMessage("Buyer-Grouped is already in a group.")
 
     assert_true(handled, "already-grouped invite failures should be recognized")
+    assert_true(order.AlreadyGrouped, "already-grouped invite failures should flag the queued order")
     assert_equal(#state.invites, 1, "initial invite should still be attempted once")
     assert_equal(#state.whispers, 2, "grouped follow-up should add a second whisper")
     assert_equal(state.whispers[2].target, "Buyer-Grouped", "grouped follow-up should target the failed invite customer")
@@ -2986,10 +3059,96 @@ local function test_grouped_follow_up_is_ignored_when_disabled()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF mongoose pst", "Buyer-NoFollowUp")
 
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-NoFollowUp")
     local handled = addon.HandleInviteFailureMessage("Buyer-NoFollowUp is already in a group.")
 
-    assert_true(not handled, "grouped follow-up should ignore invite failures when the option is disabled")
+    assert_true(handled, "already-grouped invite failures should still be tracked when the whisper follow-up is disabled")
+    assert_true(order.AlreadyGrouped, "disabled follow-up should still flag the queued order as already grouped")
     assert_equal(#state.whispers, 1, "no follow-up whisper should be added when disabled")
+end
+
+local function test_grouped_queue_indicator_clears_when_customer_joins_group()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = false,
+            GroupedQueueExpireSeconds = 60,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Join")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Join")
+    local handled = addon.HandleInviteFailureMessage("Buyer-Join is already in a group.")
+
+    assert_true(handled, "grouped queue indicator test should recognize the invite failure")
+    assert_true(order.AlreadyGrouped, "grouped queue indicator test should flag the order before the customer joins")
+    assert_equal(frame.OrderRows[1].backdrop_border_color[1], 0.86, "grouped queue rows should use a red border while the customer is outside the group")
+    assert_true(not frame.OrderRows[1].PartyCheck.shown, "queue rows should not show the in-group check before the customer joins")
+    assert_true(not frame.Detail.GroupCheck.shown, "detail pane should not show the in-group check before the customer joins")
+
+    state.current_party_members = { "Buyer-Join" }
+    addon.Workbench.SyncGroupedOrders()
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-Join")
+
+    assert_true(not order.AlreadyGrouped, "joining the group should clear the already-grouped queue flag")
+    assert_true(frame.OrderRows[1].backdrop_border_color[1] ~= 0.86, "joining the group should remove the red grouped border from the queue row")
+    assert_true(frame.OrderRows[1].PartyCheck.shown, "queue rows should show a green check once the customer joins the group")
+    assert_true(frame.Detail.GroupCheck.shown, "detail pane should show an in-group check once the customer joins the group")
+    assert_true(frame.Detail.GroupText.shown, "detail pane should show the in-group label once the customer joins the group")
+end
+
+local function test_grouped_queue_auto_expires_when_customer_never_joins()
+    local addon, state = setup_env({
+        defer_timers = true,
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = false,
+            GroupedQueueExpireSeconds = 30,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Expire")
+    run_timer(state, 1)
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Expire")
+    local handled = addon.HandleInviteFailureMessage("Buyer-Expire is already in a group.")
+
+    assert_true(handled, "grouped expiry test should recognize the invite failure")
+    assert_not_nil(order, "grouped expiry test should start with a queued order")
+    assert_equal(state.timer_delays[3], 30, "grouped queue expiry should schedule a timer using the configured seconds")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "grouped queue expiry should keep the order queued until the timer fires")
+
+    state.current_time = 30
+    run_timer(state, 3)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "grouped queue expiry should remove orders that never joined the group")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Expire"), "expired grouped orders should disappear from the workbench")
+    assert_nil(addon.PlayerList["Buyer-Expire"], "expired grouped orders should clear the anti-spam player gate")
 end
 
 local function test_trade_with_unmatched_partner_does_not_complete_selected_order()
@@ -3444,6 +3603,8 @@ test_workbench_clear_button_empties_queue_and_resets_detail()
 test_workbench_refresh_clamps_stale_scroll_offset()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
+test_grouped_queue_indicator_clears_when_customer_joins_group()
+test_grouped_queue_auto_expires_when_customer_never_joins()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()

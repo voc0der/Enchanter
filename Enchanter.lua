@@ -1121,9 +1121,6 @@ function EC.InviteCustomer(name, sourceLabel)
 end
 
 function EC.HandleInviteFailureMessage(message)
-	if not EC.DB or not EC.DB.GroupedFollowUp then
-		return false
-	end
 	if type(message) ~= "string" or message == "" then
 		return false
 	end
@@ -1156,10 +1153,15 @@ function EC.HandleInviteFailureMessage(message)
 	end
 
 	EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
+	if EC.Workbench and EC.Workbench.MarkOrderAlreadyGrouped then
+		EC.Workbench.MarkOrderAlreadyGrouped(matchedPending.Name)
+	end
 	EC.DebugPrint("detected already-grouped invite failure for", matchedPending.Name)
-	After(EC.DB.GroupedFollowUpDelay, function()
-		EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
-	end)
+	if EC.DB and EC.DB.GroupedFollowUp then
+		After(EC.DB.GroupedFollowUpDelay, function()
+			EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
+		end)
+	end
 	return true
 end
 
@@ -1185,6 +1187,8 @@ local function EnsureSavedVariables()
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
 	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
+	if EC.DB.GroupedQueueExpireSeconds == nil then EC.DB.GroupedQueueExpireSeconds = 0 end
+	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
 	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
@@ -1678,6 +1682,14 @@ local function Event_TRADE_CLOSED()
 	end
 end
 
+local function Event_GROUP_ROSTER_UPDATE()
+	if EC.Workbench and EC.Workbench.SyncGroupedOrders then
+		EC.Workbench.SyncGroupedOrders()
+	elseif EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
+end
+
 local function Event_CHAT_MSG_CHANNEL(msg, name)
 	if not EC.Initalized then
 		return
@@ -1742,4 +1754,5 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("TRADE_ACCEPT_UPDATE", Event_TRADE_ACCEPT_UPDATE)
 	EC.Tool.RegisterEvent("TRADE_UPDATE", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
+	EC.Tool.RegisterEvent("GROUP_ROSTER_UPDATE", Event_GROUP_ROSTER_UPDATE)
 end

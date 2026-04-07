@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.27`
+Current version: `2.1.28`
 
 ## What It Does
 
@@ -27,6 +27,7 @@ Current version: `2.1.27`
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Search and tune per-recipe search phrases plus additive per-recipe blacklist phrases from the settings panel
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
+- Flag already-grouped customers in the workbench until they join you, with an optional auto-expire timeout for those stalled queue entries
 - Resize the workbench to fit your screen or chat flow, with the layout saved per character
 - Keep queued orders visible through the full trade flow so accepted trades can carry mats and verify each requested enchant automatically, even across split handoff/enchant trades, before you clear the order
 
@@ -69,10 +70,12 @@ Current version: `2.1.27`
 - Multi-enchant orders only turn green once every requested enchant has been confirmed automatically.
 - The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
+- Queue rows turn red when an invite fails because the customer is already grouped, then flip back to the normal border once they join your party or raid.
+- Customers who are already in your current group now get a green check in both the queue and the detail pane.
 - Use `/ec simulate` or `/e simulate` to feed the workbench randomized fake customers without sending any real invites or whispers.
 - Accepted trades keep partial mats and early tips attached to the queue entry, and the order retires automatically as soon as a settled trade verifies every requested enchant, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
-- In settings, you can also enable an automatic follow-up whisper for customers who were already in a group, with its own delay and custom message.
+- In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them).
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing

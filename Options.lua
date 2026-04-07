@@ -427,6 +427,7 @@ function EC.Default()
 	EC.DB.InviteTimeDelay = 0
 	EC.DB.WhisperTimeDelay = 0
 	EC.DB.GroupedFollowUpDelay = 1
+	EC.DB.GroupedQueueExpireSeconds = 0
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
 	EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
@@ -449,6 +450,10 @@ function EC.OptionsUpdate()
 	if EC.DB.InviteIncompleteOrder == nil then
 		EC.DB.InviteIncompleteOrder = true
 	end
+	if EC.DB.GroupedQueueExpireSeconds == nil then
+		EC.DB.GroupedQueueExpireSeconds = 0
+	end
+	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then
 		EC.DB.MsgPrefix = EC.DefaultMsg
 	end
@@ -464,6 +469,9 @@ function EC.OptionsUpdate()
 	EC.EnchanterTags = SplitCSV(EC.DB.Custom.GenericPrefix)
 	EC.UpdateTags()
 	EC.RefreshCompiledData()
+	if EC.Workbench and EC.Workbench.SyncGroupedOrders then
+		EC.Workbench.SyncGroupedOrders()
+	end
 end
 
 function EC.Options.DoOk()
@@ -569,6 +577,7 @@ function EC.OptionsInit()
 	MakeSavedEditBox(EC.DB, "WhisperTimeDelay", 0, "Whisper Delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "InviteTimeDelay", 0, "Invite Delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "GroupedFollowUpDelay", 1, "Grouped follow-up delay (seconds)", 60, nil, true)
+	MakeSavedEditBox(EC.DB, "GroupedQueueExpireSeconds", 0, "Grouped queue expiry (0 disables)", 60, nil, true)
 
 	EC.OptionsBuilder.AddHeaderToCurrentPanel("Search Patterns")
 	EC.OptionsBuilder.Indent(10)

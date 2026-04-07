@@ -1,3 +1,12 @@
+## [2.1.28] - 2026-04-07
+
+### Added
+- Added a red grouped-order outline in the workbench queue plus green in-group checks in the queue and detail pane so already-grouped customers are easy to spot and track once they join you
+- Added a configurable grouped-queue expiry setting so `/ec config` can retire already-grouped orders automatically after a chosen number of seconds when they never join your group
+
+### Changed
+- The workbench now tracks already-grouped invite failures even when the optional grouped follow-up whisper is disabled, so queue state stays accurate without forcing the extra whisper
+
 ## [2.1.27] - 2026-04-06
 
 ### Added
