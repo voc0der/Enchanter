@@ -233,6 +233,13 @@ local function TrimText(value)
 	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+local function Now()
+	if GetTime then
+		return GetTime()
+	end
+	return 0
+end
+
 local function GetAddOnMetadataCompat(addonName, field)
 	if C_AddOns and C_AddOns.GetAddOnMetadata then
 		return C_AddOns.GetAddOnMetadata(addonName, field)
@@ -593,9 +600,120 @@ local function NormalizeCustomerName(name)
 	return short, full
 end
 
+local function NamesMatch(left, right)
+	local leftShort, leftFull = NormalizeCustomerName(left)
+	local rightShort, rightFull = NormalizeCustomerName(right)
+
+	if leftShort == "" or rightShort == "" then
+		return false
+	end
+
+	return leftShort == rightShort
+		or leftShort == rightFull
+		or leftFull == rightShort
+		or leftFull == rightFull
+end
+
+local function GetGroupedQueueExpirySeconds()
+	local configuredSeconds = EC and EC.DB and EC.DB.GroupedQueueExpireSeconds or 0
+	return math.max(0, math.floor(tonumber(configuredSeconds) or 0))
+end
+
+local function IsCustomerInCurrentGroup(customerName)
+	if TrimText(customerName) == "" then
+		return false
+	end
+
+	local candidates = {}
+	local seenCandidates = {}
+
+	local function AddCandidate(value)
+		value = TrimText(value)
+		if value ~= "" and not seenCandidates[value] then
+			seenCandidates[value] = true
+			candidates[#candidates + 1] = value
+		end
+	end
+
+	local shortName, fullName = NormalizeCustomerName(customerName)
+	AddCandidate(customerName)
+	AddCandidate(shortName)
+	AddCandidate(fullName)
+
+	local function CheckGroupFunction(groupFunction)
+		if type(groupFunction) ~= "function" then
+			return false
+		end
+
+		for _, candidate in ipairs(candidates) do
+			local ok, isGrouped = pcall(groupFunction, candidate)
+			if ok and isGrouped then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	if CheckGroupFunction(UnitInParty) or CheckGroupFunction(UnitInRaid) then
+		return true
+	end
+
+	local function CheckUnitNames(unitNameFunction)
+		if type(unitNameFunction) ~= "function" then
+			return false
+		end
+
+		local function UnitMatches(unitToken)
+			local ok, unitName = pcall(unitNameFunction, unitToken, true)
+			return ok and NamesMatch(unitName, customerName)
+		end
+
+		if UnitMatches("player") then
+			return true
+		end
+
+		for index = 1, 4 do
+			if UnitMatches("party" .. index) then
+				return true
+			end
+		end
+
+		for index = 1, 40 do
+			if UnitMatches("raid" .. index) then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	return CheckUnitNames(UnitName) or CheckUnitNames(GetUnitName)
+end
+
 local function EnsureRuntime()
 	Workbench.Runtime = Workbench.Runtime or {}
 	return Workbench.Runtime
+end
+
+local function GetGroupedExpiryRuntime(orderId, createIfMissing)
+	local runtime = EnsureRuntime()
+	runtime.GroupedExpiry = runtime.GroupedExpiry or {}
+
+	local groupedExpiry = runtime.GroupedExpiry[orderId]
+	if not groupedExpiry and createIfMissing ~= false then
+		groupedExpiry = {}
+		runtime.GroupedExpiry[orderId] = groupedExpiry
+	end
+
+	return groupedExpiry
+end
+
+local function ClearGroupedExpiryRuntime(orderId)
+	local runtime = EnsureRuntime()
+	if runtime.GroupedExpiry then
+		runtime.GroupedExpiry[orderId] = nil
+	end
 end
 
 local function FindOrderIndexById(orderId, state)
@@ -632,9 +750,142 @@ local function EnsureOrderFields(order)
 	if order.LastObservedTipCopper > 0 then
 		order.NoTipConfirmed = false
 	end
+	order.AlreadyGrouped = order.AlreadyGrouped and true or nil
+	order.AlreadyGroupedAt = order.AlreadyGrouped and math.max(0, tonumber(order.AlreadyGroupedAt) or 0) or nil
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
+end
+
+local function ResetGroupedState(order)
+	if not order then
+		return false
+	end
+
+	local changed = order.AlreadyGrouped or order.AlreadyGroupedAt ~= nil
+	order.AlreadyGrouped = nil
+	order.AlreadyGroupedAt = nil
+	if order.Id then
+		ClearGroupedExpiryRuntime(order.Id)
+	end
+	if changed then
+		order.UpdatedAt = TimestampText()
+	end
+	return changed and true or false
+end
+
+local function GetGroupedOrderExpireAt(order)
+	if not order or not order.AlreadyGrouped or order.AlreadyGroupedAt == nil then
+		return nil
+	end
+
+	local expirySeconds = GetGroupedQueueExpirySeconds()
+	if expirySeconds <= 0 then
+		return nil
+	end
+
+	return math.max(0, tonumber(order.AlreadyGroupedAt) or 0) + expirySeconds
+end
+
+local function RemoveOrderByIndex(state, index, reasonPrefix)
+	local removedOrder = table.remove(state.Orders, index)
+	if not removedOrder then
+		return nil
+	end
+
+	ClearGroupedExpiryRuntime(removedOrder.Id)
+	EC.PlayerList[removedOrder.Customer] = nil
+	EC.LfRecipeList[removedOrder.Customer] = nil
+	WorkbenchDebug(reasonPrefix or "removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
+	return removedOrder
+end
+
+local function ScheduleGroupedOrderExpiry(order)
+	if not order or not order.Id then
+		return false
+	end
+
+	local expireAt = GetGroupedOrderExpireAt(order)
+	if not expireAt or IsCustomerInCurrentGroup(order.Customer) then
+		ClearGroupedExpiryRuntime(order.Id)
+		return false
+	end
+
+	local groupedExpiry = GetGroupedExpiryRuntime(order.Id)
+	if groupedExpiry.ExpireAt == expireAt then
+		return true
+	end
+
+	groupedExpiry.Token = math.floor(tonumber(groupedExpiry.Token) or 0) + 1
+	groupedExpiry.ExpireAt = expireAt
+
+	if C_Timer and C_Timer.After then
+		local token = groupedExpiry.Token
+		local orderId = order.Id
+		local delay = math.max(0, expireAt - Now())
+
+		C_Timer.After(delay, function()
+			local currentOrder = Workbench.GetOrderById(orderId)
+			local currentGroupedExpiry = GetGroupedExpiryRuntime(orderId, false)
+			if not currentOrder or not currentGroupedExpiry then
+				return
+			end
+			if currentGroupedExpiry.Token ~= token or currentGroupedExpiry.ExpireAt ~= expireAt then
+				return
+			end
+			if not currentOrder.AlreadyGrouped then
+				ClearGroupedExpiryRuntime(orderId)
+				return
+			end
+			if IsCustomerInCurrentGroup(currentOrder.Customer) then
+				if ResetGroupedState(currentOrder) and Workbench.Frame then
+					Workbench.Refresh()
+				end
+				return
+			end
+			if Now() + 0.001 < expireAt then
+				return
+			end
+			WorkbenchDebug("expired grouped order for", currentOrder.Customer, "(" .. tostring(GetGroupedQueueExpirySeconds()) .. "s without joining)")
+			Workbench.RemoveOrder(orderId)
+		end)
+	end
+
+	return true
+end
+
+local function SyncGroupedOrders(state)
+	state = state or Workbench.EnsureState()
+
+	local changed = false
+	for index = #state.Orders, 1, -1 do
+		local order = state.Orders[index]
+		if order.AlreadyGrouped then
+			if IsCustomerInCurrentGroup(order.Customer) then
+				if ResetGroupedState(order) then
+					WorkbenchDebug("cleared grouped queue flag for", order.Customer, "(now in group)")
+					changed = true
+				end
+			else
+				local expireAt = GetGroupedOrderExpireAt(order)
+				if expireAt and Now() >= expireAt then
+					RemoveOrderByIndex(state, index, "expired grouped order for")
+					changed = true
+				else
+					ScheduleGroupedOrderExpiry(order)
+				end
+			end
+		else
+			ClearGroupedExpiryRuntime(order.Id)
+		end
+	end
+
+	if state.SelectedOrderId and not FindOrderIndexById(state.SelectedOrderId, state) then
+		state.SelectedOrderId = state.Orders[1] and state.Orders[1].Id or nil
+		changed = true
+	end
+
+	return changed
 end
 
 local function MaterialKey(material)
@@ -1174,6 +1425,8 @@ function Workbench.EnsureState()
 		state.SelectedOrderId = state.Orders[1].Id
 	end
 
+	SyncGroupedOrders(state)
+
 	return state
 end
 
@@ -1215,6 +1468,39 @@ function Workbench.GetOrderByCustomer(customerName)
 	end
 
 	return nil
+end
+
+function Workbench.SyncGroupedOrders()
+	local state = Workbench.EnsureState()
+	local changed = SyncGroupedOrders(state)
+	if Workbench.Frame then
+		Workbench.Refresh()
+	end
+	return changed
+end
+
+function Workbench.MarkOrderAlreadyGrouped(customerName)
+	local order = Workbench.GetOrderByCustomer(customerName)
+	if not order then
+		return false
+	end
+
+	if IsCustomerInCurrentGroup(order.Customer) then
+		if ResetGroupedState(order) and Workbench.Frame then
+			Workbench.Refresh()
+		end
+		return true
+	end
+
+	order.AlreadyGrouped = true
+	order.AlreadyGroupedAt = Now()
+	order.UpdatedAt = TimestampText()
+	ScheduleGroupedOrderExpiry(order)
+	WorkbenchDebug("marked order as already grouped for", order.Customer)
+	if Workbench.Frame then
+		Workbench.Refresh()
+	end
+	return true
 end
 
 local function OrderHasRecipe(order, recipeName)
@@ -2245,20 +2531,17 @@ end
 
 function Workbench.RemoveOrder(orderId)
 	local state = Workbench.EnsureState()
-	local removedOrder
+	local removedOrderIndex
 
 	for index, order in ipairs(state.Orders) do
 		if order.Id == orderId then
-			removedOrder = order
-			table.remove(state.Orders, index)
+			removedOrderIndex = index
 			break
 		end
 	end
 
-	if removedOrder then
-		EC.PlayerList[removedOrder.Customer] = nil
-		EC.LfRecipeList[removedOrder.Customer] = nil
-		WorkbenchDebug("removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
+	if removedOrderIndex then
+		RemoveOrderByIndex(state, removedOrderIndex, "removed order for")
 	end
 
 	if state.SelectedOrderId == orderId then
@@ -2284,6 +2567,7 @@ function Workbench.ClearOrders()
 	local runtime = EnsureRuntime()
 	runtime.ActiveTrade = nil
 	runtime.PendingClosedTrades = nil
+	runtime.GroupedExpiry = nil
 
 	WorkbenchDebug("cleared queue and totals (" .. tostring(removedCount) .. " orders)")
 	Workbench.Refresh()
@@ -2777,6 +3061,13 @@ local function CreateOrderRow(parent, index)
 		end
 	end)
 
+	row.PartyCheck = row:CreateTexture(nil, "ARTWORK")
+	row.PartyCheck:SetPoint("TOPRIGHT", row.RemoveButton, "TOPLEFT", -4, 0)
+	row.PartyCheck:SetSize(16, 16)
+	row.PartyCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+	row.PartyCheck:SetVertexColor(0.45, 0.82, 0.42)
+	row.PartyCheck:Hide()
+
 	row.InviteButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
 	row.InviteButton:SetSize(42, 18)
 	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 6)
@@ -3078,8 +3369,21 @@ function Workbench.CreateFrame()
 
 	frame.Detail.Title = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.Detail.Title:SetPoint("TOPLEFT", frame.Detail.Content, "TOPLEFT", 0, -4)
-	frame.Detail.Title:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+	frame.Detail.Title:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", -78, 0)
 	frame.Detail.Title:SetJustifyH("LEFT")
+
+	frame.Detail.GroupCheck = frame.Detail.Content:CreateTexture(nil, "ARTWORK")
+	frame.Detail.GroupCheck:SetPoint("TOPRIGHT", frame.Detail.Content, "TOPRIGHT", 0, -4)
+	frame.Detail.GroupCheck:SetSize(18, 18)
+	frame.Detail.GroupCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+	frame.Detail.GroupCheck:SetVertexColor(0.45, 0.82, 0.42)
+	frame.Detail.GroupCheck:Hide()
+
+	frame.Detail.GroupText = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.GroupText:SetPoint("RIGHT", frame.Detail.GroupCheck, "LEFT", -2, 0)
+	frame.Detail.GroupText:SetText("In group")
+	frame.Detail.GroupText:SetTextColor(0.45, 0.82, 0.42)
+	frame.Detail.GroupText:Hide()
 
 	frame.Detail.Meta = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	frame.Detail.Meta:SetPoint("TOPLEFT", frame.Detail.Title, "BOTTOMLEFT", 0, -4)
@@ -3228,6 +3532,7 @@ end
 function Workbench.Refresh()
 	local frame = Workbench.Frame
 	local state = Workbench.EnsureState()
+	SyncGroupedOrders(state)
 	if not frame then
 		return
 	end
@@ -3253,6 +3558,8 @@ function Workbench.Refresh()
 		local row = frame.OrderRows[index]
 		local checked, total = Workbench.GetMaterialProgress(order)
 		local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
+		local isInCurrentGroup = IsCustomerInCurrentGroup(order.Customer)
+		local isGroupedQueueHold = order.AlreadyGrouped and not isInCurrentGroup
 		local readyText
 		if recipeTotal > 0 and verifiedCount == recipeTotal then
 			readyText = "|cFF74D06CVerified|r"
@@ -3273,17 +3580,28 @@ function Workbench.Refresh()
 		row.NameText:SetText(order.Customer or "Unknown")
 		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 		row.SummaryText:SetText(OrderSummary(order))
+		SetRegionShown(row.PartyCheck, isInCurrentGroup)
 		row:Show()
 
+		local bgR, bgG, bgB, bgA
+		local borderR, borderG, borderB, borderA
 		if recipeTotal > 0 and verifiedCount == recipeTotal and state.SelectedOrderId == order.Id then
-			ApplyBackdrop(row, 0.12, 0.2, 0.12, 0.98, 0.34, 0.78, 0.34, 1)
+			bgR, bgG, bgB, bgA = 0.12, 0.2, 0.12, 0.98
+			borderR, borderG, borderB, borderA = 0.34, 0.78, 0.34, 1
 		elseif recipeTotal > 0 and verifiedCount == recipeTotal then
-			ApplyBackdrop(row, 0.09, 0.16, 0.09, 0.95, 0.28, 0.62, 0.28, 1)
+			bgR, bgG, bgB, bgA = 0.09, 0.16, 0.09, 0.95
+			borderR, borderG, borderB, borderA = 0.28, 0.62, 0.28, 1
 		elseif state.SelectedOrderId == order.Id then
-			ApplyBackdrop(row, 0.24, 0.14, 0.08, 0.98, 0.9, 0.68, 0.28, 1)
+			bgR, bgG, bgB, bgA = 0.24, 0.14, 0.08, 0.98
+			borderR, borderG, borderB, borderA = 0.9, 0.68, 0.28, 1
 		else
-			ApplyBackdrop(row, 0.16, 0.11, 0.08, 0.95, 0.58, 0.41, 0.22, 1)
+			bgR, bgG, bgB, bgA = 0.16, 0.11, 0.08, 0.95
+			borderR, borderG, borderB, borderA = 0.58, 0.41, 0.22, 1
 		end
+		if isGroupedQueueHold then
+			borderR, borderG, borderB, borderA = 0.86, 0.18, 0.18, 1
+		end
+		ApplyBackdrop(row, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
 
 		row:ClearAllPoints()
 		row:SetPoint("TOPLEFT", frame.ListChild, "TOPLEFT", 4, -((index - 1) * 62))
@@ -3304,6 +3622,8 @@ function Workbench.Refresh()
 		frame.Detail.Title:SetText("No active order selected")
 		frame.Detail.Meta:SetText("")
 		frame.Detail.Message:SetText("")
+		frame.Detail.GroupCheck:Hide()
+		frame.Detail.GroupText:Hide()
 		frame.Detail.TradeHint:Hide()
 		frame.Detail.ActionRow:Hide()
 		frame.Detail.TipStatus:Hide()
@@ -3329,6 +3649,8 @@ function Workbench.Refresh()
 
 	frame.Detail.Empty:Hide()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
+	SetRegionShown(frame.Detail.GroupCheck, IsCustomerInCurrentGroup(order.Customer))
+	SetRegionShown(frame.Detail.GroupText, IsCustomerInCurrentGroup(order.Customer))
 
 	local activeTrade = GetActiveTradeForOrder(order)
 	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
