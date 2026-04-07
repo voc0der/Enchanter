@@ -11,6 +11,7 @@ local MAX_FRAME_WIDTH = 960
 local MAX_FRAME_HEIGHT = 960
 local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
+local GROUPED_QUEUE_EXPIRY_TIMER_BUFFER = 0.05
 local QUEUE_ALERT_SOUND_CHANNEL = "Master"
 local LOCK_BUTTON_ICON_TEXTURE = "Interface\\PetBattles\\PetBattle-LockIcon"
 local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
@@ -822,12 +823,20 @@ local function ScheduleGroupedOrderExpiry(order)
 	if C_Timer and C_Timer.After then
 		local token = groupedExpiry.Token
 		local orderId = order.Id
-		local delay = math.max(0, expireAt - Now())
+		local delay = math.max(0, expireAt - Now()) + GROUPED_QUEUE_EXPIRY_TIMER_BUFFER
 
 		C_Timer.After(delay, function()
-			local currentOrder = Workbench.GetOrderById(orderId)
+			local workbenchState = EC and EC.DBChar and EC.DBChar.Workbench or nil
+			local currentOrder
 			local currentGroupedExpiry = GetGroupedExpiryRuntime(orderId, false)
+			if workbenchState and workbenchState.Orders then
+				local orderIndex = FindOrderIndexById(orderId, workbenchState)
+				currentOrder = orderIndex and workbenchState.Orders[orderIndex] or nil
+			end
 			if not currentOrder or not currentGroupedExpiry then
+				if Workbench.Frame then
+					Workbench.Refresh()
+				end
 				return
 			end
 			if currentGroupedExpiry.Token ~= token or currentGroupedExpiry.ExpireAt ~= expireAt then
@@ -848,6 +857,16 @@ local function ScheduleGroupedOrderExpiry(order)
 			end
 			WorkbenchDebug("expired grouped order for", currentOrder.Customer, "(" .. tostring(GetGroupedQueueExpirySeconds()) .. "s without joining)")
 			Workbench.RemoveOrder(orderId)
+			if Workbench.Frame and Workbench.Frame.OrderRows then
+				for _, row in ipairs(Workbench.Frame.OrderRows) do
+					if row and row.OrderId == orderId and row.Hide then
+						row:Hide()
+					end
+				end
+			end
+			if Workbench.Frame then
+				Workbench.Refresh()
+			end
 		end)
 	end
 
@@ -3608,8 +3627,10 @@ function Workbench.Refresh()
 		row:SetWidth(GetQueueListWidth(frame) - 14)
 	end
 
-	for index = #state.Orders + 1, #frame.OrderRows do
-		frame.OrderRows[index]:Hide()
+	for index, row in ipairs(frame.OrderRows) do
+		if index > #state.Orders then
+			row:Hide()
+		end
 	end
 
 	local listHeight = frame.ListScroll and frame.ListScroll.GetHeight and frame.ListScroll:GetHeight() or MIN_QUEUE_HEIGHT
