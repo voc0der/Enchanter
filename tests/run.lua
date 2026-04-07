@@ -1787,7 +1787,8 @@ end
 local function test_workbench_frame_keeps_buttons_above_drag_header()
     local addon = setup_env()
 
-    local frame = addon.Workbench.CreateFrame()
+    addon.Workbench.Show()
+    local frame = addon.Workbench.Frame
     local workbenchState = addon.Workbench.EnsureState()
 
     assert_not_nil(frame, "workbench frame should be created when UI helpers exist")
@@ -3131,6 +3132,7 @@ local function test_grouped_queue_auto_expires_when_customer_never_joins()
         },
     })
 
+    local frame = addon.Workbench.CreateFrame()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF mongoose pst", "Buyer-Expire")
     run_timer(state, 1)
@@ -3140,15 +3142,17 @@ local function test_grouped_queue_auto_expires_when_customer_never_joins()
 
     assert_true(handled, "grouped expiry test should recognize the invite failure")
     assert_not_nil(order, "grouped expiry test should start with a queued order")
-    assert_equal(state.timer_delays[3], 30, "grouped queue expiry should schedule a timer using the configured seconds")
+    assert_true(state.timer_delays[3] > 30, "grouped queue expiry should schedule just after the configured seconds so the callback lands past the real deadline")
     assert_equal(#addon.Workbench.EnsureState().Orders, 1, "grouped queue expiry should keep the order queued until the timer fires")
 
-    state.current_time = 30
+    state.current_time = 31
     run_timer(state, 3)
 
     assert_equal(#addon.Workbench.EnsureState().Orders, 0, "grouped queue expiry should remove orders that never joined the group")
     assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Expire"), "expired grouped orders should disappear from the workbench")
     assert_nil(addon.PlayerList["Buyer-Expire"], "expired grouped orders should clear the anti-spam player gate")
+    assert_true(frame.EmptyQueueText.shown, "expiring grouped orders should switch the open workbench back to its empty-queue state immediately")
+    assert_true(string.find(frame.QueueCountText.text or "", "0 orders", 1, true) ~= nil, "expiring grouped orders should refresh the open workbench summary immediately")
 end
 
 local function test_trade_with_unmatched_partner_does_not_complete_selected_order()
