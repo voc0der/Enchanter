@@ -1,3 +1,13 @@
+## [2.1.30] - 2026-04-08
+
+### Added
+- Added a `Max customers in group` setting so Enchanter can pause chat matching automatically once a chosen number of queued customers have actually joined your party or raid; `0` keeps the old unlimited behavior
+- Added an `Emote /thank after successful cast` setting that sends a direct `THANK` emote to the customer once a trade settles with a confirmed applied enchant
+- Added an Auctionator-powered workbench header button that appears while the Auction House is open and bulk-searches every missing enchant formula by exact `Formula: ...` item name, refreshing from the live enchanting window first when it is available
+
+### Changed
+- Reworked the unlocked workbench lock button state into a cleaner native padlock plus green-check treatment instead of the old blocky hand-drawn open shackle
+
 ## [2.1.29] - 2026-04-07
 
 ### Fixed

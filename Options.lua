@@ -424,10 +424,12 @@ function EC.Default()
 	EC.DB.NetherRecipes = false
 	EC.DB.WhisperLfRequests = false
 	EC.DB.GroupedFollowUp = false
+	EC.DB.EmoteThankAfterCast = false
 	EC.DB.InviteTimeDelay = 0
 	EC.DB.WhisperTimeDelay = 0
 	EC.DB.GroupedFollowUpDelay = 1
 	EC.DB.GroupedQueueExpireSeconds = 0
+	EC.DB.MaxGroupedCustomers = 0
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
 	EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
@@ -450,10 +452,17 @@ function EC.OptionsUpdate()
 	if EC.DB.InviteIncompleteOrder == nil then
 		EC.DB.InviteIncompleteOrder = true
 	end
+	if EC.DB.EmoteThankAfterCast == nil then
+		EC.DB.EmoteThankAfterCast = false
+	end
 	if EC.DB.GroupedQueueExpireSeconds == nil then
 		EC.DB.GroupedQueueExpireSeconds = 0
 	end
 	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
+	if EC.DB.MaxGroupedCustomers == nil then
+		EC.DB.MaxGroupedCustomers = 0
+	end
+	EC.DB.MaxGroupedCustomers = math.max(0, math.floor(tonumber(EC.DB.MaxGroupedCustomers) or 0))
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then
 		EC.DB.MsgPrefix = EC.DefaultMsg
 	end
@@ -471,6 +480,9 @@ function EC.OptionsUpdate()
 	EC.RefreshCompiledData()
 	if EC.Workbench and EC.Workbench.SyncGroupedOrders then
 		EC.Workbench.SyncGroupedOrders()
+	end
+	if EC.Initalized and EC.EnforceMaxGroupedCustomerLimit then
+		EC.EnforceMaxGroupedCustomerLimit()
 	end
 end
 
@@ -571,6 +583,9 @@ function EC.OptionsInit()
 	AddSavedCheckBox(EC.DB, "WarnIncompleteOrder", true, "Warn if Incomplete Order")
 	AddSavedCheckBox(EC.DB, "InviteIncompleteOrder", true, "Invite Incomplete Order")
 	EC.OptionsBuilder.EndInLine()
+	EC.OptionsBuilder.InLine()
+	AddSavedCheckBox(EC.DB, "EmoteThankAfterCast", false, "Emote /thank after successful cast")
+	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.Indent(-10)
 	EC.OptionsBuilder.AddSpacerToPanel()
 
@@ -578,6 +593,7 @@ function EC.OptionsInit()
 	MakeSavedEditBox(EC.DB, "InviteTimeDelay", 0, "Invite Delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "GroupedFollowUpDelay", 1, "Grouped follow-up delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "GroupedQueueExpireSeconds", 0, "Grouped queue expiry (0 disables)", 60, nil, true)
+	MakeSavedEditBox(EC.DB, "MaxGroupedCustomers", 0, "Max customers in group (0 disables)", 60, nil, true)
 
 	EC.OptionsBuilder.AddHeaderToCurrentPanel("Search Patterns")
 	EC.OptionsBuilder.Indent(10)

@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.29`
+Current version: `2.1.30`
 
 ## What It Does
 
@@ -25,6 +25,8 @@ Current version: `2.1.29`
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
+- Optionally pause chat matching automatically once a chosen number of queued customers have joined your group
+- While the Auction House is open, optionally hand every missing enchant formula to Auctionator from the workbench in one exact-name bulk search
 - Search and tune per-recipe search phrases plus additive per-recipe blacklist phrases from the settings panel
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
 - Flag already-grouped customers in the workbench until they join you, with an optional auto-expire timeout for those stalled queue entries
@@ -54,8 +56,9 @@ Current version: `2.1.29`
 
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
-- Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A closed padlock means it is locked; the open padlock means it is unlocked.
+- Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
+- If Auctionator is loaded and the Auction House is open, an `AH Missing` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether brand new queued orders should play a WoW-native alert. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
@@ -76,6 +79,7 @@ Current version: `2.1.29`
 - Accepted trades keep partial mats and early tips attached to the queue entry, and the order retires automatically as soon as a settled trade verifies every requested enchant, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them).
+- In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself, and optionally send a direct `/thank` emote after a successful applied-enchant trade.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing

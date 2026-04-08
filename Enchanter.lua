@@ -28,6 +28,9 @@ local pendingInviteWindow = 10
 local simulationInterval = 180
 local simulationSeeded = false
 local simulationFallbackCounter = 0
+local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
+local ENCHANTING_SPELL_ID = 7411
+local RECIPE_FORMULA_PREFIX = "Formula: "
 local simulationNamePrefixes = {
 	"SimAldren",
 	"SimBrenna",
@@ -55,6 +58,7 @@ local simulationMessageTemplates = {
 	"%s %s in shatt can come to you",
 	"%s %s if you're around",
 }
+local RecipeAuctionSearchOverrides = {}
 
 local function HasCraftRecipeApi()
 	return GetNumCrafts and GetCraftInfo and GetCraftRecipeLink
@@ -124,6 +128,20 @@ local function After(delay, func)
 	else
 		func()
 	end
+end
+
+local function GetMaxGroupedCustomers()
+	return math.max(0, math.floor(tonumber(EC and EC.DB and EC.DB.MaxGroupedCustomers or 0) or 0))
+end
+
+local function BuildGroupedCustomerLimitMessage(currentCount, maxCustomers)
+	local customerLabel = currentCount == 1 and "customer" or "customers"
+	return string.format(
+		"|cFFFF1C1CEnchanter|r Paused after %d %s joined your group (max %d).",
+		currentCount,
+		customerLabel,
+		maxCustomers
+	)
 end
 
 local function InvitePlayer(name)
@@ -515,6 +533,65 @@ local function NormalizeNameKey(name)
 	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
 	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
 	return cleaned:lower()
+end
+
+local function IsFrameShown(frame)
+	if not frame or not frame.IsShown then
+		return false
+	end
+
+	local ok, shown = pcall(frame.IsShown, frame)
+	return ok and shown and true or false
+end
+
+local function IsRecipeDisabledBySettings(recipeName)
+	if not EC.DB or not EC.DB.NetherRecipes then
+		return false
+	end
+
+	for _, disabledRecipeName in ipairs(EC.RecipesWithNether or {}) do
+		if disabledRecipeName == recipeName then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function GetEnchantingSkillLineName()
+	if GetSpellInfo then
+		local enchantingName = GetSpellInfo(ENCHANTING_SPELL_ID)
+		if type(enchantingName) == "string" and enchantingName ~= "" then
+			return enchantingName
+		end
+	end
+
+	return "Enchanting"
+end
+
+local function SkillLineMatchesEnchanting(skillLineName)
+	local normalizedSkillLineName = NormalizePhrase(skillLineName)
+	local normalizedEnchantingName = NormalizePhrase(GetEnchantingSkillLineName())
+	return normalizedSkillLineName ~= "" and normalizedSkillLineName == normalizedEnchantingName
+end
+
+local function BuildAuctionSearchTermForRecipe(recipeName)
+	recipeName = TrimText(recipeName)
+	if recipeName == "" then
+		return nil
+	end
+
+	local overrideSearchTerm = RecipeAuctionSearchOverrides[recipeName]
+	if overrideSearchTerm ~= nil then
+		overrideSearchTerm = TrimText(overrideSearchTerm)
+		return overrideSearchTerm ~= "" and overrideSearchTerm or nil
+	end
+
+	if string.find(recipeName, "^Formula:%s") then
+		return recipeName
+	end
+
+	return RECIPE_FORMULA_PREFIX .. recipeName
 end
 
 local function IsSimulatedCustomer(name)
@@ -1097,6 +1174,29 @@ function EC.SendGroupedFollowUp(name, sourceLabel)
 	return msg
 end
 
+function EC.SendThankEmote(name, sourceLabel)
+	if not name or name == "" or not EC.DB or EC.DB.EmoteThankAfterCast ~= true then
+		return false
+	end
+
+	if IsSimulatedCustomer(name) then
+		EC.DebugPrint((sourceLabel or "simulated thank") .. " " .. name)
+		return true
+	end
+
+	if EC.DBChar and EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "would thank") .. " " .. name)
+		return true
+	end
+
+	if type(DoEmote) ~= "function" then
+		return false
+	end
+
+	DoEmote("THANK", name)
+	return true
+end
+
 function EC.InviteCustomer(name, sourceLabel)
 	if not name or name == "" then
 		return
@@ -1184,15 +1284,44 @@ local function EnsureSavedVariables()
 	if EC.DB.NetherRecipes == nil then EC.DB.NetherRecipes = false end
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
 	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
+	if EC.DB.EmoteThankAfterCast == nil then EC.DB.EmoteThankAfterCast = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
 	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
 	if EC.DB.GroupedQueueExpireSeconds == nil then EC.DB.GroupedQueueExpireSeconds = 0 end
 	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
+	if EC.DB.MaxGroupedCustomers == nil then EC.DB.MaxGroupedCustomers = 0 end
+	EC.DB.MaxGroupedCustomers = GetMaxGroupedCustomers()
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
 	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
 	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
+end
+
+function EC.EnforceMaxGroupedCustomerLimit()
+	local maxCustomers = GetMaxGroupedCustomers()
+	local groupedCustomerCount
+
+	if maxCustomers <= 0 or not EC.DBChar or EC.DBChar.Stop == true then
+		return false
+	end
+
+	if not EC.Workbench or not EC.Workbench.GetGroupedCustomerCount then
+		return false
+	end
+
+	groupedCustomerCount = math.max(0, math.floor(tonumber(EC.Workbench.GetGroupedCustomerCount()) or 0))
+	if groupedCustomerCount < maxCustomers then
+		return false
+	end
+
+	EC.DBChar.Stop = true
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
+
+	print(BuildGroupedCustomerLimitMessage(groupedCustomerCount, maxCustomers))
+	return true
 end
 
 function EC.RefreshCompiledData()
@@ -1351,6 +1480,110 @@ function EC.GetItems()
 	return bestRecipeCount > 0
 end
 
+function EC.IsAuctionatorAvailable()
+	return Auctionator ~= nil
+		and Auctionator.API ~= nil
+		and Auctionator.API.v1 ~= nil
+		and type(Auctionator.API.v1.MultiSearchExact) == "function"
+end
+
+function EC.IsAuctionHouseOpen()
+	return IsFrameShown(AuctionFrame) or IsFrameShown(AuctionHouseFrame)
+end
+
+function EC.IsEnchantingProfessionVisible()
+	if IsFrameShown(TradeSkillFrame) then
+		if type(GetTradeSkillLine) ~= "function" then
+			return true
+		end
+		return SkillLineMatchesEnchanting(GetTradeSkillLine())
+	end
+
+	if IsFrameShown(CraftFrame) then
+		if type(GetCraftDisplaySkillLine) ~= "function" then
+			return true
+		end
+		return SkillLineMatchesEnchanting(GetCraftDisplaySkillLine())
+	end
+
+	return false
+end
+
+function EC.CanSearchMissingEnchantRecipes()
+	return EC.IsAuctionatorAvailable() and EC.IsAuctionHouseOpen()
+end
+
+function EC.GetMissingEnchantRecipeNames()
+	local knownRecipeList = EC.DBChar and EC.DBChar.RecipeList or {}
+	local missingRecipeNames = {}
+
+	for recipeName in pairs(EC.RecipeTags and EC.RecipeTags["enGB"] or {}) do
+		if not knownRecipeList[recipeName] and not IsRecipeDisabledBySettings(recipeName) then
+			missingRecipeNames[#missingRecipeNames + 1] = recipeName
+		end
+	end
+
+	table.sort(missingRecipeNames)
+	return missingRecipeNames
+end
+
+function EC.GetMissingEnchantRecipeSearchTerms()
+	local missingRecipeNames = EC.GetMissingEnchantRecipeNames()
+	local searchTerms = {}
+
+	for _, recipeName in ipairs(missingRecipeNames) do
+		local searchTerm = BuildAuctionSearchTermForRecipe(recipeName)
+		if searchTerm then
+			searchTerms[#searchTerms + 1] = searchTerm
+		end
+	end
+
+	return searchTerms
+end
+
+function EC.SearchAuctionHouseForMissingEnchantRecipes()
+	if not EC.CanSearchMissingEnchantRecipes() then
+		print("|cFFFF1C1CEnchanter|r Open the Auction House with Auctionator loaded to search for missing enchant formulas.")
+		return false
+	end
+
+	local hadStoredRecipes = CountRecipeEntries(EC.DBChar and EC.DBChar.RecipeList or nil) > 0
+	local previousRecipeList = EC.DBChar and EC.DBChar.RecipeList or nil
+	local previousRecipeLinks = EC.DBChar and EC.DBChar.RecipeLinks or nil
+	local previousRecipeMats = EC.DBChar and EC.DBChar.RecipeMats or nil
+
+	if EC.IsEnchantingProfessionVisible() then
+		local refreshed = EC.GetItems()
+		if not refreshed and hadStoredRecipes and EC.DBChar then
+			EC.DBChar.RecipeList = previousRecipeList
+			EC.DBChar.RecipeLinks = previousRecipeLinks
+			EC.DBChar.RecipeMats = previousRecipeMats
+			EC.UpdateTags()
+			EC.RefreshCompiledData()
+		end
+	end
+
+	if EC.NeedsRecipeScan and EC.NeedsRecipeScan() then
+		print("|cFFFF1C1CEnchanter|r Run /ec scan first, or open your enchanting window before searching the AH for missing formulas.")
+		return false
+	end
+
+	local searchTerms = EC.GetMissingEnchantRecipeSearchTerms()
+	if #searchTerms == 0 then
+		print("|cFFFF1C1CEnchanter|r No missing enchant formulas were found in your current recipe set.")
+		return false
+	end
+
+	local ok, err = pcall(Auctionator.API.v1.MultiSearchExact, AUCTIONATOR_CALLER_ID, searchTerms)
+	if not ok then
+		print("|cFFFF1C1CEnchanter|r Auctionator could not start the missing-formula search: " .. tostring(err))
+		return false
+	end
+
+	print(string.format("|cFFFF1C1CEnchanter|r Searching Auctionator for %d missing enchant formula%s.", #searchTerms, #searchTerms == 1 and "" or "s"))
+	return true
+end
+
 function EC.GenerateSimulatedOrder(sourceLabel)
 	local customerName, message = BuildSimulatedMessage()
 	if not customerName or not message then
@@ -1428,7 +1661,14 @@ function EC.SetChatScanningEnabled(enabled)
 	end
 
 	enabled = enabled and true or false
-	EC.DBChar.Stop = not enabled
+	if enabled then
+		EC.DBChar.Stop = false
+		if EC.EnforceMaxGroupedCustomerLimit and EC.EnforceMaxGroupedCustomerLimit() then
+			return false
+		end
+	else
+		EC.DBChar.Stop = true
+	end
 
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -1688,6 +1928,15 @@ local function Event_GROUP_ROSTER_UPDATE()
 	elseif EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
 	end
+	if EC.EnforceMaxGroupedCustomerLimit then
+		EC.EnforceMaxGroupedCustomerLimit()
+	end
+end
+
+local function Event_UI_CONTEXT_REFRESH()
+	if EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
 end
 
 local function Event_CHAT_MSG_CHANNEL(msg, name)
@@ -1734,6 +1983,8 @@ end
 local function Event_ADDON_LOADED(arg1)
 	if arg1 == TOCNAME then
 		EC.Init()
+	elseif arg1 == "Auctionator" and EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
 	end
 end
 
@@ -1755,4 +2006,10 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("TRADE_UPDATE", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
 	EC.Tool.RegisterEvent("GROUP_ROSTER_UPDATE", Event_GROUP_ROSTER_UPDATE)
+	EC.Tool.RegisterEvent("AUCTION_HOUSE_SHOW", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("AUCTION_HOUSE_CLOSED", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("TRADE_SKILL_SHOW", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("TRADE_SKILL_CLOSE", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("CRAFT_SHOW", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("CRAFT_CLOSE", Event_UI_CONTEXT_REFRESH)
 end

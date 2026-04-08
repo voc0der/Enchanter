@@ -14,6 +14,7 @@ local DETAIL_RESERVED_HEIGHT = 220
 local GROUPED_QUEUE_EXPIRY_TIMER_BUFFER = 0.05
 local QUEUE_ALERT_SOUND_CHANNEL = "Master"
 local LOCK_BUTTON_ICON_TEXTURE = "Interface\\PetBattles\\PetBattle-LockIcon"
+local LOCK_BUTTON_UNLOCKED_TEXTURE = "Interface\\Buttons\\UI-CheckBox-Check"
 local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
 local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
 local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
@@ -907,6 +908,34 @@ local function SyncGroupedOrders(state)
 	return changed
 end
 
+local function CountAppliedRecipes(activeTrade)
+	local count = 0
+
+	for _ in pairs(activeTrade and activeTrade.AppliedRecipes or {}) do
+		count = count + 1
+	end
+
+	return count
+end
+
+local function MaybeSendSuccessfulTradeThanks(order, activeTrade)
+	if not order or not activeTrade or activeTrade.Thanked then
+		return false
+	end
+
+	if CountAppliedRecipes(activeTrade) <= 0 then
+		return false
+	end
+
+	if EC and EC.SendThankEmote and EC.SendThankEmote(order.Customer, "[Workbench] thank") then
+		activeTrade.Thanked = true
+		WorkbenchDebug("thanked", order.Customer)
+		return true
+	end
+
+	return false
+end
+
 local function MaterialKey(material)
 	if not material then
 		return ""
@@ -1795,6 +1824,7 @@ local function FinalizeSuccessfulTrade(order, activeTrade, goldDelta)
 		end
 		WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(tradeTipCopper) .. ", total " .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
 	end
+	MaybeSendSuccessfulTradeThanks(order, activeTrade)
 
 	return persistedRecipes, persistedMaterials, tradeTipCopper
 end
@@ -2152,6 +2182,21 @@ function Workbench.GetTradePartnerName()
 	return nil
 end
 
+function Workbench.GetGroupedCustomerCount()
+	local count = 0
+	local seen = {}
+
+	for _, order in ipairs(Workbench.EnsureState().Orders) do
+		local _, fullName = NormalizeCustomerName(order and order.Customer)
+		if fullName ~= "" and not seen[fullName] and IsCustomerInCurrentGroup(order.Customer) then
+			seen[fullName] = true
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
 function Workbench.BeginTrade(customerName)
 	local runtime = EnsureRuntime()
 	local order = Workbench.GetOrderByCustomer(customerName)
@@ -2176,6 +2221,7 @@ function Workbench.BeginTrade(customerName)
 		TargetAccepted = false,
 		AcceptedSignal = false,
 		CompletedSignal = false,
+		Thanked = false,
 	}
 
 	if order then
@@ -2984,27 +3030,18 @@ local function UpdateLockButtonVisual()
 
 	if button.Icon then
 		button.Icon:SetTexture(LOCK_BUTTON_ICON_TEXTURE)
-		button.Icon:SetVertexColor(1, 0.82, 0.18, 1)
-		SetRegionShown(button.Icon, state.Locked)
+		if state.Locked then
+			button.Icon:SetVertexColor(1, 0.82, 0.18, 1)
+		else
+			button.Icon:SetVertexColor(0.78, 0.88, 0.72, 1)
+		end
+		SetRegionShown(button.Icon, true)
 	end
 
-	if button.OpenShackleLeft then
-		SetRegionShown(button.OpenShackleLeft, not state.Locked)
-	end
-	if button.OpenShackleTop then
-		SetRegionShown(button.OpenShackleTop, not state.Locked)
-	end
-	if button.OpenShackleRight then
-		SetRegionShown(button.OpenShackleRight, not state.Locked)
-	end
-	if button.OpenBody then
-		SetRegionShown(button.OpenBody, not state.Locked)
-	end
-	if button.OpenBodyCutout then
-		SetRegionShown(button.OpenBodyCutout, not state.Locked)
-	end
-	if button.OpenKeyhole then
-		SetRegionShown(button.OpenKeyhole, not state.Locked)
+	if button.UnlockedCheck then
+		button.UnlockedCheck:SetTexture(LOCK_BUTTON_UNLOCKED_TEXTURE)
+		button.UnlockedCheck:SetVertexColor(0.44, 0.86, 0.36, 1)
+		SetRegionShown(button.UnlockedCheck, not state.Locked)
 	end
 end
 
@@ -3044,6 +3081,24 @@ local function UpdateScanButtonText()
 		Workbench.Frame.ScanButton:SetText("Stop")
 	else
 		Workbench.Frame.ScanButton:SetText("Start")
+	end
+end
+
+local function UpdateAuctionSearchButton()
+	if not Workbench.Frame or not Workbench.Frame.AuctionSearchButton then
+		return
+	end
+
+	local frame = Workbench.Frame
+	local shouldShow = EC and EC.CanSearchMissingEnchantRecipes and EC.CanSearchMissingEnchantRecipes()
+
+	SetRegionShown(frame.AuctionSearchButton, shouldShow)
+	frame.AuctionSearchButton:SetText("AH Missing")
+
+	if frame.TitleText then
+		frame.TitleText:ClearAllPoints()
+		frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
+		frame.TitleText:SetPoint("RIGHT", shouldShow and frame.AuctionSearchButton or frame.ScanButton, "LEFT", -10, 0)
 	end
 end
 
@@ -3258,30 +3313,9 @@ function Workbench.CreateFrame()
 	frame.LockButton.Icon = frame.LockButton:CreateTexture(nil, "ARTWORK")
 	frame.LockButton.Icon:SetSize(14, 14)
 	frame.LockButton.Icon:SetPoint("CENTER", frame.LockButton, "CENTER", 0, 0)
-	frame.LockButton.OpenShackleLeft = frame.LockButton:CreateTexture(nil, "ARTWORK")
-	frame.LockButton.OpenShackleLeft:SetSize(2, 2)
-	frame.LockButton.OpenShackleLeft:SetPoint("CENTER", frame.LockButton, "CENTER", -3, 3)
-	frame.LockButton.OpenShackleLeft:SetColorTexture(1, 0.82, 0.18, 1)
-	frame.LockButton.OpenShackleTop = frame.LockButton:CreateTexture(nil, "ARTWORK")
-	frame.LockButton.OpenShackleTop:SetSize(7, 2)
-	frame.LockButton.OpenShackleTop:SetPoint("CENTER", frame.LockButton, "CENTER", 1, 5)
-	frame.LockButton.OpenShackleTop:SetColorTexture(1, 0.82, 0.18, 1)
-	frame.LockButton.OpenShackleRight = frame.LockButton:CreateTexture(nil, "ARTWORK")
-	frame.LockButton.OpenShackleRight:SetSize(2, 5)
-	frame.LockButton.OpenShackleRight:SetPoint("CENTER", frame.LockButton, "CENTER", 4, 2)
-	frame.LockButton.OpenShackleRight:SetColorTexture(1, 0.82, 0.18, 1)
-	frame.LockButton.OpenBody = frame.LockButton:CreateTexture(nil, "ARTWORK")
-	frame.LockButton.OpenBody:SetSize(10, 7)
-	frame.LockButton.OpenBody:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -2)
-	frame.LockButton.OpenBody:SetColorTexture(1, 0.82, 0.18, 1)
-	frame.LockButton.OpenBodyCutout = frame.LockButton:CreateTexture(nil, "OVERLAY")
-	frame.LockButton.OpenBodyCutout:SetSize(4, 2)
-	frame.LockButton.OpenBodyCutout:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -2)
-	frame.LockButton.OpenBodyCutout:SetColorTexture(0.12, 0.1, 0.08, 1)
-	frame.LockButton.OpenKeyhole = frame.LockButton:CreateTexture(nil, "OVERLAY")
-	frame.LockButton.OpenKeyhole:SetSize(2, 3)
-	frame.LockButton.OpenKeyhole:SetPoint("CENTER", frame.LockButton, "CENTER", 0, -1)
-	frame.LockButton.OpenKeyhole:SetColorTexture(0.12, 0.1, 0.08, 1)
+	frame.LockButton.UnlockedCheck = frame.LockButton:CreateTexture(nil, "OVERLAY")
+	frame.LockButton.UnlockedCheck:SetSize(11, 11)
+	frame.LockButton.UnlockedCheck:SetPoint("BOTTOMRIGHT", frame.LockButton, "BOTTOMRIGHT", -1, 1)
 	frame.LockButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		state.Locked = not state.Locked
@@ -3343,6 +3377,20 @@ function Workbench.CreateFrame()
 			EC.ToggleChatScanning()
 		end
 	end)
+
+	frame.AuctionSearchButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.AuctionSearchButton:SetSize(92, 20)
+	frame.AuctionSearchButton:SetPoint("RIGHT", frame.ScanButton, "LEFT", -6, 0)
+	if frame.AuctionSearchButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.AuctionSearchButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.AuctionSearchButton, "button")
+	frame.AuctionSearchButton:SetScript("OnClick", function()
+		if EC and EC.SearchAuctionHouseForMissingEnchantRecipes then
+			EC.SearchAuctionHouseForMissingEnchantRecipes()
+		end
+	end)
+	frame.AuctionSearchButton:Hide()
 
 	frame.TitleText = frame.Header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
@@ -3542,6 +3590,7 @@ function Workbench.CreateFrame()
 	UpdateLockButtonVisual()
 	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
+	UpdateAuctionSearchButton()
 	if not Workbench.EnsureState().Visible then
 		frame:Hide()
 	end
@@ -3561,6 +3610,7 @@ function Workbench.Refresh()
 	UpdateLockButtonVisual()
 	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
+	UpdateAuctionSearchButton()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then
 		local listWidth = frame.ListScroll:GetWidth()

@@ -66,10 +66,12 @@ local function setup_env(opts)
     opts = opts or {}
 
     local state = {
+        auctionator_calls = {},
         invites = {},
         prints = {},
         played_sounds = {},
         played_sound_calls = {},
+        emotes = {},
         crafts = copy_table(opts.crafts or {}),
         craft_available_only = opts.craft_available_only and true or false,
         craft_filter = tonumber(opts.craft_filter) or 0,
@@ -101,6 +103,28 @@ local function setup_env(opts)
         trade_skill_item_level_min = tonumber(opts.trade_skill_item_level_min) or 0,
         trade_skill_item_level_max = tonumber(opts.trade_skill_item_level_max) or 0,
     }
+
+    local function set_shown_methods(frame, shown)
+        frame.shown = shown and true or false
+
+        function frame:IsShown()
+            return self.shown and true or false
+        end
+
+        function frame:SetShown(value)
+            self.shown = value and true or false
+        end
+
+        function frame:Show()
+            self.shown = true
+        end
+
+        function frame:Hide()
+            self.shown = false
+        end
+
+        return frame
+    end
 
     local function new_font_string()
         local font_string = {
@@ -329,6 +353,13 @@ local function setup_env(opts)
             target = target,
         }
     end
+    _G.DoEmote = function(token, target)
+        state.emotes[#state.emotes + 1] = {
+            token = token,
+            target = target,
+        }
+        return false
+    end
     _G.SOUNDKIT = {
         IG_MAINMENU_OPTION_CHECKBOX_ON = 856,
         U_CHAT_SCROLL_BUTTON = 1115,
@@ -353,9 +384,9 @@ local function setup_env(opts)
     _G.CastSpellByName = function(name)
         state.last_cast = name
     end
-    _G.CraftFrame = {
+    _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
-    }
+    }, opts.craft_frame_shown)
     _G.CraftFrameAvailableFilterCheckButton = {
         checked = state.craft_available_only and true or false,
     }
@@ -408,6 +439,9 @@ local function setup_env(opts)
     _G.GetCraftRecipeLink = function(index)
         local craft = get_visible_crafts()[index]
         return craft and craft.link or nil
+    end
+    _G.GetCraftDisplaySkillLine = function()
+        return opts.craft_skill_line_name or "Enchanting", 375, 375
     end
     _G.SelectCraft = function(index)
         state.selected_craft = index
@@ -465,9 +499,9 @@ local function setup_env(opts)
         local reagent = craft.reagents[reagent_index]
         return reagent and reagent.link or nil
     end
-    _G.TradeSkillFrame = {
+    _G.TradeSkillFrame = set_shown_methods({
         selectedSkill = nil,
-    }
+    }, opts.trade_skill_frame_shown)
     _G.TradeSearchInputBox = {
         text = opts.trade_skill_search_text or "",
     }
@@ -590,6 +624,9 @@ local function setup_env(opts)
             return nil
         end
         return skill.name, skill.skill_type
+    end
+    _G.GetTradeSkillLine = function()
+        return opts.trade_skill_line_name or "Enchanting", 375, 375
     end
     _G.GetTradeSkillRecipeLink = function(index)
         local skill = get_visible_trade_skills()[index]
@@ -765,6 +802,18 @@ local function setup_env(opts)
         end
         return false
     end
+    _G.GetSpellInfo = function(spell)
+        if type(opts.spell_info_map) == "table" and opts.spell_info_map[spell] ~= nil then
+            return opts.spell_info_map[spell]
+        end
+        if spell == 7411 then
+            return opts.enchanting_spell_name or "Enchanting"
+        end
+        if type(spell) == "string" then
+            return spell
+        end
+        return nil
+    end
     _G.TIME_TWENTYFOURHOURS = "%02d:%02d"
     _G.TIME_TWELVEHOURAM = "%d:%02d AM"
     _G.TIME_TWELVEHOURPM = "%d:%02d PM"
@@ -773,6 +822,27 @@ local function setup_env(opts)
         return new_frame(frame_type, name, parent, template)
     end
     _G.UIParent = new_frame("Frame", "UIParent", nil, nil)
+    _G.AuctionFrame = set_shown_methods({}, opts.auction_frame_shown or opts.auction_house_open)
+    _G.AuctionHouseFrame = set_shown_methods({}, opts.auction_house_frame_shown or opts.auction_house_open)
+    if opts.with_auctionator then
+        _G.Auctionator = {
+            API = {
+                v1 = {
+                    MultiSearchExact = function(caller_id, search_terms)
+                        state.auctionator_calls[#state.auctionator_calls + 1] = {
+                            caller_id = caller_id,
+                            search_terms = copy_table(search_terms),
+                        }
+                        if opts.auctionator_multi_search_error then
+                            error(opts.auctionator_multi_search_error)
+                        end
+                    end,
+                },
+            },
+        }
+    else
+        _G.Auctionator = nil
+    end
     if opts.elvui then
         local skins = {}
 
@@ -874,6 +944,15 @@ local function sorted_recipe_names(recipe_names)
     local out = copy_table(recipe_names or {})
     table.sort(out)
     return out
+end
+
+local function list_contains(list, expected)
+    for _, value in ipairs(list or {}) do
+        if value == expected then
+            return true
+        end
+    end
+    return false
 end
 
 local function assert_recipe_bucket_matches(order, expected_recipes, context)
@@ -1546,6 +1625,8 @@ local function test_incomplete_order_settings_default_on()
 
     assert_true(addon.DB.WarnIncompleteOrder, "incomplete-order warnings should default to enabled")
     assert_true(addon.DB.InviteIncompleteOrder, "incomplete-order invites should default to enabled")
+    assert_true(addon.DB.EmoteThankAfterCast == false, "thank emotes should default to disabled")
+    assert_equal(addon.DB.MaxGroupedCustomers, 0, "max grouped customers should default to unlimited")
 end
 
 local function test_parse_message_invites_once_and_whispers_link()
@@ -1799,6 +1880,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.ClearButton.parent, frame.Header, "clear button should also live on the header so it stays clickable")
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
+    assert_equal(frame.AuctionSearchButton.parent, frame.Header, "auction search button should also live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
     assert_equal(frame.LockButton.text, "", "lock control should use icon-only state instead of a text label")
     assert_equal(frame.LockButton.width, 24, "lock control should stay compact as an icon toggle")
@@ -1809,12 +1891,14 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.SoundButton.Muted.texture, "Interface\\Common\\VoiceChat-Muted", "sound control should show the muted overlay when alerts are off")
     assert_true(workbenchState.Locked, "workbench should start locked by default")
     assert_true(frame.LockButton.Icon.shown, "locked state should show the closed padlock icon")
-    assert_true(not frame.LockButton.OpenBody.shown, "locked state should hide the open padlock glyph")
+    assert_true(not frame.LockButton.UnlockedCheck.shown, "locked state should hide the unlocked check overlay")
     assert_true(frame.SoundButton.Muted.shown, "sound-off state should show the muted overlay")
     assert_true(not frame.SoundButton.SoundOn.shown, "sound-off state should hide the active sound overlay")
     assert_equal(frame.SoundButton.point[2], frame.LockButton, "sound icon should sit immediately beside the lock icon")
     assert_equal(frame.ClearButton.point[2], frame.SoundButton, "clear should sit next to the icon toggles")
     assert_equal(frame.ScanButton.point[2], frame.ClearButton, "start/scan should sit next to clear")
+    assert_equal(frame.AuctionSearchButton.point[2], frame.ScanButton, "auction search should sit directly to the left of scan when it is available")
+    assert_true(frame.AuctionSearchButton.shown == false, "auction search should stay hidden until the AH integration is usable")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 
@@ -1822,8 +1906,8 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
 
     assert_true(not workbenchState.Locked, "clicking the padlock should still unlock the workbench")
     assert_equal(frame.LockButton.text, "", "unlocking should remain icon-only")
-    assert_true(not frame.LockButton.Icon.shown, "unlocked state should hide the closed padlock")
-    assert_true(frame.LockButton.OpenBody.shown, "unlocked state should show the open padlock glyph")
+    assert_true(frame.LockButton.Icon.shown, "unlocked state should keep the native padlock visible")
+    assert_true(frame.LockButton.UnlockedCheck.shown, "unlocked state should show the cleaner native check overlay")
 end
 
 local function test_workbench_title_includes_addon_version()
@@ -1899,7 +1983,7 @@ local function test_workbench_lock_button_survives_clients_without_text_insets()
 
     assert_true(not workbenchState.Locked, "lock toggle should still work without text inset support")
     assert_equal(frame.LockButton.text, "", "unlocking should remain icon-only without text inset support")
-    assert_true(frame.LockButton.OpenBody.shown, "unlocked glyph should still render without text inset support")
+    assert_true(frame.LockButton.UnlockedCheck.shown, "unlocked indicator should still render without text inset support")
 end
 
 local function test_workbench_toggle_shows_a_newly_created_hidden_frame()
@@ -2512,6 +2596,104 @@ local function test_workbench_header_button_does_not_get_stuck_on_scan_when_only
     assert_equal(frame.ScanButton.text, "Stop", "header button should follow chat scanning state instead of staying on Scan when only material snapshots are missing")
 end
 
+local function test_auction_search_button_only_shows_while_the_auction_house_is_open()
+    local addon, state = setup_env({
+        with_auctionator = true,
+    })
+
+    addon.OnLoad()
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_true(frame.AuctionSearchButton.shown == false, "auction search should stay hidden until the auction house is open")
+
+    AuctionFrame:Show()
+    state.event_handlers["AUCTION_HOUSE_SHOW"]()
+    assert_true(frame.AuctionSearchButton.shown, "auction search should appear as soon as the auction house opens")
+
+    AuctionFrame:Hide()
+    AuctionHouseFrame:Hide()
+    state.event_handlers["AUCTION_HOUSE_CLOSED"]()
+    assert_true(frame.AuctionSearchButton.shown == false, "auction search should hide again when the auction house closes")
+end
+
+local function test_auction_search_uses_formula_names_and_refreshes_live_enchanting_data()
+    local addon, state = setup_env({
+        with_auctionator = true,
+        auction_house_open = true,
+        trade_skill_frame_shown = true,
+        trade_skill_line_name = "Enchanting",
+        db = {
+            NetherRecipes = true,
+        },
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                    { name = "Lesser Nether Essence", count = 1, link = "item:11174" },
+                },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    assert_true(frame.AuctionSearchButton.shown, "auction search should be visible when Auctionator is loaded and the AH is open")
+
+    frame.AuctionSearchButton.scripts["OnClick"]()
+
+    assert_equal(state.last_cast, "Enchanting", "auction search should refresh your enchanting scan when the profession window is open")
+    assert_equal(#state.auctionator_calls, 1, "auction search should hand the missing formulas to Auctionator")
+    assert_equal(state.auctionator_calls[1].caller_id, "Enchanter", "auction search should identify this addon when calling Auctionator")
+    assert_true(list_contains(state.auctionator_calls[1].search_terms, "Formula: Enchant Weapon - Mongoose"), "auction search should map missing recipes to their Formula item names")
+    assert_true(not list_contains(state.auctionator_calls[1].search_terms, "Enchant Weapon - Mongoose"), "auction search should not pass raw enchant names to Auctionator")
+    assert_true(not list_contains(state.auctionator_calls[1].search_terms, "Formula: Enchant Boots - Minor Speed"), "auction search should skip formulas you already know")
+    assert_true(not list_contains(state.auctionator_calls[1].search_terms, "Formula: Enchant Boots - Surefooted"), "auction search should respect disabled recipes when building the missing-formula list")
+end
+
+local function test_auction_search_uses_saved_scan_when_the_profession_window_is_closed()
+    local addon, state = setup_env({
+        with_auctionator = true,
+        auction_house_open = true,
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    frame.AuctionSearchButton.scripts["OnClick"]()
+
+    assert_nil(state.last_cast, "auction search should not force-open enchanting when a saved scan already exists")
+    assert_equal(#state.auctionator_calls, 1, "auction search should still work from the saved scan data")
+    assert_true(list_contains(state.auctionator_calls[1].search_terms, "Formula: Enchant Weapon - Mongoose"), "saved-scan searches should still use formula item names")
+    assert_true(not list_contains(state.auctionator_calls[1].search_terms, "Formula: Enchant Boots - Minor Speed"), "saved-scan searches should continue skipping recipes you already know")
+end
+
+local function test_auction_search_requires_a_scan_when_no_recipe_data_is_available()
+    local addon, state = setup_env({
+        with_auctionator = true,
+        auction_house_open = true,
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    frame.AuctionSearchButton.scripts["OnClick"]()
+
+    assert_equal(#state.auctionator_calls, 0, "auction search should not call Auctionator without recipe data")
+
+    local foundWarning = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Run /ec scan first", 1, true) ~= nil then
+            foundWarning = true
+            break
+        end
+    end
+
+    assert_true(foundWarning, "auction search should explain how to build recipe data when no scan is available")
+end
+
 local function test_workbench_refresh_survives_without_fontstring_setshown()
     local addon = setup_env({
         omit_fontstring_setshown = true,
@@ -3112,6 +3294,47 @@ local function test_grouped_queue_indicator_clears_when_customer_joins_group()
     assert_true(frame.Detail.GroupText.shown, "detail pane should show the in-group label once the customer joins the group")
 end
 
+local function test_grouped_customer_limit_pauses_chat_scanning_when_customer_joins()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MaxGroupedCustomers = 1,
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Capped")
+
+    state.current_party_members = { "Buyer-Capped" }
+    addon.Workbench.SyncGroupedOrders()
+    addon.EnforceMaxGroupedCustomerLimit()
+
+    assert_true(addon.DBChar.Stop, "joining customer cap should pause chat scanning")
+    assert_equal(frame.ScanButton.text, "Start", "pausing at the grouped-customer cap should flip the header button back to Start")
+
+    local foundMessage = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Paused after 1 customer joined your group (max 1).", 1, true) ~= nil then
+            foundMessage = true
+            break
+        end
+    end
+
+    assert_true(foundMessage, "reaching the grouped-customer cap should explain why chat scanning paused")
+end
+
 local function test_grouped_queue_auto_expires_when_customer_never_joins()
     local addon, state = setup_env({
         defer_timers = true,
@@ -3253,6 +3476,57 @@ local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
     assert_equal(state.CompletedOrders, 1, "accepted trades should auto-verify and then auto-complete a matching enchant even when Apply was not clicked first")
     assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-AutoVerify"), "auto-verified finished orders should retire automatically")
     assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after auto-verification retires the order")
+end
+
+local function test_successful_trade_can_emote_thank_directly_to_customer()
+    local addon, state = setup_env({
+        db = {
+            EmoteThankAfterCast = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Thanks")
+
+    addon.Workbench.BeginTrade("Buyer-Thanks")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#state.emotes, 1, "successful enchant trades should fire one thank emote when the option is enabled")
+    assert_equal(state.emotes[1].token, "THANK", "successful enchant trades should use the THANK emote token directly")
+    assert_equal(state.emotes[1].target, "Buyer-Thanks", "thank emotes should target the customer directly without retargeting")
+end
+
+local function test_tip_only_trade_does_not_emote_thank()
+    local addon, state = setup_env({
+        db = {
+            EmoteThankAfterCast = true,
+        },
+        trade_target_money = 5000,
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-NoCastThanks")
+
+    addon.Workbench.BeginTrade("Buyer-NoCastThanks")
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#state.emotes, 0, "successful tip-only trades should not emit a thank emote when no enchant was actually applied")
 end
 
 local function test_trade_detected_enchant_shows_as_checked_before_trade_closes()
@@ -3585,6 +3859,10 @@ test_workbench_late_completion_signal_preserves_split_trade_progress_during_foll
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
+test_auction_search_button_only_shows_while_the_auction_house_is_open()
+test_auction_search_uses_formula_names_and_refreshes_live_enchanting_data()
+test_auction_search_uses_saved_scan_when_the_profession_window_is_closed()
+test_auction_search_requires_a_scan_when_no_recipe_data_is_available()
 test_workbench_refresh_survives_without_fontstring_setshown()
 test_workbench_detail_lines_keep_a_usable_width_after_refresh()
 test_workbench_resize_persists_saved_size_and_updates_layout()
@@ -3608,11 +3886,14 @@ test_workbench_refresh_clamps_stale_scroll_offset()
 test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_grouped_queue_indicator_clears_when_customer_joins_group()
+test_grouped_customer_limit_pauses_chat_scanning_when_customer_joins()
 test_grouped_queue_auto_expires_when_customer_never_joins()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
+test_successful_trade_can_emote_thank_directly_to_customer()
+test_tip_only_trade_does_not_emote_thank()
 test_trade_detected_enchant_shows_as_checked_before_trade_closes()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
