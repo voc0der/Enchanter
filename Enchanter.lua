@@ -535,6 +535,134 @@ local function NormalizeNameKey(name)
 	return cleaned:lower()
 end
 
+local function GetComparableNameParts(name)
+	if not name then
+		return "", ""
+	end
+
+	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+
+	local full = cleaned:lower()
+	local short = full:match("^([^%-]+)") or full
+	return short, full
+end
+
+local function NamesMatch(left, right)
+	local leftShort, leftFull = GetComparableNameParts(left)
+	local rightShort, rightFull = GetComparableNameParts(right)
+
+	if leftShort == "" or rightShort == "" then
+		return false
+	end
+
+	return leftShort == rightShort
+		or leftShort == rightFull
+		or leftFull == rightShort
+		or leftFull == rightFull
+end
+
+local function GetNamedUnit(unitToken)
+	local unitName
+
+	if type(GetUnitName) == "function" then
+		local ok, namedUnit = pcall(GetUnitName, unitToken, true)
+		if ok and type(namedUnit) == "string" and namedUnit ~= "" then
+			unitName = namedUnit
+		end
+	end
+
+	if not unitName and type(UnitName) == "function" then
+		local ok, namedUnit = pcall(UnitName, unitToken)
+		if ok and type(namedUnit) == "string" and namedUnit ~= "" then
+			unitName = namedUnit
+		end
+	end
+
+	return unitName
+end
+
+local function ResolveEmoteTargetUnitToken(name)
+	local candidateUnits = { "target", "mouseover", "npc", "NPC" }
+
+	for index = 1, 4 do
+		candidateUnits[#candidateUnits + 1] = "party" .. index
+	end
+
+	for index = 1, 40 do
+		candidateUnits[#candidateUnits + 1] = "raid" .. index
+	end
+
+	for _, unitToken in ipairs(candidateUnits) do
+		if NamesMatch(GetNamedUnit(unitToken), name) then
+			return unitToken
+		end
+	end
+
+	return nil
+end
+
+local function RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+	if hadTarget then
+		if type(TargetLastTarget) == "function" then
+			local ok = pcall(TargetLastTarget)
+			if ok then
+				return true
+			end
+		end
+
+		if type(TargetUnit) == "function" and originalTargetName ~= "" then
+			local ok = pcall(TargetUnit, originalTargetName, true)
+			if ok then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	if type(ClearTarget) == "function" then
+		local ok = pcall(ClearTarget)
+		return ok and true or false
+	end
+
+	return false
+end
+
+local function SendTargetedEmote(emoteToken, name)
+	name = TrimText(name)
+	if name == "" or type(DoEmote) ~= "function" then
+		return false
+	end
+
+	local unitToken = ResolveEmoteTargetUnitToken(name)
+	if unitToken then
+		DoEmote(emoteToken, unitToken)
+		return true
+	end
+
+	if type(TargetUnit) ~= "function" then
+		return false
+	end
+
+	local originalTargetName = GetNamedUnit("target") or ""
+	local hadTarget = originalTargetName ~= ""
+	local ok = pcall(TargetUnit, name, true)
+	if not ok then
+		return false
+	end
+
+	local currentTargetName = GetNamedUnit("target") or ""
+	if not NamesMatch(currentTargetName, name) then
+		RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+		return false
+	end
+
+	DoEmote(emoteToken, "target")
+	RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+	return true
+end
+
 local function IsFrameShown(frame)
 	if not frame or not frame.IsShown then
 		return false
@@ -1193,8 +1321,14 @@ function EC.SendThankEmote(name, sourceLabel)
 		return false
 	end
 
-	DoEmote("THANK", name)
-	return true
+	if SendTargetedEmote("THANK", name) then
+		return true
+	end
+
+	if EC.DBChar and EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "could not thank") .. " " .. name)
+	end
+	return false
 end
 
 function EC.InviteCustomer(name, sourceLabel)

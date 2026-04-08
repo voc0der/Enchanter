@@ -89,10 +89,14 @@ local function setup_env(opts)
         whispers = {},
         frames = {},
         current_time = tonumber(opts.current_time) or 0,
+        current_mouseover_name = opts.current_mouseover_name or nil,
+        current_npc_name = opts.current_npc_name or nil,
         current_party_members = copy_table(opts.current_party_members or {}),
         current_raid_members = copy_table(opts.current_raid_members or {}),
+        current_target_name = opts.current_target_name or nil,
         player_name = opts.player_name or "Enchanter-Test",
         player_realm = opts.player_realm or "TestRealm",
+        previous_target_name = opts.previous_target_name or nil,
         selected_craft = tonumber(opts.selected_craft) or nil,
         selected_trade_skill = nil,
         trade_skill_frame_selection = nil,
@@ -737,6 +741,15 @@ local function setup_env(opts)
         if unit == "player" then
             return state.player_name
         end
+        if unit == "target" then
+            return state.current_target_name
+        end
+        if unit == "mouseover" then
+            return state.current_mouseover_name
+        end
+        if unit == "NPC" or unit == "npc" then
+            return state.current_npc_name
+        end
 
         local party_index = tonumber(tostring(unit or ""):match("^party(%d+)$") or "")
         if party_index then
@@ -776,6 +789,31 @@ local function setup_env(opts)
             return name .. "-" .. state.player_realm
         end
         return name
+    end
+    _G.TargetUnit = function(name, exact_match)
+        local target_name = unit_name_from_token(name) or (type(name) == "string" and name or nil)
+        state.last_target_unit_call = {
+            name = name,
+            exact_match = exact_match and true or false,
+        }
+        if not target_name or target_name == "" then
+            return false
+        end
+        state.previous_target_name = state.current_target_name
+        state.current_target_name = target_name
+        return true
+    end
+    _G.ClearTarget = function()
+        local had_target = state.current_target_name ~= nil and state.current_target_name ~= ""
+        state.previous_target_name = state.current_target_name
+        state.current_target_name = nil
+        return had_target
+    end
+    _G.TargetLastTarget = function()
+        local current = state.current_target_name
+        state.current_target_name = state.previous_target_name
+        state.previous_target_name = current
+        return state.current_target_name ~= nil and state.current_target_name ~= ""
     end
     _G.UnitInParty = function(name)
         for _, member_name in ipairs(state.current_party_members or {}) do
@@ -3541,6 +3579,9 @@ local function test_successful_trade_can_emote_thank_directly_to_customer()
                 ["Enchant Boots - Minor Speed"] = { "minor speed" },
             },
         },
+        current_party_members = {
+            "Buyer-Thanks",
+        },
         trade_target_items = {
             [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
         },
@@ -3556,7 +3597,38 @@ local function test_successful_trade_can_emote_thank_directly_to_customer()
 
     assert_equal(#state.emotes, 1, "successful enchant trades should fire one thank emote when the option is enabled")
     assert_equal(state.emotes[1].token, "THANK", "successful enchant trades should use the THANK emote token directly")
-    assert_equal(state.emotes[1].target, "Buyer-Thanks", "thank emotes should target the customer directly without retargeting")
+    assert_equal(state.emotes[1].target, "party1", "thank emotes should prefer a live grouped unit token instead of relying on the player's target")
+    assert_nil(state.current_target_name, "grouped thank emotes should not have to retarget the player")
+end
+
+local function test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
+    local addon, state = setup_env({
+        db = {
+            EmoteThankAfterCast = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        current_target_name = "Friendly-Priest",
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Thanks-Target")
+
+    addon.Workbench.BeginTrade("Buyer-Thanks-Target")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#state.emotes, 1, "successful enchant trades should still thank non-grouped customers by temporarily targeting them")
+    assert_equal(state.emotes[1].token, "THANK", "temporary-target thank flow should keep using the THANK emote token")
+    assert_equal(state.emotes[1].target, "target", "temporary-target thank flow should direct the emote at the resolved target token")
+    assert_equal(state.current_target_name, "Friendly-Priest", "temporary thank targeting should restore the player's original target afterward")
 end
 
 local function test_tip_only_trade_does_not_emote_thank()
@@ -3948,6 +4020,7 @@ test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_successful_trade_can_emote_thank_directly_to_customer()
+test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
 test_tip_only_trade_does_not_emote_thank()
 test_trade_detected_enchant_shows_as_checked_before_trade_closes()
 test_trade_offer_marks_live_material_progress()
