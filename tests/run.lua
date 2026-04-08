@@ -1204,6 +1204,17 @@ local function test_valid_request_matching_scenarios()
             },
             requested = 1,
         },
+        {
+            name = "full recipe name still matches when the separator dash is omitted",
+            message = "lf enchanter with enchant shield major stamina",
+            scanned = {
+                "Enchant Shield - Major Stamina",
+            },
+            expected = {
+                "Enchant Shield - Major Stamina",
+            },
+            requested = 1,
+        },
     }
 
     for index, case in ipairs(cases) do
@@ -1288,6 +1299,13 @@ local function test_invalid_request_matching_scenarios()
             message = "lf 35 agi gloves",
             scanned = {
                 "Enchant 2H Weapon - Major Agility",
+            },
+        },
+        {
+            name = "missing dash alias does not match a different shield enchant",
+            message = "lf enchant shield major stamina",
+            scanned = {
+                "Enchant Shield - Resilience",
             },
         },
     }
@@ -1905,7 +1923,11 @@ end
 
 local function test_workbench_frame_keeps_buttons_above_drag_header()
     local addon = setup_env()
+    local opened_config_panel
 
+    addon.Options.Open = function(panel_id)
+        opened_config_panel = panel_id
+    end
     addon.Workbench.Show()
     local frame = addon.Workbench.Frame
     local workbenchState = addon.Workbench.EnsureState()
@@ -1914,16 +1936,20 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.frame_strata, "DIALOG", "workbench should use dialog strata so it stays interactable")
     assert_true(frame.resizable, "workbench should allow resizing")
     assert_equal(frame.CloseButton.parent, frame.Header, "close button should live on the header so the drag region does not cover it")
+    assert_equal(frame.ConfigButton.parent, frame.Header, "config button should live on the header so it stays clickable")
     assert_equal(frame.LockButton.parent, frame.Header, "lock button should live on the header so it remains clickable")
     assert_equal(frame.ClearButton.parent, frame.Header, "clear button should also live on the header so it stays clickable")
     assert_equal(frame.SoundButton.parent, frame.Header, "sound button should live on the header so it stays clickable")
     assert_equal(frame.ScanButton.parent, frame.Header, "scan/start/stop button should live on the header so it stays clickable")
     assert_equal(frame.AuctionSearchButton.parent, frame.Header, "auction search button should also live on the header so it stays clickable")
     assert_equal(frame.CloseButton.text, "X", "close button should use a stable text button on this client")
+    assert_equal(frame.ConfigButton.text, "", "config control should use an icon-only state instead of a text label")
+    assert_equal(frame.ConfigButton.width, 24, "config control should stay compact as an icon toggle")
     assert_equal(frame.LockButton.text, "", "lock control should use icon-only state instead of a text label")
     assert_equal(frame.LockButton.width, 24, "lock control should stay compact as an icon toggle")
     assert_equal(frame.SoundButton.text, "", "sound control should also be icon-only")
     assert_equal(frame.SoundButton.width, 24, "sound control should stay compact as an icon toggle")
+    assert_equal(frame.ConfigButton.Icon.texture, "Interface\\PaperDollInfoFrame\\UI-GearManager-Button", "config control should use a gear-style Blizzard texture")
     assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture when locked")
     assert_equal(frame.SoundButton.Icon.texture, "Interface\\Common\\VoiceChat-Speaker", "sound control should use the native speaker icon")
     assert_equal(frame.SoundButton.Muted.texture, "Interface\\Common\\VoiceChat-Muted", "sound control should show the muted overlay when alerts are off")
@@ -1932,6 +1958,8 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_true(not frame.LockButton.UnlockedCheck.shown, "locked state should hide the unlocked check overlay")
     assert_true(frame.SoundButton.Muted.shown, "sound-off state should show the muted overlay")
     assert_true(not frame.SoundButton.SoundOn.shown, "sound-off state should hide the active sound overlay")
+    assert_equal(frame.ConfigButton.point[2], frame.CloseButton, "config gear should sit immediately beside the close button")
+    assert_equal(frame.LockButton.point[2], frame.ConfigButton, "lock icon should sit immediately beside the config gear")
     assert_equal(frame.SoundButton.point[2], frame.LockButton, "sound icon should sit immediately beside the lock icon")
     assert_equal(frame.ClearButton.point[2], frame.SoundButton, "clear should sit next to the icon toggles")
     assert_equal(frame.ScanButton.point[2], frame.ClearButton, "start/scan should sit next to clear")
@@ -1940,6 +1968,10 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.AuctionSearchButton.text, "Search AH", "auction search should use a clear action label")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
+
+    frame.ConfigButton.scripts["OnClick"]()
+
+    assert_equal(opened_config_panel, 1, "config gear should open the main addon settings panel")
 
     frame.LockButton.scripts["OnClick"]()
 
