@@ -1,3 +1,8 @@
+## [2.1.33] - 2026-04-08
+
+### Changed
+- Swapped the workbench settings button over to Blizzard's brown options cog so it reads like a config control instead of a gear-manager button
+
 ## [2.1.32] - 2026-04-08
 
 ### Added

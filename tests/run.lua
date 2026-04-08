@@ -172,6 +172,7 @@ local function setup_env(opts)
             self.height = height
         end
         function texture:SetTexture(value) self.texture = value end
+        function texture:SetAtlas(value) self.atlas = value end
         function texture:SetColorTexture(...) self.color = { ... } end
         function texture:SetVertexColor(...) self.vertex_color = { ... } end
         function texture:Show() self.shown = true end
@@ -1949,7 +1950,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.LockButton.width, 24, "lock control should stay compact as an icon toggle")
     assert_equal(frame.SoundButton.text, "", "sound control should also be icon-only")
     assert_equal(frame.SoundButton.width, 24, "sound control should stay compact as an icon toggle")
-    assert_equal(frame.ConfigButton.Icon.texture, "Interface\\PaperDollInfoFrame\\UI-GearManager-Button", "config control should use a gear-style Blizzard texture")
+    assert_equal(frame.ConfigButton.Icon.atlas, "OptionsIcon-Brown", "config control should use the Blizzard options cog atlas")
     assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture when locked")
     assert_equal(frame.SoundButton.Icon.texture, "Interface\\Common\\VoiceChat-Speaker", "sound control should use the native speaker icon")
     assert_equal(frame.SoundButton.Muted.texture, "Interface\\Common\\VoiceChat-Muted", "sound control should show the muted overlay when alerts are off")
@@ -1958,8 +1959,8 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_true(not frame.LockButton.UnlockedCheck.shown, "locked state should hide the unlocked check overlay")
     assert_true(frame.SoundButton.Muted.shown, "sound-off state should show the muted overlay")
     assert_true(not frame.SoundButton.SoundOn.shown, "sound-off state should hide the active sound overlay")
-    assert_equal(frame.ConfigButton.point[2], frame.CloseButton, "config gear should sit immediately beside the close button")
-    assert_equal(frame.LockButton.point[2], frame.ConfigButton, "lock icon should sit immediately beside the config gear")
+    assert_equal(frame.ConfigButton.point[2], frame.CloseButton, "config cog should sit immediately beside the close button")
+    assert_equal(frame.LockButton.point[2], frame.ConfigButton, "lock icon should sit immediately beside the config cog")
     assert_equal(frame.SoundButton.point[2], frame.LockButton, "sound icon should sit immediately beside the lock icon")
     assert_equal(frame.ClearButton.point[2], frame.SoundButton, "clear should sit next to the icon toggles")
     assert_equal(frame.ScanButton.point[2], frame.ClearButton, "start/scan should sit next to clear")
@@ -1971,7 +1972,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
 
     frame.ConfigButton.scripts["OnClick"]()
 
-    assert_equal(opened_config_panel, 1, "config gear should open the main addon settings panel")
+    assert_equal(opened_config_panel, 1, "config cog should open the main addon settings panel")
 
     frame.LockButton.scripts["OnClick"]()
 

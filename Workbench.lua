@@ -18,7 +18,7 @@ local LOCK_BUTTON_UNLOCKED_TEXTURE = "Interface\\Buttons\\UI-CheckBox-Check"
 local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
 local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
 local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
-local CONFIG_BUTTON_ICON_TEXTURE = "Interface\\PaperDollInfoFrame\\UI-GearManager-Button"
+local CONFIG_BUTTON_ICON_ATLAS = "OptionsIcon-Brown"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
 	{ key = "U_CHAT_SCROLL_BUTTON", id = 1115, legacy = "UChatScrollButton" },
@@ -3363,7 +3363,11 @@ function Workbench.CreateFrame()
 	frame.ConfigButton.Icon = frame.ConfigButton:CreateTexture(nil, "ARTWORK")
 	frame.ConfigButton.Icon:SetSize(14, 14)
 	frame.ConfigButton.Icon:SetPoint("CENTER", frame.ConfigButton, "CENTER", 0, 0)
-	frame.ConfigButton.Icon:SetTexture(CONFIG_BUTTON_ICON_TEXTURE)
+	if frame.ConfigButton.Icon.SetAtlas then
+		frame.ConfigButton.Icon:SetAtlas(CONFIG_BUTTON_ICON_ATLAS)
+	else
+		frame.ConfigButton.Icon:SetTexture("Interface\\PaperDollInfoFrame\\UI-GearManager-Button")
+	end
 	frame.ConfigButton:SetScript("OnClick", function()
 		if EC and EC.OpenConfigPanel then
 			EC.OpenConfigPanel(1)
