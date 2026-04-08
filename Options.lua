@@ -425,6 +425,7 @@ function EC.Default()
 	EC.DB.WhisperLfRequests = false
 	EC.DB.GroupedFollowUp = false
 	EC.DB.EmoteThankAfterCast = false
+	EC.DB.PlaySoundOnPartyJoinInstead = false
 	EC.DB.InviteTimeDelay = 0
 	EC.DB.WhisperTimeDelay = 0
 	EC.DB.GroupedFollowUpDelay = 1
@@ -454,6 +455,9 @@ function EC.OptionsUpdate()
 	end
 	if EC.DB.EmoteThankAfterCast == nil then
 		EC.DB.EmoteThankAfterCast = false
+	end
+	if EC.DB.PlaySoundOnPartyJoinInstead == nil then
+		EC.DB.PlaySoundOnPartyJoinInstead = false
 	end
 	if EC.DB.GroupedQueueExpireSeconds == nil then
 		EC.DB.GroupedQueueExpireSeconds = 0
@@ -585,6 +589,7 @@ function EC.OptionsInit()
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.InLine()
 	AddSavedCheckBox(EC.DB, "EmoteThankAfterCast", false, "Emote /thank after successful cast")
+	AddSavedCheckBox(EC.DB, "PlaySoundOnPartyJoinInstead", false, "Play sound on party join instead")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.Indent(-10)
 	EC.OptionsBuilder.AddSpacerToPanel()

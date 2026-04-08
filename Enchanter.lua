@@ -144,6 +144,16 @@ local function BuildGroupedCustomerLimitMessage(currentCount, maxCustomers)
 	)
 end
 
+local function BuildGroupedCustomerResumeMessage(currentCount, maxCustomers)
+	local customerLabel = currentCount == 1 and "customer" or "customers"
+	return string.format(
+		"|cFFFF1C1CEnchanter|r Resumed after grouped customers dropped below max %d (%d %s in group).",
+		maxCustomers,
+		currentCount,
+		customerLabel
+	)
+end
+
 local function InvitePlayer(name)
 	if C_PartyInfo and C_PartyInfo.InviteUnit then
 		C_PartyInfo.InviteUnit(name)
@@ -533,6 +543,134 @@ local function NormalizeNameKey(name)
 	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
 	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
 	return cleaned:lower()
+end
+
+local function GetComparableNameParts(name)
+	if not name then
+		return "", ""
+	end
+
+	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+
+	local full = cleaned:lower()
+	local short = full:match("^([^%-]+)") or full
+	return short, full
+end
+
+local function NamesMatch(left, right)
+	local leftShort, leftFull = GetComparableNameParts(left)
+	local rightShort, rightFull = GetComparableNameParts(right)
+
+	if leftShort == "" or rightShort == "" then
+		return false
+	end
+
+	return leftShort == rightShort
+		or leftShort == rightFull
+		or leftFull == rightShort
+		or leftFull == rightFull
+end
+
+local function GetNamedUnit(unitToken)
+	local unitName
+
+	if type(GetUnitName) == "function" then
+		local ok, namedUnit = pcall(GetUnitName, unitToken, true)
+		if ok and type(namedUnit) == "string" and namedUnit ~= "" then
+			unitName = namedUnit
+		end
+	end
+
+	if not unitName and type(UnitName) == "function" then
+		local ok, namedUnit = pcall(UnitName, unitToken)
+		if ok and type(namedUnit) == "string" and namedUnit ~= "" then
+			unitName = namedUnit
+		end
+	end
+
+	return unitName
+end
+
+local function ResolveEmoteTargetUnitToken(name)
+	local candidateUnits = { "target", "mouseover", "npc", "NPC" }
+
+	for index = 1, 4 do
+		candidateUnits[#candidateUnits + 1] = "party" .. index
+	end
+
+	for index = 1, 40 do
+		candidateUnits[#candidateUnits + 1] = "raid" .. index
+	end
+
+	for _, unitToken in ipairs(candidateUnits) do
+		if NamesMatch(GetNamedUnit(unitToken), name) then
+			return unitToken
+		end
+	end
+
+	return nil
+end
+
+local function RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+	if hadTarget then
+		if type(TargetLastTarget) == "function" then
+			local ok = pcall(TargetLastTarget)
+			if ok then
+				return true
+			end
+		end
+
+		if type(TargetUnit) == "function" and originalTargetName ~= "" then
+			local ok = pcall(TargetUnit, originalTargetName, true)
+			if ok then
+				return true
+			end
+		end
+
+		return false
+	end
+
+	if type(ClearTarget) == "function" then
+		local ok = pcall(ClearTarget)
+		return ok and true or false
+	end
+
+	return false
+end
+
+local function SendTargetedEmote(emoteToken, name)
+	name = TrimText(name)
+	if name == "" or type(DoEmote) ~= "function" then
+		return false
+	end
+
+	local unitToken = ResolveEmoteTargetUnitToken(name)
+	if unitToken then
+		DoEmote(emoteToken, unitToken)
+		return true
+	end
+
+	if type(TargetUnit) ~= "function" then
+		return false
+	end
+
+	local originalTargetName = GetNamedUnit("target") or ""
+	local hadTarget = originalTargetName ~= ""
+	local ok = pcall(TargetUnit, name, true)
+	if not ok then
+		return false
+	end
+
+	local currentTargetName = GetNamedUnit("target") or ""
+	if not NamesMatch(currentTargetName, name) then
+		RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+		return false
+	end
+
+	DoEmote(emoteToken, "target")
+	RestoreTemporaryEmoteTarget(originalTargetName, hadTarget)
+	return true
 end
 
 local function IsFrameShown(frame)
@@ -1193,8 +1331,14 @@ function EC.SendThankEmote(name, sourceLabel)
 		return false
 	end
 
-	DoEmote("THANK", name)
-	return true
+	if SendTargetedEmote("THANK", name) then
+		return true
+	end
+
+	if EC.DBChar and EC.DBChar.Debug then
+		EC.DebugPrint((sourceLabel or "could not thank") .. " " .. name)
+	end
+	return false
 end
 
 function EC.InviteCustomer(name, sourceLabel)
@@ -1277,6 +1421,7 @@ local function EnsureSavedVariables()
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
 	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
+	if EC.DBChar.AutoPausedForMaxGroupedCustomers == nil then EC.DBChar.AutoPausedForMaxGroupedCustomers = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
 	if EC.DB.WarnIncompleteOrder == nil then EC.DB.WarnIncompleteOrder = true end
@@ -1285,6 +1430,7 @@ local function EnsureSavedVariables()
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
 	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
 	if EC.DB.EmoteThankAfterCast == nil then EC.DB.EmoteThankAfterCast = false end
+	if EC.DB.PlaySoundOnPartyJoinInstead == nil then EC.DB.PlaySoundOnPartyJoinInstead = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
 	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
@@ -1301,8 +1447,22 @@ end
 function EC.EnforceMaxGroupedCustomerLimit()
 	local maxCustomers = GetMaxGroupedCustomers()
 	local groupedCustomerCount
+	local wasAutoPaused
 
-	if maxCustomers <= 0 or not EC.DBChar or EC.DBChar.Stop == true then
+	if not EC.DBChar then
+		return false
+	end
+
+	wasAutoPaused = EC.DBChar.AutoPausedForMaxGroupedCustomers == true
+
+	if maxCustomers <= 0 then
+		if wasAutoPaused then
+			EC.DBChar.AutoPausedForMaxGroupedCustomers = false
+			EC.DBChar.Stop = false
+			if EC.Workbench and EC.Workbench.Refresh then
+				EC.Workbench.Refresh()
+			end
+		end
 		return false
 	end
 
@@ -1312,9 +1472,22 @@ function EC.EnforceMaxGroupedCustomerLimit()
 
 	groupedCustomerCount = math.max(0, math.floor(tonumber(EC.Workbench.GetGroupedCustomerCount()) or 0))
 	if groupedCustomerCount < maxCustomers then
+		if wasAutoPaused then
+			EC.DBChar.AutoPausedForMaxGroupedCustomers = false
+			EC.DBChar.Stop = false
+			if EC.Workbench and EC.Workbench.Refresh then
+				EC.Workbench.Refresh()
+			end
+			print(BuildGroupedCustomerResumeMessage(groupedCustomerCount, maxCustomers))
+		end
 		return false
 	end
 
+	if EC.DBChar.Stop == true then
+		return wasAutoPaused
+	end
+
+	EC.DBChar.AutoPausedForMaxGroupedCustomers = true
 	EC.DBChar.Stop = true
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -1662,11 +1835,13 @@ function EC.SetChatScanningEnabled(enabled)
 
 	enabled = enabled and true or false
 	if enabled then
+		EC.DBChar.AutoPausedForMaxGroupedCustomers = false
 		EC.DBChar.Stop = false
 		if EC.EnforceMaxGroupedCustomerLimit and EC.EnforceMaxGroupedCustomerLimit() then
 			return false
 		end
 	else
+		EC.DBChar.AutoPausedForMaxGroupedCustomers = false
 		EC.DBChar.Stop = true
 	end
 
