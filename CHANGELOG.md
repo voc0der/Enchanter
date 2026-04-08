@@ -1,3 +1,11 @@
+## [2.1.32] - 2026-04-08
+
+### Added
+- Added a small workbench header gear button beside the close `X` that opens `/ec config`
+
+### Fixed
+- Matched official full enchant names even when callers omit the separator dash, so requests like `Enchant Shield Major Stamina` no longer miss the shield stamina recipe
+
 ## [2.1.31] - 2026-04-08
 
 ### Added

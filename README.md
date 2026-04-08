@@ -14,12 +14,13 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.31`
+Current version: `2.1.32`
 
 ## What It Does
 
 - Run `/ec scan` once after learning recipes to build your known-enchant list
 - Match trade-chat requests against configured recipe tags
+- Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
 - Split multi-enchant chat lines into local request segments so one phrase does not pollute the whole message
 - Auto-invite matched players when `Auto Invite` is enabled
 - Whisper the matching enchant links with a configurable delay and message prefix
@@ -56,6 +57,7 @@ Current version: `2.1.31`
 
 - New matched orders are added to a queue instead of being lost in chat spam.
 - Click an order to inspect the requested enchants, the raw message, and an aggregated materials tracker.
+- Use the small gear button beside the close `X` to jump straight into `/ec config` from the workbench header.
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.

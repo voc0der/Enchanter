@@ -973,15 +973,40 @@ function EC.DebugPrint(...)
 	print("Debug mode:", table.concat(parts, " "))
 end
 
+local function AddSupplementalRecipeTagAlias(tagMap, tagList, recipeName, tag)
+	if type(tagMap) ~= "table" or type(tagList) ~= "table" or type(recipeName) ~= "string" or recipeName == "" then
+		return
+	end
+
+	if type(tag) ~= "string" or tag ~= string.lower(recipeName) then
+		return
+	end
+
+	local undashedTag = TrimText((tag:gsub("%s+%-%s+", " ")):gsub("%s+", " "))
+	if undashedTag == "" or undashedTag == tag then
+		return
+	end
+
+	if tagMap[undashedTag] == nil then
+		tagMap[undashedTag] = recipeName
+		tagList[#tagList + 1] = undashedTag
+	end
+end
+
 local function AddRecipeTagsToLookup(tagMap, tagList, recipeName, tags)
 	if type(recipeName) ~= "string" or recipeName == "" or type(tags) ~= "table" then
 		return
 	end
 
+	local canonicalTag = string.lower(recipeName)
 	for _, tag in ipairs(tags) do
 		if tag and tag ~= "" then
 			tagMap[tag] = recipeName
 			tagList[#tagList + 1] = tag
+			if tag == canonicalTag then
+				-- Accept the full official enchant name even when callers omit the separator dash.
+				AddSupplementalRecipeTagAlias(tagMap, tagList, recipeName, tag)
+			end
 		end
 	end
 end
@@ -1885,6 +1910,22 @@ function EC.RunRecipeScan()
 	return DoScan() and not EC.NeedsRecipeScan()
 end
 
+function EC.OpenConfigPanel(panelID)
+	panelID = math.max(1, math.floor(tonumber(panelID) or 1))
+
+	if EC.OptionsBuilder and EC.OptionsBuilder.OpenCategoryPanel then
+		EC.OptionsBuilder.OpenCategoryPanel(panelID)
+		return true
+	end
+
+	if EC.Options and EC.Options.Open then
+		EC.Options.Open(panelID)
+		return true
+	end
+
+	return false
+end
+
 function EC.Init()
 	EnsureSavedVariables()
 
@@ -1909,11 +1950,7 @@ function EC.Init()
 			print("Reset complete")
 		end},
 		{{"config", "setup", "options"}, "Settings", function()
-			if EC.OptionsBuilder and EC.OptionsBuilder.OpenCategoryPanel then
-				EC.OptionsBuilder.OpenCategoryPanel(1)
-			elseif EC.Options and EC.Options.Open then
-				EC.Options.Open(1)
-			end
+			EC.OpenConfigPanel(1)
 		end, 1},
 		{{"workbench", "bench"}, "Toggles the workbench queue.", function()
 			if EC.Workbench and EC.Workbench.Toggle then

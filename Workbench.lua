@@ -18,6 +18,7 @@ local LOCK_BUTTON_UNLOCKED_TEXTURE = "Interface\\Buttons\\UI-CheckBox-Check"
 local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
 local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
 local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
+local CONFIG_BUTTON_ICON_TEXTURE = "Interface\\PaperDollInfoFrame\\UI-GearManager-Button"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
 	{ key = "U_CHAT_SCROLL_BUTTON", id = 1115, legacy = "UChatScrollButton" },
@@ -3351,9 +3352,30 @@ function Workbench.CreateFrame()
 		Workbench.Hide()
 	end)
 
+	frame.ConfigButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.ConfigButton:SetSize(24, 20)
+	frame.ConfigButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -6, 0)
+	frame.ConfigButton:SetText("")
+	if frame.ConfigButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.ConfigButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.ConfigButton, "button")
+	frame.ConfigButton.Icon = frame.ConfigButton:CreateTexture(nil, "ARTWORK")
+	frame.ConfigButton.Icon:SetSize(14, 14)
+	frame.ConfigButton.Icon:SetPoint("CENTER", frame.ConfigButton, "CENTER", 0, 0)
+	frame.ConfigButton.Icon:SetTexture(CONFIG_BUTTON_ICON_TEXTURE)
+	frame.ConfigButton:SetScript("OnClick", function()
+		if EC and EC.OpenConfigPanel then
+			EC.OpenConfigPanel(1)
+		elseif EC and EC.Options and EC.Options.Open then
+			EC.Options.Open(1)
+		end
+	end)
+
 	frame.LockButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.LockButton:SetSize(24, 20)
-	frame.LockButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -6, 0)
+	frame.LockButton:SetPoint("RIGHT", frame.ConfigButton, "LEFT", -6, 0)
+	frame.LockButton:SetText("")
 	if frame.LockButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.LockButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
@@ -3374,6 +3396,7 @@ function Workbench.CreateFrame()
 	frame.SoundButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.SoundButton:SetSize(24, 20)
 	frame.SoundButton:SetPoint("RIGHT", frame.LockButton, "LEFT", -6, 0)
+	frame.SoundButton:SetText("")
 	if frame.SoundButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.SoundButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
