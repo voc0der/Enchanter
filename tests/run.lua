@@ -1677,6 +1677,31 @@ local function test_parse_message_matches_multi_enchant_lists_by_segment()
     assert_true(string.find(state.whispers[1].message, "%[Enchant Cloak %- Dodge%]") ~= nil, "third segmented recipe should match")
 end
 
+local function test_parse_message_ignores_mid_token_recipe_alias_false_positive()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Major Resilience"] = { "15 res", "15 resil" },
+            },
+            RecipeLinks = {
+                ["Enchant Chest - Major Resilience"] = "[Enchant Chest - Major Resilience] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("1815 resto druid lf 2's partner", "Buyer-Arena")
+
+    assert_equal(#state.invites, 0, "mid-token numeric shorthand should not trigger a false invite")
+    assert_equal(#state.whispers, 0, "mid-token numeric shorthand should not trigger a false whisper")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Arena"), "mid-token numeric shorthand should not queue a fake order")
+end
+
 local function test_incomplete_order_settings_default_on()
     local addon = setup_env()
 
@@ -4074,6 +4099,7 @@ test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
 test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
 test_parse_message_does_not_double_count_nested_request_tags()
 test_parse_message_matches_multi_enchant_lists_by_segment()
+test_parse_message_ignores_mid_token_recipe_alias_false_positive()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
 test_parse_message_warns_for_incomplete_order()

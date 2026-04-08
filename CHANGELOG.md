@@ -1,3 +1,8 @@
+## [2.1.34] - 2026-04-08
+
+### Fixed
+- Stopped shorthand recipe tags from starting in the middle of unrelated chat tokens, so arena posts like `1815 resto druid LF 2's partner` no longer trigger false `15 res` resilience matches
+
 ## [2.1.33] - 2026-04-08
 
 ### Changed
