@@ -3413,6 +3413,7 @@ local function test_grouped_customer_limit_pauses_chat_scanning_when_customer_jo
     addon.EnforceMaxGroupedCustomerLimit()
 
     assert_true(addon.DBChar.Stop, "joining customer cap should pause chat scanning")
+    assert_true(addon.DBChar.AutoPausedForMaxGroupedCustomers, "reaching the grouped-customer cap should mark the pause as automatic")
     assert_equal(frame.ScanButton.text, "Start", "pausing at the grouped-customer cap should flip the header button back to Start")
 
     local foundMessage = false
@@ -3424,6 +3425,95 @@ local function test_grouped_customer_limit_pauses_chat_scanning_when_customer_jo
     end
 
     assert_true(foundMessage, "reaching the grouped-customer cap should explain why chat scanning paused")
+end
+
+local function test_grouped_customer_limit_auto_resumes_when_customer_leaves()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MaxGroupedCustomers = 1,
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Resume")
+
+    state.current_party_members = { "Buyer-Resume" }
+    addon.Workbench.SyncGroupedOrders()
+    addon.EnforceMaxGroupedCustomerLimit()
+
+    assert_true(addon.DBChar.Stop, "hitting the grouped-customer cap should pause scanning before the leave test starts")
+    assert_true(addon.DBChar.AutoPausedForMaxGroupedCustomers, "leave test should start from an auto-paused state")
+
+    state.current_party_members = {}
+    addon.Workbench.SyncGroupedOrders()
+    addon.EnforceMaxGroupedCustomerLimit()
+
+    assert_true(addon.DBChar.Stop == false, "dropping back under the grouped-customer cap should auto-resume scanning")
+    assert_true(addon.DBChar.AutoPausedForMaxGroupedCustomers == false, "auto-resume should clear the grouped-customer auto-pause flag")
+    assert_equal(frame.ScanButton.text, "Stop", "auto-resuming after a customer leaves should flip the header button back to Stop")
+
+    local foundMessage = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Resumed after grouped customers dropped below max 1 (0 customers in group).", 1, true) ~= nil then
+            foundMessage = true
+            break
+        end
+    end
+
+    assert_true(foundMessage, "dropping under the grouped-customer cap should explain why scanning resumed")
+end
+
+local function test_grouped_customer_limit_does_not_auto_resume_after_manual_stop()
+    local addon, state = setup_env({
+        db = {
+            AutoInvite = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MaxGroupedCustomers = 1,
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-ManualStop")
+
+    state.current_party_members = { "Buyer-ManualStop" }
+    addon.Workbench.SyncGroupedOrders()
+    addon.EnforceMaxGroupedCustomerLimit()
+
+    assert_true(addon.DBChar.AutoPausedForMaxGroupedCustomers, "manual-stop test should begin from an auto-paused state")
+
+    addon.SetChatScanningEnabled(false)
+
+    assert_true(addon.DBChar.Stop, "manual stop should keep scanning paused")
+    assert_true(addon.DBChar.AutoPausedForMaxGroupedCustomers == false, "manual stop should clear the grouped-customer auto-pause flag")
+
+    state.current_party_members = {}
+    addon.Workbench.SyncGroupedOrders()
+    addon.EnforceMaxGroupedCustomerLimit()
+
+    assert_true(addon.DBChar.Stop, "manual stop should prevent the grouped-customer cap from auto-resuming scanning later")
 end
 
 local function test_grouped_queue_auto_expires_when_customer_never_joins()
@@ -4014,6 +4104,8 @@ test_grouped_follow_up_whispers_after_invite_failure()
 test_grouped_follow_up_is_ignored_when_disabled()
 test_grouped_queue_indicator_clears_when_customer_joins_group()
 test_grouped_customer_limit_pauses_chat_scanning_when_customer_joins()
+test_grouped_customer_limit_auto_resumes_when_customer_leaves()
+test_grouped_customer_limit_does_not_auto_resume_after_manual_stop()
 test_grouped_queue_auto_expires_when_customer_never_joins()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()

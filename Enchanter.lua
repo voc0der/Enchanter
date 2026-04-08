@@ -144,6 +144,16 @@ local function BuildGroupedCustomerLimitMessage(currentCount, maxCustomers)
 	)
 end
 
+local function BuildGroupedCustomerResumeMessage(currentCount, maxCustomers)
+	local customerLabel = currentCount == 1 and "customer" or "customers"
+	return string.format(
+		"|cFFFF1C1CEnchanter|r Resumed after grouped customers dropped below max %d (%d %s in group).",
+		maxCustomers,
+		currentCount,
+		customerLabel
+	)
+end
+
 local function InvitePlayer(name)
 	if C_PartyInfo and C_PartyInfo.InviteUnit then
 		C_PartyInfo.InviteUnit(name)
@@ -1411,6 +1421,7 @@ local function EnsureSavedVariables()
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
 	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
+	if EC.DBChar.AutoPausedForMaxGroupedCustomers == nil then EC.DBChar.AutoPausedForMaxGroupedCustomers = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
 	if EC.DB.AutoInvite == nil then EC.DB.AutoInvite = true end
 	if EC.DB.WarnIncompleteOrder == nil then EC.DB.WarnIncompleteOrder = true end
@@ -1436,8 +1447,22 @@ end
 function EC.EnforceMaxGroupedCustomerLimit()
 	local maxCustomers = GetMaxGroupedCustomers()
 	local groupedCustomerCount
+	local wasAutoPaused
 
-	if maxCustomers <= 0 or not EC.DBChar or EC.DBChar.Stop == true then
+	if not EC.DBChar then
+		return false
+	end
+
+	wasAutoPaused = EC.DBChar.AutoPausedForMaxGroupedCustomers == true
+
+	if maxCustomers <= 0 then
+		if wasAutoPaused then
+			EC.DBChar.AutoPausedForMaxGroupedCustomers = false
+			EC.DBChar.Stop = false
+			if EC.Workbench and EC.Workbench.Refresh then
+				EC.Workbench.Refresh()
+			end
+		end
 		return false
 	end
 
@@ -1447,9 +1472,22 @@ function EC.EnforceMaxGroupedCustomerLimit()
 
 	groupedCustomerCount = math.max(0, math.floor(tonumber(EC.Workbench.GetGroupedCustomerCount()) or 0))
 	if groupedCustomerCount < maxCustomers then
+		if wasAutoPaused then
+			EC.DBChar.AutoPausedForMaxGroupedCustomers = false
+			EC.DBChar.Stop = false
+			if EC.Workbench and EC.Workbench.Refresh then
+				EC.Workbench.Refresh()
+			end
+			print(BuildGroupedCustomerResumeMessage(groupedCustomerCount, maxCustomers))
+		end
 		return false
 	end
 
+	if EC.DBChar.Stop == true then
+		return wasAutoPaused
+	end
+
+	EC.DBChar.AutoPausedForMaxGroupedCustomers = true
 	EC.DBChar.Stop = true
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -1797,11 +1835,13 @@ function EC.SetChatScanningEnabled(enabled)
 
 	enabled = enabled and true or false
 	if enabled then
+		EC.DBChar.AutoPausedForMaxGroupedCustomers = false
 		EC.DBChar.Stop = false
 		if EC.EnforceMaxGroupedCustomerLimit and EC.EnforceMaxGroupedCustomerLimit() then
 			return false
 		end
 	else
+		EC.DBChar.AutoPausedForMaxGroupedCustomers = false
 		EC.DBChar.Stop = true
 	end
 

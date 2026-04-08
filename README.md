@@ -79,7 +79,7 @@ Current version: `2.1.31`
 - Accepted trades keep partial mats and early tips attached to the queue entry, and the order retires automatically as soon as a settled trade verifies every requested enchant, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them).
-- In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself, optionally send a direct `/thank` emote after a successful applied-enchant trade, and switch workbench sounds over to party-join alerts instead of first-queue-entry alerts.
+- In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself and later auto-resumes once the group drops back under that limit, optionally send a direct `/thank` emote after a successful applied-enchant trade, and switch workbench sounds over to party-join alerts instead of first-queue-entry alerts.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing

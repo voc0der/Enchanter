@@ -6,6 +6,7 @@
 ### Fixed
 - Renamed the Auctionator workbench button from the awkward `AH Missing` shorthand to the clearer `Search AH`
 - Fixed the post-enchant `/thank` option so it resolves the actual customer instead of falling back to a generic untargeted emote when you are not manually targeting them
+- Fixed the grouped-customer cap so auto-paused chat scanning resumes by itself when the queued customer count falls back under the configured limit, while still respecting a manual stop
 
 ## [2.1.30] - 2026-04-08
 
