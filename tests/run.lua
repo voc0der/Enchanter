@@ -1899,6 +1899,7 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.ScanButton.point[2], frame.ClearButton, "start/scan should sit next to clear")
     assert_equal(frame.AuctionSearchButton.point[2], frame.ScanButton, "auction search should sit directly to the left of scan when it is available")
     assert_true(frame.AuctionSearchButton.shown == false, "auction search should stay hidden until the AH integration is usable")
+    assert_equal(frame.AuctionSearchButton.text, "Search AH", "auction search should use a clear action label")
     assert_equal(frame.QueueCountText.point[1], "BOTTOMLEFT", "queue summary should live in the footer instead of crowding the header")
     assert_equal(frame.ListChild.point[1], "TOPLEFT", "queue scroll child should be anchored so order rows render inside the scroll area")
 
@@ -2996,6 +2997,58 @@ local function test_workbench_queue_alert_falls_back_when_channel_argument_is_un
     assert_equal(state.played_sound_calls[1].channel, nil, "unsupported channel playback should retry without a channel instead of failing silently")
 end
 
+local function test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
+    local addon, state = setup_env({
+        db = {
+            PlaySoundOnPartyJoinInstead = true,
+        },
+        char_db = {
+            Workbench = {
+                SoundEnabled = true,
+            },
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Join", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    assert_equal(#state.played_sounds, 0, "party-join sound mode should suppress the new-order alert")
+
+    state.current_party_members[1] = "Buyer-Join"
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_equal(#state.played_sounds, 1, "party-join sound mode should alert when the queued customer actually joins the party")
+    assert_equal(state.played_sound_calls[1].channel, "Master", "party-join alerts should keep using the Master channel")
+
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_equal(#state.played_sounds, 1, "party-join alerts should only fire once per join transition")
+end
+
+local function test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
+    local addon, state = setup_env({
+        db = {
+            PlaySoundOnPartyJoinInstead = true,
+        },
+        char_db = {
+            Workbench = {
+                SoundEnabled = true,
+            },
+        },
+        current_party_members = {
+            "Buyer-Already",
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Already", "LF speed pst", {
+        ["Enchant Boots - Minor Speed"] = "minor speed",
+    })
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_equal(#state.played_sounds, 0, "party-join sound mode should not alert just because a newly queued customer was already in your party")
+end
+
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
     local addon, state = setup_env({
         trade_skills = {
@@ -3875,6 +3928,8 @@ test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
 test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
+test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
+test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_legacy_timestamps_are_reformatted_on_load()

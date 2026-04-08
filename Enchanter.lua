@@ -1285,6 +1285,7 @@ local function EnsureSavedVariables()
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
 	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
 	if EC.DB.EmoteThankAfterCast == nil then EC.DB.EmoteThankAfterCast = false end
+	if EC.DB.PlaySoundOnPartyJoinInstead == nil then EC.DB.PlaySoundOnPartyJoinInstead = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
 	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end

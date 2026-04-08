@@ -1318,6 +1318,10 @@ local function IsQueueSoundEnabled()
 	return state.SoundEnabled and true or false
 end
 
+local function IsPartyJoinSoundModeEnabled()
+	return EC ~= nil and EC.DB ~= nil and EC.DB.PlaySoundOnPartyJoinInstead == true
+end
+
 local function BuildHeaderStatusText(state)
 	state = state or Workbench.EnsureState()
 
@@ -1370,6 +1374,47 @@ local function PlayQueueAlertSound()
 	end
 
 	return false
+end
+
+local function RememberGroupedCustomerSnapshot(customerName)
+	local _, fullName = NormalizeCustomerName(customerName)
+	if fullName == "" or not IsCustomerInCurrentGroup(customerName) then
+		return false
+	end
+
+	local runtime = EnsureRuntime()
+	runtime.GroupedCustomerSnapshot = runtime.GroupedCustomerSnapshot or {}
+	runtime.GroupedCustomerSnapshot[fullName] = true
+	return true
+end
+
+local function UpdateGroupedCustomerSnapshot(state)
+	state = state or Workbench.EnsureState()
+
+	local runtime = EnsureRuntime()
+	local previousSnapshot = runtime.GroupedCustomerSnapshot or {}
+	local currentSnapshot = {}
+	local joinedCount = 0
+
+	for _, order in ipairs(state.Orders or {}) do
+		local _, fullName = NormalizeCustomerName(order and order.Customer)
+		if fullName ~= "" and IsCustomerInCurrentGroup(order.Customer) then
+			currentSnapshot[fullName] = true
+			if previousSnapshot[fullName] ~= true then
+				joinedCount = joinedCount + 1
+			end
+		end
+	end
+
+	runtime.GroupedCustomerSnapshot = currentSnapshot
+	if runtime.GroupedCustomerSnapshotInitialized and IsPartyJoinSoundModeEnabled() and joinedCount > 0 then
+		if PlayQueueAlertSound() then
+			WorkbenchDebug("played party join alert for", tostring(joinedCount), joinedCount == 1 and "customer" or "customers")
+		end
+	end
+	runtime.GroupedCustomerSnapshotInitialized = true
+
+	return joinedCount > 0
 end
 
 local function PreviewQueueAlertSound()
@@ -1523,6 +1568,8 @@ function Workbench.SyncGroupedOrders()
 	local changed = SyncGroupedOrders(state)
 	if Workbench.Frame then
 		Workbench.Refresh()
+	else
+		UpdateGroupedCustomerSnapshot(state)
 	end
 	return changed
 end
@@ -2717,8 +2764,9 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecip
 	end
 
 	if isNewOrder then
+		RememberGroupedCustomerSnapshot(order.Customer)
 		WorkbenchDebug("queued order for", customer, "(" .. tostring(#order.Recipes) .. " enchants)")
-		if PlayQueueAlertSound() then
+		if not IsPartyJoinSoundModeEnabled() and PlayQueueAlertSound() then
 			WorkbenchDebug("played queue alert for", customer)
 		end
 	else
@@ -3093,7 +3141,7 @@ local function UpdateAuctionSearchButton()
 	local shouldShow = EC and EC.CanSearchMissingEnchantRecipes and EC.CanSearchMissingEnchantRecipes()
 
 	SetRegionShown(frame.AuctionSearchButton, shouldShow)
-	frame.AuctionSearchButton:SetText("AH Missing")
+	frame.AuctionSearchButton:SetText("Search AH")
 
 	if frame.TitleText then
 		frame.TitleText:ClearAllPoints()
@@ -3379,7 +3427,7 @@ function Workbench.CreateFrame()
 	end)
 
 	frame.AuctionSearchButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
-	frame.AuctionSearchButton:SetSize(92, 20)
+	frame.AuctionSearchButton:SetSize(82, 20)
 	frame.AuctionSearchButton:SetPoint("RIGHT", frame.ScanButton, "LEFT", -6, 0)
 	if frame.AuctionSearchButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.AuctionSearchButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
@@ -3601,6 +3649,7 @@ function Workbench.Refresh()
 	local frame = Workbench.Frame
 	local state = Workbench.EnsureState()
 	SyncGroupedOrders(state)
+	UpdateGroupedCustomerSnapshot(state)
 	if not frame then
 		return
 	end

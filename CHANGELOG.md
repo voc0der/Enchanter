@@ -1,3 +1,11 @@
+## [2.1.31] - 2026-04-08
+
+### Added
+- Added a `Play sound on party join instead` setting so the workbench sound toggle can wait for a queued customer to actually join your party or raid instead of pinging on first queue entry
+
+### Fixed
+- Renamed the Auctionator workbench button from the awkward `AH Missing` shorthand to the clearer `Search AH`
+
 ## [2.1.30] - 2026-04-08
 
 ### Added
