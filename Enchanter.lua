@@ -1171,6 +1171,22 @@ local function RangesOverlap(startA, finishA, startB, finishB)
 	return startA <= finishB and startB <= finishA
 end
 
+local function IsAlphaNumericCharacter(character)
+	return type(character) == "string" and character ~= "" and string.find(character, "%w") ~= nil
+end
+
+local function HasRecipeTagStartBoundary(parsedMessage, matchStart)
+	if type(parsedMessage) ~= "string" then
+		return false
+	end
+
+	if matchStart <= 1 then
+		return true
+	end
+
+	return not IsAlphaNumericCharacter(string.sub(parsedMessage, matchStart - 1, matchStart - 1))
+end
+
 local function CompareRecipeTagCandidates(left, right)
 	if left.Length ~= right.Length then
 		return left.Length > right.Length
@@ -1223,7 +1239,8 @@ local function MatchRecipeTags(parsedMessage, tagList, tagMap)
 					break
 				end
 
-				if not GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd) then
+				if HasRecipeTagStartBoundary(parsedMessage, matchStart)
+					and not GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd) then
 					local candidateKey = table.concat({
 						recipeName,
 						tag,
