@@ -1,3 +1,8 @@
+## [2.1.35] - 2026-04-09
+
+### Changed
+- Reduced per-message chat parsing work by pre-bucketing recipe tags, reusing per-segment blacklist checks, and precomputing normalized generic request phrases so auto-invites can react faster without changing matching behavior
+
 ## [2.1.34] - 2026-04-08
 
 ### Fixed
