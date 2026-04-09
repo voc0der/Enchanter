@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.35`
+Current version: `2.1.36`
 
 ## What It Does
 
@@ -24,9 +24,11 @@ Current version: `2.1.35`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
 - Split multi-enchant chat lines into local request segments so one phrase does not pollute the whole message
 - Auto-invite matched players when `Auto Invite` is enabled
+- Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
+- Automatically pause chat matching if you go AFK while it is running
 - Optionally pause chat matching automatically once a chosen number of queued customers have joined your group
 - While the Auction House is open, optionally hand every missing enchant formula to Auctionator from the workbench in one exact-name bulk search
 - Search and tune per-recipe search phrases plus additive per-recipe blacklist phrases from the settings panel

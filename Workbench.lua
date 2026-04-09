@@ -1408,8 +1408,11 @@ local function UpdateGroupedCustomerSnapshot(state)
 	end
 
 	runtime.GroupedCustomerSnapshot = currentSnapshot
-	if runtime.GroupedCustomerSnapshotInitialized and IsPartyJoinSoundModeEnabled() and joinedCount > 0 then
-		if PlayQueueAlertSound() then
+	if runtime.GroupedCustomerSnapshotInitialized and joinedCount > 0 then
+		if EC and EC.HandleGroupedCustomerJoin then
+			EC.HandleGroupedCustomerJoin(joinedCount)
+		end
+		if IsPartyJoinSoundModeEnabled() and PlayQueueAlertSound() then
 			WorkbenchDebug("played party join alert for", tostring(joinedCount), joinedCount == 1 and "customer" or "customers")
 		end
 	end

@@ -94,10 +94,13 @@ local function setup_env(opts)
         current_party_members = copy_table(opts.current_party_members or {}),
         current_raid_members = copy_table(opts.current_raid_members or {}),
         current_target_name = opts.current_target_name or nil,
+        player_afk = opts.player_afk and true or false,
         player_name = opts.player_name or "Enchanter-Test",
         player_realm = opts.player_realm or "TestRealm",
         previous_target_name = opts.previous_target_name or nil,
+        raid_targets = copy_table(opts.raid_targets or {}),
         selected_craft = tonumber(opts.selected_craft) or nil,
+        set_raid_target_calls = {},
         selected_trade_skill = nil,
         trade_skill_frame_selection = nil,
         trade_skill_available_only = opts.trade_skill_available_only and true or false,
@@ -831,6 +834,23 @@ local function setup_env(opts)
             end
         end
         return nil
+    end
+    _G.UnitIsAFK = function(unit)
+        if unit == "player" then
+            return state.player_afk and true or false
+        end
+        return false
+    end
+    _G.SetRaidTarget = function(unit, index)
+        local unit_name = unit_name_from_token(unit)
+        local key = unit_name or tostring(unit or "")
+        state.set_raid_target_calls[#state.set_raid_target_calls + 1] = {
+            unit = unit,
+            index = index,
+        }
+        if key ~= "" then
+            state.raid_targets[key] = tonumber(index) or 0
+        end
     end
     _G.GetCVarBool = function(name)
         if name == "timeMgrUseMilitaryTime" then
@@ -2136,6 +2156,7 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["TRADE_CLOSED"], "trade close should be registered independently of /ec start")
     assert_true(seen["UI_INFO_MESSAGE"], "trade completion messages should be registered independently of /ec start")
     assert_true(seen["GROUP_ROSTER_UPDATE"], "group roster changes should be registered so grouped queue state can refresh")
+    assert_true(seen["PLAYER_FLAGS_CHANGED"], "player flag changes should be registered so AFK state can auto-pause chat scanning")
 end
 
 local function test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
@@ -3143,6 +3164,28 @@ local function test_workbench_party_join_sound_mode_does_not_false_alert_for_exi
     addon.Workbench.SyncGroupedOrders()
 
     assert_equal(#state.played_sounds, 0, "party-join sound mode should not alert just because a newly queued customer was already in your party")
+    assert_equal(#state.set_raid_target_calls, 0, "existing group members should not re-mark the player with a fresh star transition")
+end
+
+local function test_grouped_customer_join_marks_player_with_star()
+    local addon, state = setup_env()
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Star", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    assert_equal(#state.set_raid_target_calls, 0, "queuing an order alone should not mark the player")
+
+    state.current_party_members[1] = "Buyer-Star"
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_equal(#state.set_raid_target_calls, 1, "a newly joined grouped customer should mark the player once")
+    assert_equal(state.set_raid_target_calls[1].unit, "player", "the player should receive the locator marker")
+    assert_equal(state.set_raid_target_calls[1].index, 1, "the locator marker should use the star icon")
+
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_equal(#state.set_raid_target_calls, 1, "the star marker should only be applied once per join transition")
 end
 
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
@@ -3572,6 +3615,30 @@ local function test_grouped_customer_limit_does_not_auto_resume_after_manual_sto
     addon.EnforceMaxGroupedCustomerLimit()
 
     assert_true(addon.DBChar.Stop, "manual stop should prevent the grouped-customer cap from auto-resuming scanning later")
+end
+
+local function test_player_afk_event_auto_stops_chat_scanning()
+    local addon, state = setup_env({
+        char_db = {
+            Stop = false,
+        },
+    })
+
+    addon.OnLoad()
+    state.player_afk = true
+    state.event_handlers["PLAYER_FLAGS_CHANGED"]("player")
+
+    assert_true(addon.DBChar.Stop, "going AFK should pause chat scanning while matching is active")
+
+    local foundMessage = false
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Paused chat scanning because you went AFK.", 1, true) ~= nil then
+            foundMessage = true
+            break
+        end
+    end
+
+    assert_true(foundMessage, "going AFK should explain why chat scanning paused")
 end
 
 local function test_grouped_queue_auto_expires_when_customer_never_joins()
@@ -4151,6 +4218,7 @@ test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
 test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
 test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
 test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
+test_grouped_customer_join_marks_player_with_star()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
@@ -4165,6 +4233,7 @@ test_grouped_queue_indicator_clears_when_customer_joins_group()
 test_grouped_customer_limit_pauses_chat_scanning_when_customer_joins()
 test_grouped_customer_limit_auto_resumes_when_customer_leaves()
 test_grouped_customer_limit_does_not_auto_resume_after_manual_stop()
+test_player_afk_event_auto_stops_chat_scanning()
 test_grouped_queue_auto_expires_when_customer_never_joins()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
