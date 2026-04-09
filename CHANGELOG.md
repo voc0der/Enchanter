@@ -1,3 +1,11 @@
+## [2.1.36] - 2026-04-09
+
+### Added
+- Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so fresh invite accepts can spot you faster
+
+### Changed
+- Automatically pause chat matching if you go AFK while `/ec start` scanning is active
+
 ## [2.1.35] - 2026-04-09
 
 ### Changed

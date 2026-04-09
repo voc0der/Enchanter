@@ -157,6 +157,10 @@ local function BuildGroupedCustomerResumeMessage(currentCount, maxCustomers)
 	)
 end
 
+local function IsPlayerAfk()
+	return type(UnitIsAFK) == "function" and UnitIsAFK("player") == true
+end
+
 local function InvitePlayer(name)
 	if C_PartyInfo and C_PartyInfo.InviteUnit then
 		C_PartyInfo.InviteUnit(name)
@@ -1917,7 +1921,7 @@ function EC.IsChatScanningEnabled()
 	return EC.DBChar ~= nil and EC.DBChar.Stop ~= true
 end
 
-function EC.SetChatScanningEnabled(enabled)
+function EC.SetChatScanningEnabled(enabled, statusMessage)
 	if not EC.DBChar then
 		return false
 	end
@@ -1938,12 +1942,34 @@ function EC.SetChatScanningEnabled(enabled)
 		EC.Workbench.Refresh()
 	end
 
-	print(enabled and "Started..." or "Paused")
+	print(statusMessage or (enabled and "Started..." or "Paused"))
 	return enabled
 end
 
 function EC.ToggleChatScanning()
 	return EC.SetChatScanningEnabled(not EC.IsChatScanningEnabled())
+end
+
+function EC.HandleGroupedCustomerJoin(joinedCount)
+	if math.max(0, math.floor(tonumber(joinedCount) or 0)) <= 0 or type(SetRaidTarget) ~= "function" then
+		return false
+	end
+
+	local ok = pcall(SetRaidTarget, "player", 1)
+	return ok and true or false
+end
+
+function EC.HandlePlayerFlagsChanged(unitToken)
+	if unitToken ~= nil and unitToken ~= "" and unitToken ~= "player" then
+		return false
+	end
+
+	if not EC.IsChatScanningEnabled() or not IsPlayerAfk() then
+		return false
+	end
+
+	EC.SetChatScanningEnabled(false, "|cFFFF1C1CEnchanter|r Paused chat scanning because you went AFK.")
+	return true
 end
 
 function EC.NeedsRecipeScan()
@@ -2206,6 +2232,10 @@ local function Event_GROUP_ROSTER_UPDATE()
 	end
 end
 
+local function Event_PLAYER_FLAGS_CHANGED(unitToken)
+	EC.HandlePlayerFlagsChanged(unitToken)
+end
+
 local function Event_UI_CONTEXT_REFRESH()
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -2279,6 +2309,7 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("TRADE_UPDATE", Event_TRADE_STATE_CHANGED)
 	EC.Tool.RegisterEvent("TRADE_CLOSED", Event_TRADE_CLOSED)
 	EC.Tool.RegisterEvent("GROUP_ROSTER_UPDATE", Event_GROUP_ROSTER_UPDATE)
+	EC.Tool.RegisterEvent("PLAYER_FLAGS_CHANGED", Event_PLAYER_FLAGS_CHANGED)
 	EC.Tool.RegisterEvent("AUCTION_HOUSE_SHOW", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("AUCTION_HOUSE_CLOSED", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("TRADE_SKILL_SHOW", Event_UI_CONTEXT_REFRESH)
