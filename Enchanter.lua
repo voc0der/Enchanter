@@ -18,8 +18,11 @@ EC.BlacklistCompiled = {}
 EC.RecipeBlacklistMap = {}
 EC.RecipeTagsMap = {}
 EC.RecipeTagList = {}
+EC.RecipeTagBuckets = {}
 EC.RequestRecipeTagsMap = {}
 EC.RequestRecipeTagList = {}
+EC.RequestRecipeTagBuckets = {}
+EC.EnchanterTagsNormalized = {}
 EC.PendingInvites = {}
 EC.SimulatedPlayers = {}
 EC.Simulation = EC.Simulation or {}
@@ -1011,6 +1014,44 @@ local function AddRecipeTagsToLookup(tagMap, tagList, recipeName, tags)
 	end
 end
 
+local function BuildTagBuckets(tagMap)
+	local buckets = {}
+
+	if type(tagMap) ~= "table" then
+		return buckets
+	end
+
+	for tag, recipeName in pairs(tagMap) do
+		if type(tag) == "string" and tag ~= "" and type(recipeName) == "string" and recipeName ~= "" then
+			local firstCharacter = string.sub(tag, 1, 1)
+			local bucket = buckets[firstCharacter]
+			if not bucket then
+				bucket = {}
+				buckets[firstCharacter] = bucket
+			end
+			bucket[#bucket + 1] = {
+				Length = string.len(tag),
+				RecipeName = recipeName,
+				Tag = tag,
+			}
+		end
+	end
+
+	for _, bucket in pairs(buckets) do
+		table.sort(bucket, function(left, right)
+			if left.Length ~= right.Length then
+				return left.Length > right.Length
+			end
+			if left.Tag ~= right.Tag then
+				return left.Tag < right.Tag
+			end
+			return left.RecipeName < right.RecipeName
+		end)
+	end
+
+	return buckets
+end
+
 local function GetConfiguredRecipeTags(recipeName)
 	local customText = EC.DB and EC.DB.Custom and EC.DB.Custom[recipeName]
 	if customText ~= nil and customText ~= "" then
@@ -1147,19 +1188,18 @@ local function SplitRecipeRequestSegments(parsedMessage)
 	return segments
 end
 
-local function GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd)
+local function GetMatchedRecipeBlacklist(parsedMessage, recipeName)
 	local blacklist = EC.RecipeBlacklistMap and EC.RecipeBlacklistMap[recipeName]
 	if type(blacklist) ~= "table" then
 		return nil
 	end
 
-	local matchContext = GetRecipeMatchContext(parsedMessage, matchStart, matchEnd)
-	if matchContext == "" then
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
 		return nil
 	end
 
 	for _, phrase in ipairs(blacklist) do
-		if phrase and phrase ~= "" and string.find(matchContext, phrase, 1, true) then
+		if phrase and phrase ~= "" and string.find(parsedMessage, phrase, 1, true) then
 			return phrase
 		end
 	end
@@ -1217,49 +1257,43 @@ local function MergeRecipeMatches(targetMap, sourceMap)
 	return targetMap
 end
 
-local function MatchRecipeTags(parsedMessage, tagList, tagMap)
+local function MatchRecipeTags(parsedMessage, tagBuckets)
 	local candidates = {}
-	local candidateSeen = {}
 	local matches = {}
 	local matchedRecipes = {}
 	local acceptedRanges = {}
+	local blacklistedRecipes = {}
+	local blacklistChecked = {}
 
 	if type(parsedMessage) ~= "string" or parsedMessage == "" then
 		return matches
 	end
 
-	for _, tag in ipairs(tagList or {}) do
-		local recipeName = tagMap[tag]
-		if recipeName then
-			local searchStart = 1
+	local messageLength = string.len(parsedMessage)
+	for matchStart = 1, messageLength do
+		if HasRecipeTagStartBoundary(parsedMessage, matchStart) then
+			local bucket = tagBuckets and tagBuckets[string.sub(parsedMessage, matchStart, matchStart)]
+			if bucket then
+				for _, entry in ipairs(bucket) do
+					local matchEnd = matchStart + entry.Length - 1
+					if matchEnd <= messageLength and string.sub(parsedMessage, matchStart, matchEnd) == entry.Tag then
+						local recipeName = entry.RecipeName
+						if not blacklistChecked[recipeName] then
+							blacklistChecked[recipeName] = true
+							blacklistedRecipes[recipeName] = GetMatchedRecipeBlacklist(parsedMessage, recipeName)
+						end
 
-			while true do
-				local matchStart, matchEnd = string.find(parsedMessage, tag, searchStart, true)
-				if not matchStart then
-					break
-				end
-
-				if HasRecipeTagStartBoundary(parsedMessage, matchStart)
-					and not GetMatchedRecipeBlacklist(parsedMessage, recipeName, matchStart, matchEnd) then
-					local candidateKey = table.concat({
-						recipeName,
-						tag,
-						tostring(matchStart),
-						tostring(matchEnd),
-					}, "\31")
-					if not candidateSeen[candidateKey] then
-						candidateSeen[candidateKey] = true
-						candidates[#candidates + 1] = {
-							RecipeName = recipeName,
-							Tag = tag,
-							Start = matchStart,
-							Finish = matchEnd,
-							Length = matchEnd - matchStart + 1,
-						}
+						if not blacklistedRecipes[recipeName] then
+							candidates[#candidates + 1] = {
+								RecipeName = recipeName,
+								Tag = entry.Tag,
+								Start = matchStart,
+								Finish = matchEnd,
+								Length = entry.Length,
+							}
+						end
 					end
 				end
-
-				searchStart = matchStart + 1
 			end
 		end
 	end
@@ -1299,8 +1333,8 @@ local function GetRecipeRequestDetails(parsedMessage)
 	end
 
 	for _, segment in ipairs(segments) do
-		MergeRecipeMatches(matchedRecipeMap, MatchRecipeTags(segment, EC.RecipeTagList, EC.RecipeTagsMap))
-		MergeRecipeMatches(requestedRecipeMap, MatchRecipeTags(segment, EC.RequestRecipeTagList, EC.RequestRecipeTagsMap))
+		MergeRecipeMatches(matchedRecipeMap, MatchRecipeTags(segment, EC.RecipeTagBuckets))
+		MergeRecipeMatches(requestedRecipeMap, MatchRecipeTags(segment, EC.RequestRecipeTagBuckets))
 	end
 
 	local matchedCount = CountRecipeEntries(matchedRecipeMap)
@@ -1545,8 +1579,11 @@ function EC.RefreshCompiledData()
 	EC.RecipeBlacklistMap = {}
 	EC.RecipeTagsMap = {}
 	EC.RecipeTagList = {}
+	EC.RecipeTagBuckets = {}
 	EC.RequestRecipeTagsMap = {}
 	EC.RequestRecipeTagList = {}
+	EC.RequestRecipeTagBuckets = {}
+	EC.EnchanterTagsNormalized = {}
 
 	for _, value in ipairs(EC.PrefixTags or {}) do
 		if value and value ~= "" then
@@ -1557,6 +1594,13 @@ function EC.RefreshCompiledData()
 	for _, value in ipairs(EC.BlackList or {}) do
 		if value and value ~= "" then
 			table.insert(EC.BlacklistCompiled, "%f[%w_]" .. value .. "%f[^%w_]")
+		end
+	end
+
+	for _, value in ipairs(EC.EnchanterTags or {}) do
+		local normalizedValue = NormalizePhrase(value)
+		if normalizedValue ~= "" then
+			EC.EnchanterTagsNormalized[normalizedValue] = true
 		end
 	end
 
@@ -1577,6 +1621,9 @@ function EC.RefreshCompiledData()
 		end
 		AddRecipeTagsToLookup(EC.RecipeTagsMap, EC.RecipeTagList, recipeName, tags)
 	end
+
+	EC.RecipeTagBuckets = BuildTagBuckets(EC.RecipeTagsMap)
+	EC.RequestRecipeTagBuckets = BuildTagBuckets(EC.RequestRecipeTagsMap)
 
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -2105,20 +2152,17 @@ function EC.ParseMessage(msg, name)
 
 	if EC.DB.WhisperLfRequests and EC.PlayerList[name] == nil then
 		local normalizedMessage = NormalizePhrase(parsedMessage)
-		for _, tag in ipairs(EC.EnchanterTags or {}) do
-			if NormalizePhrase(tag) == normalizedMessage then
-				EC.PlayerList[name] = 1
-				local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
-				if IsSimulatedCustomer(name) then
-					EC.DebugPrint("suppressed generic whisper to " .. name .. ": " .. genericReply)
-				elseif EC.DBChar.Debug then
-					EC.DebugPrint("would whisper to " .. name .. ": " .. genericReply)
-				else
-					After(EC.DB.WhisperTimeDelay, function()
-						SendChatMessage(genericReply, "WHISPER", nil, name)
-					end)
-				end
-				break
+		if EC.EnchanterTagsNormalized and EC.EnchanterTagsNormalized[normalizedMessage] then
+			EC.PlayerList[name] = 1
+			local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
+			if IsSimulatedCustomer(name) then
+				EC.DebugPrint("suppressed generic whisper to " .. name .. ": " .. genericReply)
+			elseif EC.DBChar.Debug then
+				EC.DebugPrint("would whisper to " .. name .. ": " .. genericReply)
+			else
+				After(EC.DB.WhisperTimeDelay, function()
+					SendChatMessage(genericReply, "WHISPER", nil, name)
+				end)
 			end
 		end
 	end
