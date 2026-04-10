@@ -25,6 +25,11 @@ local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_CHARACTER_INFO_OPEN", id = 839, legacy = "igCharacterInfoOpen" },
 	{ key = "AUCTION_WINDOW_OPEN", id = 5274, legacy = "AuctionWindowOpen" },
 }
+local LOUD_ORDER_ALERT_SOUND_FALLBACKS = {
+	{ key = "RAID_WARNING", id = 8959, legacy = "RaidWarning" },
+	{ key = "READY_CHECK", id = 8960, legacy = "ReadyCheck" },
+}
+local QUEUE_ALERT_SOUND_LOUD_CHANNEL = "SFX"
 local TRADE_CAST_RETRY_DELAYS = { 0.2, 0.5, 1.0 }
 
 local ElvUIEngine, ElvUISkins
@@ -1319,6 +1324,11 @@ local function IsQueueSoundEnabled()
 	return state.SoundEnabled and true or false
 end
 
+local function IsQueueSoundLoud()
+	local state = Workbench.EnsureState()
+	return state.SoundEnabled == "loud"
+end
+
 local function IsPartyJoinSoundModeEnabled()
 	return EC ~= nil and EC.DB ~= nil and EC.DB.PlaySoundOnPartyJoinInstead == true
 end
@@ -1353,28 +1363,37 @@ local function PlayQueueAlertSound()
 		tokens[#tokens + 1] = token
 	end
 
-	for _, candidate in ipairs(ORDER_ALERT_SOUND_FALLBACKS) do
-		local soundTokens = {}
-		if type(SOUNDKIT) == "table" and SOUNDKIT[candidate.key] then
-			RegisterSoundToken(soundTokens, SOUNDKIT[candidate.key])
+	local function TryFallbacks(candidates, channel)
+		for _, candidate in ipairs(candidates) do
+			local soundTokens = {}
+			if type(SOUNDKIT) == "table" and SOUNDKIT[candidate.key] then
+				RegisterSoundToken(soundTokens, SOUNDKIT[candidate.key])
+			end
+			RegisterSoundToken(soundTokens, candidate.id)
+			RegisterSoundToken(soundTokens, candidate.legacy)
+
+			for _, soundKit in ipairs(soundTokens) do
+				local ok, willPlay = pcall(PlaySound, soundKit, channel)
+				if ok and willPlay ~= false then
+					return true
+				end
+
+				ok, willPlay = pcall(PlaySound, soundKit)
+				if ok and willPlay ~= false then
+					return true
+				end
+			end
 		end
-		RegisterSoundToken(soundTokens, candidate.id)
-		RegisterSoundToken(soundTokens, candidate.legacy)
+		return false
+	end
 
-		for _, soundKit in ipairs(soundTokens) do
-			local ok, willPlay = pcall(PlaySound, soundKit, QUEUE_ALERT_SOUND_CHANNEL)
-			if ok and willPlay ~= false then
-				return true
-			end
-
-			ok, willPlay = pcall(PlaySound, soundKit)
-			if ok and willPlay ~= false then
-				return true
-			end
+	if IsQueueSoundLoud() then
+		if TryFallbacks(LOUD_ORDER_ALERT_SOUND_FALLBACKS, QUEUE_ALERT_SOUND_LOUD_CHANNEL) then
+			return true
 		end
 	end
 
-	return false
+	return TryFallbacks(ORDER_ALERT_SOUND_FALLBACKS, QUEUE_ALERT_SOUND_CHANNEL)
 end
 
 local function RememberGroupedCustomerSnapshot(customerName)
@@ -3104,6 +3123,7 @@ local function UpdateSoundButtonVisual()
 
 	local button = Workbench.Frame.SoundButton
 	local soundEnabled = IsQueueSoundEnabled()
+	local soundLoud = IsQueueSoundLoud()
 
 	button:SetText("")
 	if button.Icon then
@@ -3112,7 +3132,11 @@ local function UpdateSoundButtonVisual()
 	end
 	if button.SoundOn then
 		button.SoundOn:SetTexture(SOUND_BUTTON_ON_TEXTURE)
-		button.SoundOn:SetVertexColor(1, 1, 1, 1)
+		if soundLoud then
+			button.SoundOn:SetVertexColor(1, 0.82, 0, 1)
+		else
+			button.SoundOn:SetVertexColor(1, 1, 1, 1)
+		end
 		SetRegionShown(button.SoundOn, soundEnabled)
 	end
 	if button.Muted then
@@ -3419,10 +3443,16 @@ function Workbench.CreateFrame()
 	frame.SoundButton.Muted:SetPoint("CENTER", frame.SoundButton, "CENTER", 0, 0)
 	frame.SoundButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
-		state.SoundEnabled = not state.SoundEnabled
+		if state.SoundEnabled == false then
+			state.SoundEnabled = true
+		elseif state.SoundEnabled == true then
+			state.SoundEnabled = "loud"
+		else
+			state.SoundEnabled = false
+		end
 		UpdateSoundButtonVisual()
-		WorkbenchDebug("queue sound", state.SoundEnabled and "enabled" or "disabled")
-		if state.SoundEnabled then
+		WorkbenchDebug("queue sound", state.SoundEnabled == false and "muted" or (state.SoundEnabled == "loud" and "loud" or "normal"))
+		if state.SoundEnabled ~= false then
 			PreviewQueueAlertSound()
 		end
 	end)
