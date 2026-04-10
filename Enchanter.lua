@@ -1165,6 +1165,64 @@ local function GetRecipeMatchContext(parsedMessage, matchStart, matchEnd)
 	return TrimText(string.sub(parsedMessage, contextStart, contextEnd))
 end
 
+local function GetBracketedRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return ""
+	end
+
+	matchStart = math.max(1, math.floor(tonumber(matchStart) or 1))
+	matchEnd = math.max(matchStart, math.floor(tonumber(matchEnd) or matchStart))
+
+	local bracketStart
+	local bracketEnd
+	local index = matchStart
+	local messageLength = string.len(parsedMessage)
+
+	while index >= 1 do
+		local character = string.sub(parsedMessage, index, index)
+		if character == "[" then
+			bracketStart = index
+			break
+		end
+		if character == "]" then
+			return ""
+		end
+		index = index - 1
+	end
+
+	if not bracketStart then
+		return ""
+	end
+
+	index = matchEnd
+	while index <= messageLength do
+		local character = string.sub(parsedMessage, index, index)
+		if character == "]" then
+			bracketEnd = index
+			break
+		end
+		if character == "[" then
+			return ""
+		end
+		index = index + 1
+	end
+
+	if not bracketEnd or bracketEnd <= bracketStart then
+		return ""
+	end
+
+	return TrimText(string.sub(parsedMessage, bracketStart + 1, bracketEnd - 1))
+end
+
+local function GetRecipeBlacklistContext(parsedMessage, matchStart, matchEnd)
+	local bracketContext = GetBracketedRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+	if bracketContext ~= "" then
+		return bracketContext
+	end
+
+	return GetRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+end
+
 local function SplitRecipeRequestSegments(parsedMessage)
 	local segments = {}
 	if type(parsedMessage) ~= "string" or parsedMessage == "" then
@@ -1266,8 +1324,6 @@ local function MatchRecipeTags(parsedMessage, tagBuckets)
 	local matches = {}
 	local matchedRecipes = {}
 	local acceptedRanges = {}
-	local blacklistedRecipes = {}
-	local blacklistChecked = {}
 
 	if type(parsedMessage) ~= "string" or parsedMessage == "" then
 		return matches
@@ -1282,12 +1338,8 @@ local function MatchRecipeTags(parsedMessage, tagBuckets)
 					local matchEnd = matchStart + entry.Length - 1
 					if matchEnd <= messageLength and string.sub(parsedMessage, matchStart, matchEnd) == entry.Tag then
 						local recipeName = entry.RecipeName
-						if not blacklistChecked[recipeName] then
-							blacklistChecked[recipeName] = true
-							blacklistedRecipes[recipeName] = GetMatchedRecipeBlacklist(parsedMessage, recipeName)
-						end
-
-						if not blacklistedRecipes[recipeName] then
+						local blacklistContext = GetRecipeBlacklistContext(parsedMessage, matchStart, matchEnd)
+						if not GetMatchedRecipeBlacklist(blacklistContext, recipeName) then
 							candidates[#candidates + 1] = {
 								RecipeName = recipeName,
 								Tag = entry.Tag,

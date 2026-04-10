@@ -1,3 +1,10 @@
+## [2.1.38] - 2026-04-10
+
+### Fixed
+- Loud workbench alerts now use the ready-check sound on the `Master` channel, with additional client-defined fallbacks, so the added loud state is not lost when SFX is muted or the raid-warning cue is too quiet
+- Loud mode now adds a gold `!` marker to the speaker button instead of relying only on a subtle wave tint
+- Adjacent linked enchant names now scope blacklist checks to the matching bracketed recipe text, so one linked enchant does not suppress the next linked enchant in the same request
+
 ## [2.1.37] - 2026-04-10
 
 ### Changed
