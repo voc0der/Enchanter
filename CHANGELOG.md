@@ -1,3 +1,8 @@
+## [2.1.37] - 2026-04-10
+
+### Changed
+- Sound button now cycles through three states — normal, loud, and muted — instead of a simple on/off toggle. Loud mode plays the raid-warning sound on the SFX channel so the alert cuts through clearly on setups where the default sound is too quiet
+
 ## [2.1.36] - 2026-04-09
 
 ### Added

@@ -373,6 +373,8 @@ local function setup_env(opts)
         U_CHAT_SCROLL_BUTTON = 1115,
         IG_CHARACTER_INFO_OPEN = 839,
         AUCTION_WINDOW_OPEN = 5274,
+        RAID_WARNING = 8959,
+        READY_CHECK = 8960,
     }
     _G.ERR_TRADE_COMPLETE = "Trade complete."
     _G.PlaySound = function(sound_kit, channel)
@@ -1697,6 +1699,33 @@ local function test_parse_message_matches_multi_enchant_lists_by_segment()
     assert_true(string.find(state.whispers[1].message, "%[Enchant Cloak %- Dodge%]") ~= nil, "third segmented recipe should match")
 end
 
+local function test_parse_message_keeps_adjacent_linked_enchants_from_blacklisting_each_other()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Bracer - Superior Healing"] = { "enchant bracer - superior healing" },
+                ["Enchant Gloves - Major Healing"] = { "enchant gloves - major healing", "35 heal" },
+            },
+            RecipeLinks = {
+                ["Enchant Bracer - Superior Healing"] = "[Enchant Bracer - Superior Healing] ",
+                ["Enchant Gloves - Major Healing"] = "[Enchant Gloves - Major Healing] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF Enchanter [Enchanting: Enchant Bracer - Superior Healing][Enchanting: Enchant Gloves - Major Healing]", "Buyer-Linked")
+
+    assert_equal(#state.whispers, 1, "adjacent linked enchants should still produce one whisper")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Bracer %- Superior Healing%]") ~= nil, "linked bracer recipe should match")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Gloves %- Major Healing%]") ~= nil, "linked glove recipe should survive the bracer blacklist phrase")
+end
+
 local function test_parse_message_ignores_mid_token_recipe_alias_false_positive()
     local addon, state = setup_env({
         db = {
@@ -2035,33 +2064,52 @@ local function test_workbench_title_includes_addon_version()
     assert_equal(frame.TitleText.text, "Enchanter vtest Workbench", "workbench title should include the addon version from metadata")
 end
 
-local function test_workbench_sound_button_defaults_off_and_toggles()
+local function test_workbench_sound_button_defaults_off_and_cycles()
     local addon, state = setup_env()
 
     local frame = addon.Workbench.CreateFrame()
     local workbenchState = addon.Workbench.EnsureState()
 
+    -- muted (default)
     assert_true(not workbenchState.SoundEnabled, "queue sound should default to disabled")
     assert_equal(frame.SoundButton.text, "", "header sound button should use icons instead of text")
     assert_true(frame.SoundButton.Muted.shown, "muted overlay should show when alerts are disabled")
     assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should stay hidden when alerts are disabled")
     assert_equal(#state.played_sounds, 0, "sound preview should stay idle until the toggle is enabled")
 
+    -- muted -> normal
     frame.SoundButton.scripts["OnClick"]()
-    assert_true(workbenchState.SoundEnabled, "sound toggle should persist as enabled after clicking")
-    assert_equal(frame.SoundButton.text, "", "enabled sound state should remain icon-only")
-    assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are enabled")
-    assert_true(not frame.SoundButton.Muted.shown, "muted overlay should hide when alerts are enabled")
-    assert_equal(#state.played_sounds, 1, "enabling queue sounds should play an immediate preview so the user can hear it")
-    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "sound preview should start with the most client-safe Blizzard UI sound")
-    assert_equal(state.played_sound_calls[1].channel, "Master", "sound preview should use the Master channel when available")
+    assert_equal(workbenchState.SoundEnabled, true, "first click should advance to normal volume")
+    assert_equal(frame.SoundButton.text, "", "normal sound state should remain icon-only")
+    assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are at normal volume")
+    assert_true(not frame.SoundButton.Muted.shown, "muted overlay should hide when alerts are at normal volume")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[1], 1, "normal volume speaker waves: R should be 1")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[2], 1, "normal volume speaker waves: G should be 1")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[3], 1, "normal volume speaker waves: B should be 1")
+    assert_equal(#state.played_sounds, 1, "enabling queue sounds should play an immediate preview")
+    assert_equal(state.played_sounds[1], SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "normal preview should use the standard Blizzard UI sound")
+    assert_equal(state.played_sound_calls[1].channel, "Master", "normal preview should use the Master channel")
 
+    -- normal -> loud
     frame.SoundButton.scripts["OnClick"]()
-    assert_true(not workbenchState.SoundEnabled, "sound toggle should persist as disabled after a second click")
-    assert_equal(frame.SoundButton.text, "", "disabled sound state should remain icon-only")
-    assert_true(frame.SoundButton.Muted.shown, "muted overlay should return when alerts are disabled again")
-    assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should hide again when alerts are disabled")
-    assert_equal(#state.played_sounds, 1, "disabling queue sounds should not play any extra preview")
+    assert_equal(workbenchState.SoundEnabled, "loud", "second click should advance to loud volume")
+    assert_equal(frame.SoundButton.text, "", "loud sound state should remain icon-only")
+    assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are at loud volume")
+    assert_true(not frame.SoundButton.Muted.shown, "muted overlay should stay hidden at loud volume")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[1], 1,    "loud volume speaker waves: R should be 1")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[2], 0.82, "loud volume speaker waves: G should be 0.82")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[3], 0,    "loud volume speaker waves: B should be 0")
+    assert_equal(#state.played_sounds, 2, "switching to loud volume should play a preview")
+    assert_equal(state.played_sounds[2], SOUNDKIT.RAID_WARNING, "loud preview should use the raid warning sound")
+    assert_equal(state.played_sound_calls[2].channel, "SFX", "loud preview should use the SFX channel")
+
+    -- loud -> muted
+    frame.SoundButton.scripts["OnClick"]()
+    assert_equal(workbenchState.SoundEnabled, false, "third click should return to muted")
+    assert_equal(frame.SoundButton.text, "", "muted state should remain icon-only")
+    assert_true(frame.SoundButton.Muted.shown, "muted overlay should return when cycling back to muted")
+    assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should hide again when muted")
+    assert_equal(#state.played_sounds, 2, "muting should not play any extra preview")
 end
 
 local function test_workbench_sound_button_warns_when_preview_cannot_play()
@@ -4166,6 +4214,7 @@ test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
 test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
 test_parse_message_does_not_double_count_nested_request_tags()
 test_parse_message_matches_multi_enchant_lists_by_segment()
+test_parse_message_keeps_adjacent_linked_enchants_from_blacklisting_each_other()
 test_parse_message_ignores_mid_token_recipe_alias_false_positive()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
@@ -4178,7 +4227,7 @@ test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_title_includes_addon_version()
-test_workbench_sound_button_defaults_off_and_toggles()
+test_workbench_sound_button_defaults_off_and_cycles()
 test_workbench_sound_button_warns_when_preview_cannot_play()
 test_workbench_lock_button_survives_clients_without_text_insets()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
