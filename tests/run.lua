@@ -373,8 +373,10 @@ local function setup_env(opts)
         U_CHAT_SCROLL_BUTTON = 1115,
         IG_CHARACTER_INFO_OPEN = 839,
         AUCTION_WINDOW_OPEN = 5274,
-        RAID_WARNING = 8959,
         READY_CHECK = 8960,
+        PVP_ENTER_QUEUE = 8458,
+        RAID_WARNING = 8959,
+        LFG_ROLE_CHECK = 17317,
     }
     _G.ERR_TRADE_COMPLETE = "Trade complete."
     _G.PlaySound = function(sound_kit, channel)
@@ -2028,11 +2030,13 @@ local function test_workbench_frame_keeps_buttons_above_drag_header()
     assert_equal(frame.LockButton.Icon.texture, "Interface\\PetBattles\\PetBattle-LockIcon", "lock control should use a padlock icon texture when locked")
     assert_equal(frame.SoundButton.Icon.texture, "Interface\\Common\\VoiceChat-Speaker", "sound control should use the native speaker icon")
     assert_equal(frame.SoundButton.Muted.texture, "Interface\\Common\\VoiceChat-Muted", "sound control should show the muted overlay when alerts are off")
+    assert_equal(frame.SoundButton.LoudText.text, "!", "sound control should have a separate loud marker")
     assert_true(workbenchState.Locked, "workbench should start locked by default")
     assert_true(frame.LockButton.Icon.shown, "locked state should show the closed padlock icon")
     assert_true(not frame.LockButton.UnlockedCheck.shown, "locked state should hide the unlocked check overlay")
     assert_true(frame.SoundButton.Muted.shown, "sound-off state should show the muted overlay")
     assert_true(not frame.SoundButton.SoundOn.shown, "sound-off state should hide the active sound overlay")
+    assert_true(not frame.SoundButton.LoudText.shown, "sound-off state should hide the loud marker")
     assert_equal(frame.ConfigButton.point[2], frame.CloseButton, "config cog should sit immediately beside the close button")
     assert_equal(frame.LockButton.point[2], frame.ConfigButton, "lock icon should sit immediately beside the config cog")
     assert_equal(frame.SoundButton.point[2], frame.LockButton, "sound icon should sit immediately beside the lock icon")
@@ -2083,6 +2087,7 @@ local function test_workbench_sound_button_defaults_off_and_cycles()
     assert_equal(frame.SoundButton.text, "", "normal sound state should remain icon-only")
     assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are at normal volume")
     assert_true(not frame.SoundButton.Muted.shown, "muted overlay should hide when alerts are at normal volume")
+    assert_true(not frame.SoundButton.LoudText.shown, "loud marker should stay hidden at normal volume")
     assert_equal(frame.SoundButton.SoundOn.vertex_color[1], 1, "normal volume speaker waves: R should be 1")
     assert_equal(frame.SoundButton.SoundOn.vertex_color[2], 1, "normal volume speaker waves: G should be 1")
     assert_equal(frame.SoundButton.SoundOn.vertex_color[3], 1, "normal volume speaker waves: B should be 1")
@@ -2096,12 +2101,13 @@ local function test_workbench_sound_button_defaults_off_and_cycles()
     assert_equal(frame.SoundButton.text, "", "loud sound state should remain icon-only")
     assert_true(frame.SoundButton.SoundOn.shown, "speaker waves should show when alerts are at loud volume")
     assert_true(not frame.SoundButton.Muted.shown, "muted overlay should stay hidden at loud volume")
+    assert_true(frame.SoundButton.LoudText.shown, "loud marker should make loud mode visually distinct")
     assert_equal(frame.SoundButton.SoundOn.vertex_color[1], 1,    "loud volume speaker waves: R should be 1")
-    assert_equal(frame.SoundButton.SoundOn.vertex_color[2], 0.82, "loud volume speaker waves: G should be 0.82")
-    assert_equal(frame.SoundButton.SoundOn.vertex_color[3], 0,    "loud volume speaker waves: B should be 0")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[2], 0.76, "loud volume speaker waves: G should be 0.76")
+    assert_equal(frame.SoundButton.SoundOn.vertex_color[3], 0.18, "loud volume speaker waves: B should be 0.18")
     assert_equal(#state.played_sounds, 2, "switching to loud volume should play a preview")
-    assert_equal(state.played_sounds[2], SOUNDKIT.RAID_WARNING, "loud preview should use the raid warning sound")
-    assert_equal(state.played_sound_calls[2].channel, "SFX", "loud preview should use the SFX channel")
+    assert_equal(state.played_sounds[2], SOUNDKIT.READY_CHECK, "loud preview should use a Blizzard ready-check alert")
+    assert_equal(state.played_sound_calls[2].channel, "Master", "loud preview should use the Master channel")
 
     -- loud -> muted
     frame.SoundButton.scripts["OnClick"]()
@@ -2109,6 +2115,7 @@ local function test_workbench_sound_button_defaults_off_and_cycles()
     assert_equal(frame.SoundButton.text, "", "muted state should remain icon-only")
     assert_true(frame.SoundButton.Muted.shown, "muted overlay should return when cycling back to muted")
     assert_true(not frame.SoundButton.SoundOn.shown, "speaker waves should hide again when muted")
+    assert_true(not frame.SoundButton.LoudText.shown, "loud marker should hide again when muted")
     assert_equal(#state.played_sounds, 2, "muting should not play any extra preview")
 end
 

@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.36`
+Current version: `2.1.38`
 
 ## What It Does
 
@@ -64,7 +64,7 @@ Current version: `2.1.36`
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
-- Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean it is on, the muted speaker means it is off, it starts muted, and enabling it plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
+- Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.

@@ -26,10 +26,12 @@ local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "AUCTION_WINDOW_OPEN", id = 5274, legacy = "AuctionWindowOpen" },
 }
 local LOUD_ORDER_ALERT_SOUND_FALLBACKS = {
-	{ key = "RAID_WARNING", id = 8959, legacy = "RaidWarning" },
 	{ key = "READY_CHECK", id = 8960, legacy = "ReadyCheck" },
+	{ key = "PVP_ENTER_QUEUE", id = 8458, legacy = "PVPEnterQueue" },
+	{ key = "RAID_WARNING", id = 8959, legacy = "RaidWarning" },
+	{ key = "LFG_ROLE_CHECK", id = 17317, legacy = "LFGRoleCheck" },
 }
-local QUEUE_ALERT_SOUND_LOUD_CHANNEL = "SFX"
+local QUEUE_ALERT_SOUND_LOUD_CHANNEL = "Master"
 local TRADE_CAST_RETRY_DELAYS = { 0.2, 0.5, 1.0 }
 
 local ElvUIEngine, ElvUISkins
@@ -3133,11 +3135,16 @@ local function UpdateSoundButtonVisual()
 	if button.SoundOn then
 		button.SoundOn:SetTexture(SOUND_BUTTON_ON_TEXTURE)
 		if soundLoud then
-			button.SoundOn:SetVertexColor(1, 0.82, 0, 1)
+			button.SoundOn:SetVertexColor(1, 0.76, 0.18, 1)
 		else
 			button.SoundOn:SetVertexColor(1, 1, 1, 1)
 		end
 		SetRegionShown(button.SoundOn, soundEnabled)
+	end
+	if button.LoudText then
+		button.LoudText:SetText("!")
+		button.LoudText:SetTextColor(1, 0.82, 0.18, 1)
+		SetRegionShown(button.LoudText, soundLoud)
 	end
 	if button.Muted then
 		button.Muted:SetTexture(SOUND_BUTTON_MUTED_TEXTURE)
@@ -3441,6 +3448,10 @@ function Workbench.CreateFrame()
 	frame.SoundButton.Muted = frame.SoundButton:CreateTexture(nil, "OVERLAY")
 	frame.SoundButton.Muted:SetSize(14, 14)
 	frame.SoundButton.Muted:SetPoint("CENTER", frame.SoundButton, "CENTER", 0, 0)
+	frame.SoundButton.LoudText = frame.SoundButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.SoundButton.LoudText:SetPoint("TOPRIGHT", frame.SoundButton, "TOPRIGHT", -3, -1)
+	frame.SoundButton.LoudText:SetText("!")
+	frame.SoundButton.LoudText:SetTextColor(1, 0.82, 0.18, 1)
 	frame.SoundButton:SetScript("OnClick", function()
 		local state = Workbench.EnsureState()
 		if state.SoundEnabled == false then
