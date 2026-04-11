@@ -1,3 +1,8 @@
+## [2.1.41] - 2026-04-11
+
+### Fixed
+- Stopped cold-cache reagent scans from saving empty `[]` material names, so queued mats like `Truesilver Bar` stay keyed by item ID, hydrate automatically when item data arrives, and still match live trade offers correctly
+
 ## [2.1.40] - 2026-04-11
 
 ### Fixed

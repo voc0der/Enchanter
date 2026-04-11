@@ -65,13 +65,35 @@ local original_global_randomseed = _G.randomseed
 local function setup_env(opts)
     opts = opts or {}
 
+    local function normalize_item_id(item_reference)
+        local item_id
+
+        if type(item_reference) == "number" then
+            item_id = math.floor(tonumber(item_reference) or 0)
+            return item_id > 0 and item_id or nil
+        end
+
+        if type(item_reference) ~= "string" then
+            return nil
+        end
+
+        item_id = tonumber(item_reference:match("item:(%d+)"))
+        if item_id and item_id > 0 then
+            return math.floor(item_id)
+        end
+
+        return nil
+    end
+
     local state = {
         auctionator_calls = {},
         invites = {},
+        item_cache = {},
         prints = {},
         played_sounds = {},
         played_sound_calls = {},
         emotes = {},
+        requested_item_data = {},
         crafts = copy_table(opts.crafts or {}),
         craft_available_only = opts.craft_available_only and true or false,
         craft_filter = tonumber(opts.craft_filter) or 0,
@@ -110,6 +132,16 @@ local function setup_env(opts)
         trade_skill_item_level_min = tonumber(opts.trade_skill_item_level_min) or 0,
         trade_skill_item_level_max = tonumber(opts.trade_skill_item_level_max) or 0,
     }
+
+    for key, item in pairs(copy_table(opts.item_cache or {})) do
+        local item_id = normalize_item_id(key) or normalize_item_id(item and item.link) or tonumber(item and item.item_id)
+        if item_id and item_id > 0 then
+            state.item_cache[item_id] = item
+            if state.item_cache[item_id].cached == nil then
+                state.item_cache[item_id].cached = true
+            end
+        end
+    end
 
     local function set_shown_methods(frame, shown)
         frame.shown = shown and true or false
@@ -876,6 +908,38 @@ local function setup_env(opts)
             return spell
         end
         return nil
+    end
+    _G.GetItemInfo = function(item_reference)
+        local item_id = normalize_item_id(item_reference)
+        local item = item_id and state.item_cache[item_id] or nil
+        local item_link
+
+        if not item or item.cached == false then
+            return nil
+        end
+
+        item_link = item.link
+        if item_link == nil and item.name ~= nil then
+            item_link = string.format("|cffffffff|Hitem:%d::::::::|h[%s]|h|r", item_id, item.name)
+        end
+
+        return item.name, item_link
+    end
+    _G.GetItemInfoInstant = function(item_reference)
+        return normalize_item_id(item_reference)
+    end
+    if opts.omit_c_item then
+        _G.C_Item = nil
+    else
+        _G.C_Item = {
+            RequestLoadItemDataByID = function(item_reference)
+                local item_id = normalize_item_id(item_reference)
+                state.requested_item_data[#state.requested_item_data + 1] = item_id
+            end,
+            GetItemInfoInstant = function(item_reference)
+                return normalize_item_id(item_reference)
+            end,
+        }
     end
     _G.TIME_TWENTYFOURHOURS = "%02d:%02d"
     _G.TIME_TWELVEHOURAM = "%d:%02d AM"
@@ -3103,6 +3167,134 @@ local function test_scan_keeps_reagent_rows_when_only_the_item_link_has_a_name()
     assert_equal(scannedMaterials[2].Count, 2, "scan should preserve the required count for link-backed reagents")
 end
 
+local function test_scan_marks_empty_link_text_reagents_pending_until_item_data_arrives()
+    local addon, state = setup_env({
+        require_trade_frame_selection_for_reagents = true,
+        trade_reagent_info_includes_item_id = true,
+        item_cache = {
+            [6037] = {
+                name = "Truesilver Bar",
+                link = "|cffffffff|Hitem:6037::::::::|h[Truesilver Bar]|h|r",
+                cached = false,
+            },
+        },
+        trade_skills = {
+            {
+                name = "Enchant Gloves - Advanced Mining",
+                link = "spell:13948",
+                reagents = {
+                    { name = "Vision Dust", count = 3, player_count = 0, link = "item:11137", item_id = 11137 },
+                    { name = nil, count = 3, player_count = 0, link = "|cffffffff|Hitem:6037::::::::|h[]|h|r", item_id = 6037 },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local scannedMaterials = EnchanterDBChar.RecipeMats["Enchant Gloves - Advanced Mining"]
+
+    assert_true(ok, "scan should still succeed when one reagent name is waiting on the item cache")
+    addon.OnLoad()
+    assert_not_nil(scannedMaterials, "scan should save the reagent snapshot even while one mat is unresolved")
+    assert_equal(scannedMaterials[2].ItemId, 6037, "scan should preserve the reagent item id for cold-cache mats")
+    assert_equal(scannedMaterials[2].Link, "item:6037", "scan should normalize empty-bracket links into a stable item key")
+    assert_nil(scannedMaterials[2].Name, "scan should not commit an empty reagent name as finished data")
+    assert_true(scannedMaterials[2].PendingName == true, "scan should mark the unresolved reagent so it can hydrate later")
+    assert_equal(state.requested_item_data[1], 6037, "scan should request item data for unresolved reagents")
+
+    state.item_cache[6037].cached = true
+    state.event_handlers["ITEM_DATA_LOAD_RESULT"](6037, true)
+
+    assert_equal(scannedMaterials[2].Name, "Truesilver Bar", "item data events should hydrate the stored reagent name")
+    assert_true(scannedMaterials[2].PendingName == nil, "hydrated reagents should clear the pending flag")
+    assert_true(string.find(scannedMaterials[2].Link or "", "%[Truesilver Bar%]") ~= nil, "hydrated reagents should replace the placeholder link text")
+end
+
+local function test_workbench_lazily_hydrates_unresolved_material_names_before_render()
+    local addon, state = setup_env({
+        require_trade_frame_selection_for_reagents = true,
+        trade_reagent_info_includes_item_id = true,
+        item_cache = {
+            [6037] = {
+                name = "Truesilver Bar",
+                link = "|cffffffff|Hitem:6037::::::::|h[Truesilver Bar]|h|r",
+                cached = false,
+            },
+        },
+        trade_skills = {
+            {
+                name = "Enchant Gloves - Advanced Mining",
+                link = "spell:13948",
+                reagents = {
+                    { name = "Vision Dust", count = 3, player_count = 0, link = "item:11137", item_id = 11137 },
+                    { name = nil, count = 3, player_count = 0, link = "|cffffffff|Hitem:6037::::::::|h[]|h|r", item_id = 6037 },
+                },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    local sawTruesilver = false
+    local sawEmptyBrackets = false
+
+    addon.GetItems()
+    state.item_cache[6037].cached = true
+    addon.ParseMessage("LF advanced mining gloves", "Buyer-TruesilverLazy")
+    addon.Workbench.Refresh()
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    for _, material in ipairs(materials) do
+        if material.Name == "Truesilver Bar" then
+            sawTruesilver = true
+        end
+    end
+    for _, line in ipairs(frame.Detail.MaterialLines or {}) do
+        if line.Text and type(line.Text.text) == "string" and line.Text.text ~= "" then
+            if string.find(line.Text.text, "Truesilver Bar", 1, true) ~= nil then
+                sawTruesilver = true
+            end
+            if string.find(line.Text.text, "[]", 1, true) ~= nil then
+                sawEmptyBrackets = true
+            end
+        end
+    end
+
+    assert_true(sawTruesilver, "opening the workbench should lazily hydrate newly cached reagent names before rendering")
+    assert_true(not sawEmptyBrackets, "material lines should never render the empty bracket placeholder once hydration is available")
+end
+
+local function test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Gloves - Advanced Mining"] = { "advanced mining" },
+            },
+            RecipeMats = {
+                ["Enchant Gloves - Advanced Mining"] = {
+                    { Name = "Vision Dust", Count = 3, Link = "item:11137", ItemId = 11137 },
+                    { Count = 3, Link = "item:6037", ItemId = 6037, PendingName = true },
+                },
+            },
+        },
+        trade_target_items = {
+            { name = "Vision Dust", count = 3, link = "|cffffffff|Hitem:11137::::::::|h[Vision Dust]|h|r", item_id = 11137 },
+            { name = "Truesilver Bar", count = 3, link = "|cffffffff|Hitem:6037::::::::|h[Truesilver Bar]|h|r", item_id = 6037 },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF advanced mining gloves", "Buyer-ItemIdTrade")
+    addon.Workbench.BeginTrade("Buyer-ItemIdTrade")
+
+    local order = addon.Workbench.GetSelectedOrder()
+    local checked, total = addon.Workbench.GetTradeMaterialProgress(order)
+
+    assert_equal(checked, 2, "live trade mats should still match unresolved recipe links by stable item id")
+    assert_equal(total, 2, "item-id matching should keep the full material progress total intact")
+end
+
 local function test_scan_clears_trade_skill_filters_and_restores_them_afterward()
     local addon = setup_env({
         trade_skill_available_only = true,
@@ -4405,6 +4597,9 @@ test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
 test_scan_keeps_full_reagent_snapshot_when_only_one_mat_is_owned()
 test_scan_keeps_reagent_rows_when_only_the_item_link_has_a_name()
+test_scan_marks_empty_link_text_reagents_pending_until_item_data_arrives()
+test_workbench_lazily_hydrates_unresolved_material_names_before_render()
+test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
