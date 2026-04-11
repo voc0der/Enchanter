@@ -493,10 +493,40 @@ local function setup_env(opts)
         state.selected_craft = index
         _G.CraftFrame.selectedCraft = index
     end
-    _G.CraftFrame_SetSelection = function(index)
-        state.craft_frame_selection = index
-        state.selected_craft = index
-        _G.CraftFrame.selectedCraft = index
+    if opts.simulate_blizzard_craft_frame_selection then
+        _G.CraftFrame_SetSelection = function(index)
+            if not index then
+                return
+            end
+
+            local craftName, craftSubSpellName, craftType = GetCraftInfo(index)
+            state.craft_frame_selection_info = {
+                index = index,
+                name = craftName,
+                sub_spell_name = craftSubSpellName,
+                craft_type = craftType,
+            }
+
+            if craftType == "header" then
+                return
+            end
+
+            SelectCraft(index)
+            if GetCraftSelectionIndex() > GetNumCrafts() then
+                state.craft_frame_selection_out_of_range = true
+                return
+            end
+
+            state.craft_frame_selection = index
+            state.selected_craft = _G.CraftFrame.selectedCraft
+            state.craft_frame_selected_num_reagents = GetCraftNumReagents(index)
+        end
+    else
+        _G.CraftFrame_SetSelection = function(index)
+            state.craft_frame_selection = index
+            state.selected_craft = index
+            _G.CraftFrame.selectedCraft = index
+        end
     end
     _G.GetCraftSelectionIndex = function()
         return tonumber(state.selected_craft) or 0
@@ -3392,6 +3422,40 @@ local function test_enchanting_craft_pane_gets_a_working_search_box()
     assert_equal(visibleName, "Enchant Weapon - Crusader", "craft search should keep the matching enchanting recipe visible")
 end
 
+local function test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
+    local addon, state = setup_env({
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
+        require_craft_selection_for_reagents = true,
+        simulate_blizzard_craft_frame_selection = true,
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+            },
+            {
+                name = "Enchant Weapon - Crusader",
+                link = "craft:20034",
+                reagents = {
+                    { name = "Righteous Orb", count = 1, link = "item:12811" },
+                },
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["CRAFT_SHOW"]()
+    addon.SetCraftSearchText("weapon")
+
+    CraftFrame_SetSelection(1)
+
+    assert_equal(state.craft_frame_selection_info.name, "Enchant Weapon - Crusader", "filtered craft selection should resolve the original recipe name before populating the detail pane")
+    assert_equal(state.selected_craft, 2, "filtered craft selection should keep the underlying original craft index selected")
+    assert_equal(GetCraftSelectionIndex(), 1, "filtered craft selection should still expose the visible filtered index to the UI")
+    assert_equal(state.craft_frame_selected_num_reagents, 1, "filtered craft selection should still populate reagent details from the original recipe data")
+    assert_true(not state.craft_frame_selection_out_of_range, "filtered craft selection should not trip Blizzard's out-of-range selection guard")
+end
+
 local function test_scan_clears_craft_filters_and_restores_search_afterward()
     local addon = setup_env({
         craft_frame_shown = true,
@@ -4798,6 +4862,7 @@ test_workbench_lazily_hydrates_unresolved_material_names_before_render()
 test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_enchanting_craft_pane_gets_a_working_search_box()
+test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
 test_scan_clears_craft_filters_and_restores_search_afterward()
 test_non_enchanting_craft_pane_skips_the_search_box()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()

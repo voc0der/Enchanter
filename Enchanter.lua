@@ -37,6 +37,7 @@ local RECIPE_FORMULA_PREFIX = "Formula: "
 local enchantingCraftSearchBox
 local craftSearchText = ""
 local craftSearchHooksInstalled = false
+local craftSearchBypassDepth = 0
 local originalGetNumCrafts
 local originalGetCraftInfo
 local originalGetCraftRecipeLink
@@ -1160,6 +1161,30 @@ local function EnsureCraftSearchApiHooks()
 	originalGetCraftReagentInfo = GetCraftReagentInfo
 	originalGetCraftReagentItemLink = GetCraftReagentItemLink
 
+	local unpackTable = unpack or table.unpack
+
+	local function IsCraftSearchBypassActive()
+		return craftSearchBypassDepth > 0
+	end
+
+	local function CallWithCraftSearchBypass(callback, ...)
+		local results
+		local ok
+
+		if type(callback) ~= "function" then
+			return false
+		end
+
+		craftSearchBypassDepth = craftSearchBypassDepth + 1
+		results = { pcall(callback, ...) }
+		craftSearchBypassDepth = craftSearchBypassDepth - 1
+		ok = table.remove(results, 1)
+		if ok then
+			return true, unpackTable(results)
+		end
+		return false, results[1]
+	end
+
 	local function ShouldApplyCraftSearchFilter()
 		return NormalizeCraftSearchText(craftSearchText) ~= "" and IsEnchantingCraftFrameVisible()
 	end
@@ -1262,7 +1287,7 @@ local function EnsureCraftSearchApiHooks()
 		end
 
 		if type(originalCraftFrame_SetSelection) == "function" then
-			local ok = pcall(originalCraftFrame_SetSelection, index)
+			local ok = CallWithCraftSearchBypass(originalCraftFrame_SetSelection, index)
 			if ok then
 				if CraftFrame then
 					CraftFrame.selectedCraft = index
@@ -1272,17 +1297,22 @@ local function EnsureCraftSearchApiHooks()
 		end
 
 		if type(originalSelectCraft) == "function" then
-			originalSelectCraft(index)
-			if CraftFrame then
-				CraftFrame.selectedCraft = index
+			local ok = CallWithCraftSearchBypass(originalSelectCraft, index)
+			if ok then
+				if CraftFrame then
+					CraftFrame.selectedCraft = index
+				end
+				return true
 			end
-			return true
 		end
 
 		return false
 	end
 
 	GetNumCrafts = function()
+		if IsCraftSearchBypassActive() then
+			return originalGetNumCrafts()
+		end
 		if ShouldApplyCraftSearchFilter() then
 			return #BuildFilteredCraftIndexMap()
 		end
@@ -1290,6 +1320,9 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftInfo = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftInfo(index)
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return nil
@@ -1298,6 +1331,9 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftRecipeLink = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftRecipeLink(index)
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return nil
@@ -1306,10 +1342,22 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftSelectionIndex = function()
+		if IsCraftSearchBypassActive() then
+			if type(originalGetCraftSelectionIndex) == "function" then
+				return originalGetCraftSelectionIndex()
+			end
+			return ResolveOriginalCraftSelectionIndex()
+		end
 		return ResolveDisplayedCraftSelectionIndex()
 	end
 
 	SelectCraft = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalSelectCraft) == "function" then
+				return originalSelectCraft(index)
+			end
+			return
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return
@@ -1318,6 +1366,15 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	CraftFrame_SetSelection = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalCraftFrame_SetSelection) == "function" then
+				return originalCraftFrame_SetSelection(index)
+			end
+			if type(originalSelectCraft) == "function" then
+				return originalSelectCraft(index)
+			end
+			return
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return
@@ -1326,6 +1383,12 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	DoCraft = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalDoCraft) == "function" then
+				return originalDoCraft(index)
+			end
+			return
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index or type(originalDoCraft) ~= "function" then
 			return
@@ -1334,6 +1397,9 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftNumReagents = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftNumReagents(index)
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return 0
@@ -1342,6 +1408,9 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftReagentInfo = function(index, reagentIndex)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftReagentInfo(index, reagentIndex)
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index then
 			return nil
@@ -1350,6 +1419,12 @@ local function EnsureCraftSearchApiHooks()
 	end
 
 	GetCraftReagentItemLink = function(index, reagentIndex)
+		if IsCraftSearchBypassActive() then
+			if type(originalGetCraftReagentItemLink) ~= "function" then
+				return nil
+			end
+			return originalGetCraftReagentItemLink(index, reagentIndex)
+		end
 		index = ResolveFilteredCraftIndex(index)
 		if not index or type(originalGetCraftReagentItemLink) ~= "function" then
 			return nil
