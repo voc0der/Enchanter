@@ -416,6 +416,7 @@ end
 local function GetRecordedMaterialCount(order, material, requiredCount)
 	local materialKey
 	local storedCount
+	local fallbackKeys = {}
 
 	if not order or not material then
 		return 0
@@ -426,6 +427,20 @@ local function GetRecordedMaterialCount(order, material, requiredCount)
 	storedCount = NormalizeItemCount(order.MaterialCounts and order.MaterialCounts[materialKey] or 0)
 	if storedCount <= 0 and order.MaterialState and order.MaterialState[materialKey] then
 		storedCount = requiredCount
+	end
+	if storedCount <= 0 and type(material) == "table" then
+		fallbackKeys = { material.Name, material.Link }
+		for _, fallbackKey in ipairs(fallbackKeys) do
+			if fallbackKey and fallbackKey ~= "" and fallbackKey ~= materialKey then
+				storedCount = NormalizeItemCount(order.MaterialCounts and order.MaterialCounts[fallbackKey] or 0)
+				if storedCount <= 0 and order.MaterialState and order.MaterialState[fallbackKey] then
+					storedCount = requiredCount
+				end
+				if storedCount > 0 then
+					break
+				end
+			end
+		end
 	end
 	return math.min(requiredCount, storedCount)
 end
@@ -1112,10 +1127,33 @@ local function MaybeSendSuccessfulTradeThanks(order, activeTrade)
 end
 
 local function MaterialKey(material)
+	if EC and EC.GetStoredRecipeMaterialKey then
+		return EC.GetStoredRecipeMaterialKey(material)
+	end
 	if not material then
 		return ""
 	end
 	return material.Link or material.Name or ""
+end
+
+local function GetMaterialDisplayName(material)
+	if EC and EC.GetStoredRecipeMaterialName then
+		return EC.GetStoredRecipeMaterialName(material)
+	end
+	if not material then
+		return ""
+	end
+	return TrimText(material.Name)
+end
+
+local function GetMaterialDisplayText(material)
+	if EC and EC.GetStoredRecipeMaterialDisplayText then
+		return EC.GetStoredRecipeMaterialDisplayText(material)
+	end
+	if not material then
+		return "Unknown Material"
+	end
+	return material.Link or material.Name or "Unknown Material"
 end
 
 local function CreateFrameCompat(frameType, name, parent, template)
@@ -1259,20 +1297,41 @@ end
 
 local function CaptureTradeTargetCounts()
 	local counts = {}
+	local function AddCount(key, itemCount)
+		key = TrimText(key)
+		if key ~= "" then
+			counts[key] = (counts[key] or 0) + itemCount
+		end
+	end
 	if not GetTradeTargetItemInfo then
 		return counts
 	end
 
 	for index = 1, GetTradeSlotLimit() do
-		local itemName, _, itemCount = GetTradeTargetItemInfo(index)
+		local itemName, _, itemCount, _, _, _, itemId = GetTradeTargetItemInfo(index)
+		local materialKey
+		local itemLink
+
 		itemName = TrimText(itemName)
-		if itemName ~= "" then
+		itemLink = GetTradeTargetItemLink and GetTradeTargetItemLink(index) or nil
+		if itemName ~= "" or (itemId and itemId > 0) or (type(itemLink) == "string" and itemLink ~= "") then
 			itemCount = tonumber(itemCount) or 1
-			local itemLink = GetTradeTargetItemLink and GetTradeTargetItemLink(index) or nil
+			materialKey = MaterialKey({
+				ItemId = itemId,
+				Name = itemName,
+				Link = itemLink,
+			})
+			AddCount(materialKey, itemCount)
 			if type(itemLink) == "string" and itemLink ~= "" then
-				counts[itemLink] = (counts[itemLink] or 0) + itemCount
+				if TrimText(itemLink) ~= TrimText(materialKey) then
+					AddCount(itemLink, itemCount)
+				end
 			end
-			counts[itemName] = (counts[itemName] or 0) + itemCount
+			if itemName ~= "" then
+				if itemName ~= TrimText(materialKey) and itemName ~= TrimText(itemLink) then
+					AddCount(itemName, itemCount)
+				end
+			end
 		end
 	end
 
@@ -2300,15 +2359,26 @@ function Workbench.GetMaterialSnapshot(order)
 		else
 			for _, material in ipairs(recipeMaterials) do
 				local key = MaterialKey(material)
+				local displayName = GetMaterialDisplayName(material)
 				if key ~= "" then
 					if not byKey[key] then
 						byKey[key] = {
 							Key = key,
-							Name = material.Name or material.Link or "Unknown Material",
+							Name = displayName ~= "" and displayName or nil,
 							Link = material.Link,
+							ItemId = material.ItemId,
 							Count = 0,
 						}
 						materials[#materials + 1] = byKey[key]
+					end
+					if displayName ~= "" then
+						byKey[key].Name = displayName
+					end
+					if material.Link and material.Link ~= "" then
+						byKey[key].Link = material.Link
+					end
+					if material.ItemId and not byKey[key].ItemId then
+						byKey[key].ItemId = material.ItemId
 					end
 					byKey[key].Count = byKey[key].Count + (tonumber(material.Count) or 1)
 				end
@@ -4187,7 +4257,7 @@ function Workbench.Refresh()
 		local recordedCount = GetRecordedMaterialCount(order, material, requiredCount)
 		local offeredCount = GetDisplayedTradeMaterialCount(activeTrade, material.Key)
 		local combinedCount = math.min(requiredCount, recordedCount + offeredCount)
-		local materialText = string.format("%dx %s", requiredCount, material.Link or material.Name or "Unknown Material")
+		local materialText = string.format("%dx %s", requiredCount, GetMaterialDisplayText(material))
 		if combinedCount > 0 and combinedCount < requiredCount then
 			materialText = materialText .. " |cFFFFD26A(" .. tostring(combinedCount) .. "/" .. tostring(requiredCount) .. " tracked)|r"
 		end

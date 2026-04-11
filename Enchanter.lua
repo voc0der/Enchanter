@@ -284,19 +284,339 @@ local function ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthVa
 	return math.max(1, math.floor(requiredCount))
 end
 
-local function ExtractReagentDisplayName(reagentName, reagentLink)
-	if type(reagentName) == "string" and reagentName ~= "" then
-		return reagentName
+local function NormalizeTextValue(value)
+	if type(value) ~= "string" then
+		return ""
+	end
+	return value:gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function ExtractLinkedItemName(itemLink)
+	local linkedName
+
+	itemLink = NormalizeTextValue(itemLink)
+	if itemLink == "" then
+		return nil
 	end
 
-	if type(reagentLink) == "string" and reagentLink ~= "" then
-		local linkedName = reagentLink:match("%[(.-)%]")
-		if linkedName and linkedName ~= "" then
-			return linkedName
+	linkedName = NormalizeTextValue(itemLink:match("%[(.-)%]"))
+	return linkedName ~= "" and linkedName or nil
+end
+
+local function ExtractItemIdFromItemReference(itemReference)
+	local itemId
+
+	if type(itemReference) == "number" then
+		itemId = math.floor(tonumber(itemReference) or 0)
+		return itemId > 0 and itemId or nil
+	end
+
+	if type(itemReference) ~= "string" then
+		return nil
+	end
+
+	itemId = tonumber(itemReference:match("item:(%d+)"))
+	if itemId and itemId > 0 then
+		return math.floor(itemId)
+	end
+
+	if type(GetItemInfoInstant) == "function" then
+		local ok, instantItemId = pcall(GetItemInfoInstant, itemReference)
+		instantItemId = ok and tonumber(instantItemId) or nil
+		if instantItemId and instantItemId > 0 then
+			return math.floor(instantItemId)
 		end
 	end
 
-	return reagentName
+	if C_Item and type(C_Item.GetItemInfoInstant) == "function" then
+		local ok, instantItemId = pcall(C_Item.GetItemInfoInstant, itemReference)
+		instantItemId = ok and tonumber(instantItemId) or nil
+		if instantItemId and instantItemId > 0 then
+			return math.floor(instantItemId)
+		end
+	end
+
+	return nil
+end
+
+local function ExtractReagentItemId(reagentLink, thirdValue, fourthValue, fifthValue)
+	local linkItemId = ExtractItemIdFromItemReference(reagentLink)
+	local candidateItemId
+
+	if linkItemId then
+		return linkItemId
+	end
+
+	if fifthValue ~= nil then
+		candidateItemId = tonumber(thirdValue)
+		if candidateItemId and candidateItemId > 0 and tonumber(fourthValue) and tonumber(fourthValue) > 0 then
+			return math.floor(candidateItemId)
+		end
+	end
+
+	return nil
+end
+
+local function GetItemNameAndLinkFromCache(itemReference)
+	local itemName, itemLink
+	local ok
+
+	if itemReference == nil or itemReference == "" or type(GetItemInfo) ~= "function" then
+		return nil, nil
+	end
+
+	ok, itemName, itemLink = pcall(GetItemInfo, itemReference)
+	if not ok then
+		return nil, nil
+	end
+
+	itemName = NormalizeTextValue(itemName)
+	itemLink = NormalizeTextValue(itemLink)
+	return itemName ~= "" and itemName or nil, itemLink ~= "" and itemLink or nil
+end
+
+local function RequestItemDataLoad(itemId)
+	local requestQueued = false
+
+	itemId = tonumber(itemId)
+	if not itemId or itemId < 1 then
+		return false
+	end
+
+	itemId = math.floor(itemId)
+	EC.PendingMaterialItemLoads = EC.PendingMaterialItemLoads or {}
+	if EC.PendingMaterialItemLoads[itemId] then
+		return false
+	end
+
+	if C_Item and type(C_Item.RequestLoadItemDataByID) == "function" then
+		requestQueued = pcall(C_Item.RequestLoadItemDataByID, itemId)
+	elseif type(GetItemInfo) == "function" then
+		requestQueued = pcall(GetItemInfo, itemId)
+	end
+
+	if requestQueued then
+		EC.PendingMaterialItemLoads[itemId] = true
+		return true
+	end
+
+	return false
+end
+
+local function ResolveStoredRecipeMaterial(material)
+	local changed = false
+	local itemId
+	local currentLink
+	local currentName
+	local resolvedName
+	local resolvedLink
+	local linkedName
+	local pendingName
+
+	if type(material) ~= "table" then
+		return false
+	end
+
+	currentLink = NormalizeTextValue(material.Link)
+	currentName = NormalizeTextValue(material.Name)
+	itemId = tonumber(material.ItemId) or ExtractItemIdFromItemReference(currentLink)
+
+	if itemId and itemId > 0 then
+		itemId = math.floor(itemId)
+		if material.ItemId ~= itemId then
+			material.ItemId = itemId
+			changed = true
+		end
+	end
+
+	linkedName = ExtractLinkedItemName(currentLink)
+	resolvedName = currentName ~= "" and currentName or linkedName
+
+	if itemId then
+		local cachedName, cachedLink = GetItemNameAndLinkFromCache(itemId)
+		resolvedName = cachedName or resolvedName
+		resolvedLink = cachedLink or resolvedLink
+	end
+	if not resolvedName or resolvedName == "" then
+		local cachedName, cachedLink = GetItemNameAndLinkFromCache(currentLink)
+		resolvedName = cachedName or resolvedName
+		resolvedLink = cachedLink or resolvedLink
+	end
+
+	resolvedName = NormalizeTextValue(resolvedName)
+	resolvedLink = NormalizeTextValue(resolvedLink)
+	if resolvedLink == "" and linkedName then
+		resolvedLink = currentLink
+	end
+	if resolvedLink == "" and itemId then
+		resolvedLink = "item:" .. tostring(itemId)
+	end
+
+	if resolvedName ~= "" then
+		if currentName ~= resolvedName then
+			material.Name = resolvedName
+			changed = true
+		end
+	elseif material.Name ~= nil then
+		material.Name = nil
+		changed = true
+	end
+
+	if resolvedLink ~= "" then
+		if currentLink ~= resolvedLink then
+			material.Link = resolvedLink
+			changed = true
+		end
+	elseif material.Link ~= nil then
+		material.Link = nil
+		changed = true
+	end
+
+	pendingName = resolvedName == "" and itemId ~= nil
+	if pendingName then
+		RequestItemDataLoad(itemId)
+	end
+	if (material.PendingName == true) ~= pendingName then
+		material.PendingName = pendingName and true or nil
+		changed = true
+	end
+
+	return changed
+end
+
+local function GetStoredRecipeMaterialName(material)
+	local materialName
+
+	if type(material) ~= "table" then
+		return ""
+	end
+
+	ResolveStoredRecipeMaterial(material)
+	materialName = NormalizeTextValue(material.Name)
+	if materialName ~= "" then
+		return materialName
+	end
+
+	materialName = ExtractLinkedItemName(material.Link)
+	return materialName or ""
+end
+
+local function GetStoredRecipeMaterialDisplayText(material)
+	local displayName
+
+	if type(material) ~= "table" then
+		return "Unknown Material"
+	end
+
+	ResolveStoredRecipeMaterial(material)
+	displayName = ExtractLinkedItemName(material.Link)
+	if displayName then
+		return material.Link
+	end
+
+	displayName = NormalizeTextValue(material.Name)
+	if displayName ~= "" then
+		return displayName
+	end
+
+	return "Unknown Material"
+end
+
+local function GetStoredRecipeMaterialKey(material)
+	local itemId
+	local materialName
+	local materialLink
+
+	if type(material) ~= "table" then
+		return ""
+	end
+
+	ResolveStoredRecipeMaterial(material)
+	itemId = tonumber(material.ItemId) or ExtractItemIdFromItemReference(material.Link)
+	if itemId and itemId > 0 then
+		return "item:" .. tostring(math.floor(itemId))
+	end
+
+	materialName = NormalizeTextValue(material.Name)
+	if materialName ~= "" then
+		return materialName
+	end
+
+	materialLink = NormalizeTextValue(material.Link)
+	return materialLink ~= "" and materialLink or ""
+end
+
+local function CountUnresolvedMaterials(materials)
+	local unresolvedCount = 0
+
+	for _, material in ipairs(materials or {}) do
+		ResolveStoredRecipeMaterial(material)
+		if material.PendingName == true then
+			unresolvedCount = unresolvedCount + 1
+		end
+	end
+
+	return unresolvedCount
+end
+
+local function CountUnresolvedRecipeMaterials(recipeMats)
+	local unresolvedCount = 0
+
+	for _, materials in pairs(recipeMats or {}) do
+		unresolvedCount = unresolvedCount + CountUnresolvedMaterials(materials)
+	end
+
+	return unresolvedCount
+end
+
+local function RefreshStoredRecipeMaterials(targetItemId)
+	local changed = false
+	local unresolvedCount = 0
+	local recipeMats = EC.DBChar and EC.DBChar.RecipeMats or {}
+
+	targetItemId = tonumber(targetItemId)
+	if targetItemId then
+		targetItemId = math.floor(targetItemId)
+	end
+
+	for _, materials in pairs(recipeMats) do
+		for _, material in ipairs(materials or {}) do
+			local materialItemId = tonumber(material.ItemId) or ExtractItemIdFromItemReference(material.Link)
+			if not targetItemId or materialItemId == targetItemId then
+				if ResolveStoredRecipeMaterial(material) then
+					changed = true
+				end
+			end
+			if material.PendingName == true then
+				unresolvedCount = unresolvedCount + 1
+			end
+		end
+	end
+
+	if targetItemId and EC.PendingMaterialItemLoads then
+		EC.PendingMaterialItemLoads[targetItemId] = nil
+	end
+	if EC.DBChar then
+		EC.DBChar.PendingRecipeMaterialCount = unresolvedCount
+	end
+
+	return changed, unresolvedCount
+end
+
+local function ExtractReagentDisplayName(reagentName, reagentLink, itemId)
+	local displayName = NormalizeTextValue(reagentName)
+
+	if displayName ~= "" then
+		return displayName
+	end
+
+	displayName = ExtractLinkedItemName(reagentLink)
+	if displayName then
+		return displayName
+	end
+
+	displayName = select(1, GetItemNameAndLinkFromCache(itemId or reagentLink))
+	return displayName or nil
 end
 
 local function CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
@@ -310,13 +630,18 @@ local function CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
 	for reagentIndex = 1, getNumReagents(recipeIndex) or 0 do
 		local reagentName, _, thirdValue, fourthValue, fifthValue = getReagentInfo(recipeIndex, reagentIndex)
 		local reagentLink = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil
-		local displayName = ExtractReagentDisplayName(reagentName, reagentLink)
-		if (displayName and displayName ~= "") or (type(reagentLink) == "string" and reagentLink ~= "") then
-			materials[#materials + 1] = {
-				Name = displayName,
-				Count = ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthValue),
-				Link = reagentLink,
-			}
+		local itemId = ExtractReagentItemId(reagentLink, thirdValue, fourthValue, fifthValue)
+		local displayName = ExtractReagentDisplayName(reagentName, reagentLink, itemId)
+		local material = {
+			Name = displayName,
+			Count = ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthValue),
+			Link = reagentLink,
+			ItemId = itemId,
+		}
+
+		ResolveStoredRecipeMaterial(material)
+		if material.ItemId or material.Name or material.Link then
+			materials[#materials + 1] = material
 		end
 	end
 
@@ -326,14 +651,27 @@ end
 local function CaptureRecipeMaterials(recipeIndex, apiKind)
 	local selectedMaterials = CaptureRecipeMaterialsForIndex(GetSelectedRecipeIndex(apiKind), apiKind)
 	local indexedMaterials = CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
+	local selectedUnresolvedCount = CountUnresolvedMaterials(selectedMaterials)
+	local indexedUnresolvedCount = CountUnresolvedMaterials(indexedMaterials)
 
 	if #indexedMaterials > #selectedMaterials then
+		return indexedMaterials
+	end
+	if #indexedMaterials == #selectedMaterials and indexedUnresolvedCount < selectedUnresolvedCount then
 		return indexedMaterials
 	end
 	if #selectedMaterials > 0 then
 		return selectedMaterials
 	end
 	return indexedMaterials
+end
+
+EC.ResolveStoredRecipeMaterial = ResolveStoredRecipeMaterial
+EC.GetStoredRecipeMaterialKey = GetStoredRecipeMaterialKey
+EC.GetStoredRecipeMaterialName = GetStoredRecipeMaterialName
+EC.GetStoredRecipeMaterialDisplayText = GetStoredRecipeMaterialDisplayText
+EC.GetPendingRecipeMaterialCount = function()
+	return math.max(0, math.floor(tonumber(EC.DBChar and EC.DBChar.PendingRecipeMaterialCount or 0) or 0))
 end
 
 local function SnapshotTradeSkillFilters()
@@ -1670,6 +2008,7 @@ local function EnsureSavedVariables()
 	if not EC.DBChar.RecipeList then EC.DBChar.RecipeList = {} end
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
 	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
+	if EC.DBChar.PendingRecipeMaterialCount == nil then EC.DBChar.PendingRecipeMaterialCount = 0 end
 	if EC.DBChar.Stop == nil then EC.DBChar.Stop = false end
 	if EC.DBChar.AutoPausedForMaxGroupedCustomers == nil then EC.DBChar.AutoPausedForMaxGroupedCustomers = false end
 	if EC.DBChar.Debug == nil then EC.DBChar.Debug = false end
@@ -1691,6 +2030,7 @@ local function EnsureSavedVariables()
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
 	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
+	RefreshStoredRecipeMaterials()
 	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
 end
 
@@ -1867,6 +2207,7 @@ function EC.GetItems()
 	local orderedKinds = {}
 	local seenKinds = {}
 	local bestRecipeCount = -1
+	local bestUnresolvedMaterialCount = math.huge
 	local bestRecipeList = {}
 	local bestRecipeLinks = {}
 	local bestRecipeMats = {}
@@ -1889,10 +2230,12 @@ function EC.GetItems()
 
 	for _, apiKind in ipairs(orderedKinds) do
 		local ok, recipeList, recipeLinks, recipeMats, recipeCount = CaptureRecipesForApi(apiKind)
+		local unresolvedMaterialCount = CountUnresolvedRecipeMaterials(recipeMats)
 		if ok then
 			triedAnyApi = true
-			if recipeCount > bestRecipeCount then
+			if recipeCount > bestRecipeCount or (recipeCount == bestRecipeCount and unresolvedMaterialCount < bestUnresolvedMaterialCount) then
 				bestRecipeCount = recipeCount
+				bestUnresolvedMaterialCount = unresolvedMaterialCount
 				bestRecipeList = recipeList
 				bestRecipeLinks = recipeLinks
 				bestRecipeMats = recipeMats
@@ -1911,6 +2254,7 @@ function EC.GetItems()
 	EC.DBChar.RecipeList = bestRecipeList
 	EC.DBChar.RecipeLinks = bestRecipeLinks
 	EC.DBChar.RecipeMats = bestRecipeMats
+	RefreshStoredRecipeMaterials()
 
 	EC.UpdateTags()
 	EC.RefreshCompiledData()
@@ -2161,6 +2505,13 @@ end
 local function DoScan()
 	if EC.GetItems() then
 		print("Scan Completed")
+		if EC.GetPendingRecipeMaterialCount() > 0 then
+			print(string.format(
+				"|cFFFFD26AEnchanter|r %d reagent name%s still loading from the item cache; the queue will refresh automatically once they resolve.",
+				EC.GetPendingRecipeMaterialCount(),
+				EC.GetPendingRecipeMaterialCount() == 1 and "" or "s"
+			))
+		end
 		return true
 	end
 	print("|cFFFF1C1CEnchanter|r Scan found no supported enchanting recipes. Clear profession filters or search text, then try again.")
@@ -2413,6 +2764,26 @@ local function Event_UI_CONTEXT_REFRESH()
 	end
 end
 
+local function Event_ITEM_DATA_RECEIVED(itemId, success)
+	itemId = tonumber(itemId)
+	if itemId and itemId > 0 then
+		itemId = math.floor(itemId)
+	end
+
+	if not itemId then
+		return
+	end
+
+	if not success and EC.PendingMaterialItemLoads then
+		EC.PendingMaterialItemLoads[itemId] = nil
+		return
+	end
+
+	if RefreshStoredRecipeMaterials(itemId) and EC.Workbench and EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
+end
+
 local function Event_CHAT_MSG_CHANNEL(msg, name)
 	if not EC.Initalized then
 		return
@@ -2483,6 +2854,8 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("PLAYER_FLAGS_CHANGED", Event_PLAYER_FLAGS_CHANGED)
 	EC.Tool.RegisterEvent("AUCTION_HOUSE_SHOW", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("AUCTION_HOUSE_CLOSED", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("GET_ITEM_INFO_RECEIVED", Event_ITEM_DATA_RECEIVED)
+	EC.Tool.RegisterEvent("ITEM_DATA_LOAD_RESULT", Event_ITEM_DATA_RECEIVED)
 	EC.Tool.RegisterEvent("TRADE_SKILL_SHOW", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("TRADE_SKILL_CLOSE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_SHOW", Event_UI_CONTEXT_REFRESH)
