@@ -1393,7 +1393,7 @@ local function EnsureCraftSearchApiHooks()
 		if not index or type(originalDoCraft) ~= "function" then
 			return
 		end
-		originalDoCraft(index)
+		CallWithCraftSearchBypass(originalDoCraft, index)
 	end
 
 	GetCraftNumReagents = function(index)

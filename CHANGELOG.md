@@ -1,3 +1,8 @@
+## [2.1.45] - 2026-04-11
+
+### Fixed
+- Kept the legacy enchanting `CraftFrame` Enchant button working while the pane is filtered by Enchanter's custom search box, so matching search results still start the glowing-hand enchant flow correctly
+
 ## [2.1.44] - 2026-04-11
 
 ### Fixed
