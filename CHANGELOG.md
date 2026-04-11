@@ -1,3 +1,8 @@
+## [2.1.43] - 2026-04-11
+
+### Fixed
+- Restored a working search box to the enchanting profession pane by adding an Enchanter fallback search field that stays synced with Blizzard's trade-skill name filter and scan filter restore flow
+
 ## [2.1.42] - 2026-04-11
 
 ### Added
