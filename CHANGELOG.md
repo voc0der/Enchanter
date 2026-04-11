@@ -1,3 +1,8 @@
+## [2.1.40] - 2026-04-11
+
+### Fixed
+- Kept scanned enchants with no built-in shorthand table as exact-name-only matches, so linked recipes and full names like `Enchant Cloak - Lesser Agility` now whisper correctly without broadening aliases such as `agility to back`
+
 ## [2.1.39] - 2026-04-11
 
 ### Fixed

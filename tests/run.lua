@@ -1526,6 +1526,32 @@ local function test_scan_filters_unknown_and_nether_recipes()
     assert_nil(EnchanterDBChar.RecipeList["Completely Unknown Recipe"], "unknown recipes should not be added")
 end
 
+local function test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
+    local addon, state = setup_env({
+        trade_skills = {
+            { name = "Enchant Cloak - Lesser Agility" },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local scannedTags = EnchanterDBChar.RecipeList["Enchant Cloak - Lesser Agility"]
+
+    assert_true(ok, "scan should keep unsupported enchant formulas when their exact official names are available")
+    assert_not_nil(scannedTags, "unsupported enchant formulas should still be stored after scanning")
+    assert_equal(#scannedTags, 1, "unsupported enchant formulas should keep a single exact-name fallback tag")
+    assert_equal(scannedTags[1], "enchant cloak - lesser agility", "unsupported enchant formulas should only match their official names")
+
+    addon.ParseMessage("LF Enchant Cloak - Lesser Agility pst", "Buyer-ExactName")
+    assert_equal(#state.whispers, 1, "exact recipe names should match unsupported scanned enchants")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Cloak %- Lesser Agility%]") ~= nil, "exact-name matches should still whisper the scanned enchant")
+
+    addon.ParseMessage("LF [Enchanting: Enchant Cloak - Lesser Agility] pst", "Buyer-LinkedName")
+    assert_equal(#state.whispers, 2, "linked recipe names should match unsupported scanned enchants")
+
+    addon.ParseMessage("LF agility to back pst", "Buyer-Shorthand")
+    assert_equal(#state.whispers, 2, "unsupported scanned enchants should not gain new shorthand aliases")
+end
+
 local function test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
     local addon = setup_env({
         crafts = {
@@ -4321,6 +4347,7 @@ local function test_slash_commands_expose_simulate_entry()
 end
 
 test_scan_filters_unknown_and_nether_recipes()
+test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
 test_valid_request_matching_scenarios()
