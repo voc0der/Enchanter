@@ -122,6 +122,7 @@ local function setup_env(opts)
         previous_target_name = opts.previous_target_name or nil,
         raid_targets = copy_table(opts.raid_targets or {}),
         selected_craft = tonumber(opts.selected_craft) or nil,
+        spell_is_targeting = opts.spell_is_targeting and true or false,
         set_raid_target_calls = {},
         selected_trade_skill = nil,
         trade_skill_frame_selection = nil,
@@ -400,6 +401,12 @@ local function setup_env(opts)
         }
         return false
     end
+    _G.SpellIsTargeting = function()
+        return state.spell_is_targeting and true or false
+    end
+    _G.CursorHasSpell = function()
+        return state.spell_is_targeting and true or false
+    end
     _G.SOUNDKIT = {
         IG_MAINMENU_OPTION_CHECKBOX_ON = 856,
         U_CHAT_SCROLL_BUTTON = 1115,
@@ -433,6 +440,13 @@ local function setup_env(opts)
     _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
     }, opts.craft_frame_shown)
+    _G.CraftFrame_Update = function()
+        state.craft_frame_update_calls = (state.craft_frame_update_calls or 0) + 1
+        if opts.simulate_craft_frame_update_cancels_targeting and state.spell_is_targeting then
+            state.spell_targeting_canceled_by_refresh = true
+            state.spell_is_targeting = false
+        end
+    end
     _G.CraftFrameAvailableFilterCheckButton = {
         checked = state.craft_available_only and true or false,
     }
@@ -547,6 +561,10 @@ local function setup_env(opts)
             end
         end
 
+        if opts.simulate_enchant_starts_targeting then
+            state.spell_is_targeting = true
+        end
+
         state.do_craft_calls[#state.do_craft_calls + 1] = {
             index = index,
             selected = state.selected_craft,
@@ -554,6 +572,10 @@ local function setup_env(opts)
         state.last_do_craft = {
             index = index,
         }
+
+        if opts.simulate_craft_update_after_do_craft and state.event_handlers["CRAFT_UPDATE"] then
+            state.event_handlers["CRAFT_UPDATE"]()
+        end
     end
     _G.GetCraftNumReagents = function(index)
         local craft = get_visible_crafts()[index]
@@ -3500,6 +3522,40 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
     assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
 end
 
+local function test_enchanting_craft_search_does_not_cancel_targeting_after_enchant_click()
+    local addon, state = setup_env({
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
+        simulate_blizzard_craft_frame_selection = true,
+        simulate_enchant_starts_targeting = true,
+        simulate_craft_update_after_do_craft = true,
+        simulate_craft_frame_update_cancels_targeting = true,
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+            },
+            {
+                name = "Enchant Weapon - Crusader",
+                link = "craft:20034",
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["CRAFT_SHOW"]()
+    addon.SetCraftSearchText("weapon")
+    addon.EnchantingCraftSearchBox:SetText("weapon")
+    addon.EnchantingCraftSearchBox.scripts["OnEditFocusGained"](addon.EnchantingCraftSearchBox)
+
+    CraftFrame_SetSelection(1)
+    DoCraft(GetCraftSelectionIndex())
+
+    assert_true(addon.EnchantingCraftSearchBox.cleared_focus, "enchant click should clear the custom search box focus first")
+    assert_true(not state.spell_targeting_canceled_by_refresh, "post-click craft refresh should not cancel the pending enchant targeting cursor")
+    assert_true(state.spell_is_targeting, "filtered enchanting results should still leave the targeting cursor active after clicking Enchant")
+end
+
 local function test_scan_clears_craft_filters_and_restores_search_afterward()
     local addon = setup_env({
         craft_frame_shown = true,
@@ -4908,6 +4964,7 @@ test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_enchanting_craft_pane_gets_a_working_search_box()
 test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
 test_enchanting_craft_search_keeps_the_enchant_button_working()
+test_enchanting_craft_search_does_not_cancel_targeting_after_enchant_click()
 test_scan_clears_craft_filters_and_restores_search_afterward()
 test_non_enchanting_craft_pane_skips_the_search_box()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
