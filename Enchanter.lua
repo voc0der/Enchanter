@@ -34,7 +34,20 @@ local simulationFallbackCounter = 0
 local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
 local ENCHANTING_SPELL_ID = 7411
 local RECIPE_FORMULA_PREFIX = "Formula: "
-local enchantingTradeSkillSearchBox
+local enchantingCraftSearchBox
+local craftSearchText = ""
+local craftSearchHooksInstalled = false
+local craftSearchBypassDepth = 0
+local originalGetNumCrafts
+local originalGetCraftInfo
+local originalGetCraftRecipeLink
+local originalGetCraftSelectionIndex
+local originalSelectCraft
+local originalCraftFrame_SetSelection
+local originalDoCraft
+local originalGetCraftNumReagents
+local originalGetCraftReagentInfo
+local originalGetCraftReagentItemLink
 local simulationNamePrefixes = {
 	"SimAldren",
 	"SimBrenna",
@@ -675,89 +688,9 @@ EC.GetPendingRecipeMaterialCount = function()
 	return math.max(0, math.floor(tonumber(EC.DBChar and EC.DBChar.PendingRecipeMaterialCount or 0) or 0))
 end
 
-local function NormalizeTradeSkillSearchText(value)
-	if value == nil then
-		return ""
-	end
-
-	value = tostring(value)
-	if value == SEARCH then
-		return ""
-	end
-
-	return value
-end
-
-local function GetVisibleEnchantingTradeSkillSearchBox()
-	if not enchantingTradeSkillSearchBox then
-		return nil
-	end
-
-	if enchantingTradeSkillSearchBox.IsShown then
-		local ok, shown = pcall(enchantingTradeSkillSearchBox.IsShown, enchantingTradeSkillSearchBox)
-		if ok and shown then
-			return enchantingTradeSkillSearchBox
-		end
-		return nil
-	end
-
-	return enchantingTradeSkillSearchBox.shown ~= false and enchantingTradeSkillSearchBox or nil
-end
-
-local function GetTradeSkillSearchText()
-	local searchBox = GetVisibleEnchantingTradeSkillSearchBox()
-
-	if not searchBox and TradeSearchInputBox and TradeSearchInputBox.GetText then
-		searchBox = TradeSearchInputBox
-	end
-
-	if not searchBox and enchantingTradeSkillSearchBox and enchantingTradeSkillSearchBox.GetText then
-		searchBox = enchantingTradeSkillSearchBox
-	end
-
-	if searchBox and searchBox.GetText then
-		return NormalizeTradeSkillSearchText(searchBox:GetText())
-	end
-
-	return ""
-end
-
-local function SetTradeSkillSearchControlText(searchBox, value)
-	if not searchBox or not searchBox.SetText then
-		return
-	end
-
-	value = NormalizeTradeSkillSearchText(value)
-	if searchBox.GetText and NormalizeTradeSkillSearchText(searchBox:GetText()) == value then
-		return
-	end
-
-	searchBox._ECUpdatingSearchText = true
-	searchBox:SetText(value)
-	searchBox._ECUpdatingSearchText = nil
-end
-
-local function SyncTradeSkillSearchControlText(value)
-	value = NormalizeTradeSkillSearchText(value)
-	SetTradeSkillSearchControlText(TradeSearchInputBox, value)
-	SetTradeSkillSearchControlText(enchantingTradeSkillSearchBox, value)
-end
-
-local function ApplyTradeSkillSearchFilter()
-	local filterInput = TradeSearchInputBox or enchantingTradeSkillSearchBox
-
-	if TradeSkillFilter_OnTextChanged and filterInput then
-		TradeSkillFilter_OnTextChanged(filterInput)
-		return
-	end
-
-	if SetTradeSkillItemLevelFilter then
-		SetTradeSkillItemLevelFilter(0, 0)
-	end
-	if SetTradeSkillItemNameFilter then
-		SetTradeSkillItemNameFilter(GetTradeSkillSearchText())
-	end
-end
+local GetCraftSearchText
+local SetCraftSearchText
+local RefreshCraftSearchUI
 
 local function SnapshotTradeSkillFilters()
 	local snapshot = {
@@ -785,7 +718,9 @@ local function SnapshotTradeSkillFilters()
 		end
 	end
 
-	snapshot.searchText = GetTradeSkillSearchText()
+	if TradeSearchInputBox and TradeSearchInputBox.GetText then
+		snapshot.searchText = TradeSearchInputBox:GetText()
+	end
 
 	return snapshot
 end
@@ -826,8 +761,12 @@ local function RestoreTradeSkillFilters(snapshot)
 		SetTradeSkillInvSlotFilter(GetSelectedTradeSkillFilterIndex(snapshot.invSlot), 1, 1)
 	end
 
-	SyncTradeSkillSearchControlText(snapshot.searchText or "")
-	ApplyTradeSkillSearchFilter()
+	if TradeSearchInputBox and TradeSearchInputBox.SetText then
+		TradeSearchInputBox:SetText(snapshot.searchText or "")
+	end
+	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
+	end
 end
 
 local function ClearTradeSkillFiltersForScan()
@@ -848,14 +787,25 @@ local function ClearTradeSkillFiltersForScan()
 		SetTradeSkillInvSlotFilter(0, 1, 1)
 	end
 
-	SyncTradeSkillSearchControlText("")
-	ApplyTradeSkillSearchFilter()
+	if TradeSearchInputBox and TradeSearchInputBox.SetText then
+		TradeSearchInputBox:SetText("")
+	end
+	if SetTradeSkillItemLevelFilter then
+		SetTradeSkillItemLevelFilter(0, 0)
+	end
+	if SetTradeSkillItemNameFilter then
+		SetTradeSkillItemNameFilter("")
+	end
+	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
+	end
 end
 
 local function SnapshotCraftFilters()
 	local snapshot = {
 		available = nil,
 		slot = 0,
+		searchText = "",
 	}
 	local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
 
@@ -870,6 +820,10 @@ local function SnapshotCraftFilters()
 				break
 			end
 		end
+	end
+
+	if GetCraftSearchText then
+		snapshot.searchText = GetCraftSearchText()
 	end
 
 	return snapshot
@@ -890,6 +844,10 @@ local function RestoreCraftFilters(snapshot)
 	if snapshot.slot ~= nil and SetCraftFilter then
 		SetCraftFilter(snapshot.slot)
 	end
+
+	if SetCraftSearchText then
+		SetCraftSearchText(snapshot.searchText or "")
+	end
 end
 
 local function ClearCraftFiltersForScan()
@@ -901,6 +859,9 @@ local function ClearCraftFiltersForScan()
 	end
 	if SetCraftFilter then
 		SetCraftFilter(0)
+	end
+	if SetCraftSearchText then
+		SetCraftSearchText("")
 	end
 end
 
@@ -1155,103 +1116,498 @@ local function SkillLineMatchesEnchanting(skillLineName)
 	return normalizedSkillLineName ~= "" and normalizedSkillLineName == normalizedEnchantingName
 end
 
-local function IsEnchantingTradeSkillFrameVisible()
-	if not IsFrameShown(TradeSkillFrame) then
+local function NormalizeCraftSearchText(value)
+	value = TrimText(value)
+	if type(SEARCH) == "string" and value == SEARCH then
+		return ""
+	end
+	return value
+end
+
+local function IsEnchantingCraftFrameVisible()
+	if not IsFrameShown(CraftFrame) then
 		return false
 	end
 
-	if type(GetTradeSkillLine) ~= "function" then
+	if type(GetCraftDisplaySkillLine) ~= "function" then
 		return true
 	end
 
-	return SkillLineMatchesEnchanting(GetTradeSkillLine())
+	return SkillLineMatchesEnchanting(GetCraftDisplaySkillLine())
 end
 
-local function EnsureEnchantingTradeSkillSearchBox()
+local function EnsureCraftSearchApiHooks()
+	if craftSearchHooksInstalled then
+		return true
+	end
+
+	if type(GetNumCrafts) ~= "function"
+		or type(GetCraftInfo) ~= "function"
+		or type(GetCraftRecipeLink) ~= "function"
+		or type(GetCraftNumReagents) ~= "function"
+		or type(GetCraftReagentInfo) ~= "function"
+	then
+		return false
+	end
+
+	originalGetNumCrafts = GetNumCrafts
+	originalGetCraftInfo = GetCraftInfo
+	originalGetCraftRecipeLink = GetCraftRecipeLink
+	originalGetCraftSelectionIndex = GetCraftSelectionIndex
+	originalSelectCraft = SelectCraft
+	originalCraftFrame_SetSelection = CraftFrame_SetSelection
+	originalDoCraft = DoCraft
+	originalGetCraftNumReagents = GetCraftNumReagents
+	originalGetCraftReagentInfo = GetCraftReagentInfo
+	originalGetCraftReagentItemLink = GetCraftReagentItemLink
+
+	local unpackTable = unpack or table.unpack
+
+	local function IsCraftSearchBypassActive()
+		return craftSearchBypassDepth > 0
+	end
+
+	local function CallWithCraftSearchBypass(callback, ...)
+		local results
+		local ok
+
+		if type(callback) ~= "function" then
+			return false
+		end
+
+		craftSearchBypassDepth = craftSearchBypassDepth + 1
+		results = { pcall(callback, ...) }
+		craftSearchBypassDepth = craftSearchBypassDepth - 1
+		ok = table.remove(results, 1)
+		if ok then
+			return true, unpackTable(results)
+		end
+		return false, results[1]
+	end
+
+	local function ShouldApplyCraftSearchFilter()
+		return NormalizeCraftSearchText(craftSearchText) ~= "" and IsEnchantingCraftFrameVisible()
+	end
+
+	local function BuildFilteredCraftIndexMap()
+		local filteredIndices = {}
+		local addedHeaders = {}
+		local pendingHeaderIndex
+		local searchText = NormalizeCraftSearchText(craftSearchText):lower()
+		local visibleCount
+
+		if searchText == "" then
+			return filteredIndices
+		end
+
+		visibleCount = math.max(0, math.floor(tonumber(originalGetNumCrafts()) or 0))
+		for visibleIndex = 1, visibleCount do
+			local craftName, craftSubSpellName, craftType = originalGetCraftInfo(visibleIndex)
+			local normalizedName = type(craftName) == "string" and craftName:lower() or ""
+			local normalizedSubSpell = type(craftSubSpellName) == "string" and craftSubSpellName:lower() or ""
+			local matchesSearch = string.find(normalizedName, searchText, 1, true) ~= nil
+				or string.find(normalizedSubSpell, searchText, 1, true) ~= nil
+
+			if craftType == "header" or craftType == "subheader" then
+				pendingHeaderIndex = visibleIndex
+				if matchesSearch and not addedHeaders[visibleIndex] then
+					filteredIndices[#filteredIndices + 1] = visibleIndex
+					addedHeaders[visibleIndex] = true
+				end
+			elseif matchesSearch then
+				if pendingHeaderIndex and not addedHeaders[pendingHeaderIndex] then
+					filteredIndices[#filteredIndices + 1] = pendingHeaderIndex
+					addedHeaders[pendingHeaderIndex] = true
+				end
+				filteredIndices[#filteredIndices + 1] = visibleIndex
+			end
+		end
+
+		return filteredIndices
+	end
+
+	local function ResolveFilteredCraftIndex(index)
+		local filteredIndices
+
+		index = math.floor(tonumber(index) or 0)
+		if index < 1 then
+			return nil
+		end
+		if not ShouldApplyCraftSearchFilter() then
+			return index
+		end
+
+		filteredIndices = BuildFilteredCraftIndexMap()
+		return filteredIndices[index]
+	end
+
+	local function ResolveOriginalCraftSelectionIndex()
+		local selectedIndex
+
+		if type(originalGetCraftSelectionIndex) == "function" then
+			selectedIndex = math.floor(tonumber(originalGetCraftSelectionIndex()) or 0)
+			if selectedIndex > 0 then
+				return selectedIndex
+			end
+		end
+
+		if CraftFrame and CraftFrame.selectedCraft then
+			selectedIndex = math.floor(tonumber(CraftFrame.selectedCraft) or 0)
+			if selectedIndex > 0 then
+				return selectedIndex
+			end
+		end
+
+		return 0
+	end
+
+	local function ResolveDisplayedCraftSelectionIndex()
+		local filteredIndices
+		local selectedOriginalIndex
+
+		if not ShouldApplyCraftSearchFilter() then
+			return ResolveOriginalCraftSelectionIndex()
+		end
+
+		filteredIndices = BuildFilteredCraftIndexMap()
+		selectedOriginalIndex = ResolveOriginalCraftSelectionIndex()
+		for filteredIndex, originalIndex in ipairs(filteredIndices) do
+			if originalIndex == selectedOriginalIndex then
+				return filteredIndex
+			end
+		end
+
+		return 0
+	end
+
+	local function SelectOriginalCraftIndex(index)
+		index = math.floor(tonumber(index) or 0)
+		if index < 1 then
+			return false
+		end
+
+		if type(originalCraftFrame_SetSelection) == "function" then
+			local ok = CallWithCraftSearchBypass(originalCraftFrame_SetSelection, index)
+			if ok then
+				if CraftFrame then
+					CraftFrame.selectedCraft = index
+				end
+				return true
+			end
+		end
+
+		if type(originalSelectCraft) == "function" then
+			local ok = CallWithCraftSearchBypass(originalSelectCraft, index)
+			if ok then
+				if CraftFrame then
+					CraftFrame.selectedCraft = index
+				end
+				return true
+			end
+		end
+
+		return false
+	end
+
+	GetNumCrafts = function()
+		if IsCraftSearchBypassActive() then
+			return originalGetNumCrafts()
+		end
+		if ShouldApplyCraftSearchFilter() then
+			return #BuildFilteredCraftIndexMap()
+		end
+		return originalGetNumCrafts()
+	end
+
+	GetCraftInfo = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftInfo(index)
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return nil
+		end
+		return originalGetCraftInfo(index)
+	end
+
+	GetCraftRecipeLink = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftRecipeLink(index)
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return nil
+		end
+		return originalGetCraftRecipeLink(index)
+	end
+
+	GetCraftSelectionIndex = function()
+		if IsCraftSearchBypassActive() then
+			if type(originalGetCraftSelectionIndex) == "function" then
+				return originalGetCraftSelectionIndex()
+			end
+			return ResolveOriginalCraftSelectionIndex()
+		end
+		return ResolveDisplayedCraftSelectionIndex()
+	end
+
+	SelectCraft = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalSelectCraft) == "function" then
+				return originalSelectCraft(index)
+			end
+			return
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return
+		end
+		SelectOriginalCraftIndex(index)
+	end
+
+	CraftFrame_SetSelection = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalCraftFrame_SetSelection) == "function" then
+				return originalCraftFrame_SetSelection(index)
+			end
+			if type(originalSelectCraft) == "function" then
+				return originalSelectCraft(index)
+			end
+			return
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return
+		end
+		SelectOriginalCraftIndex(index)
+	end
+
+	DoCraft = function(index)
+		if IsCraftSearchBypassActive() then
+			if type(originalDoCraft) == "function" then
+				return originalDoCraft(index)
+			end
+			return
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index or type(originalDoCraft) ~= "function" then
+			return
+		end
+		originalDoCraft(index)
+	end
+
+	GetCraftNumReagents = function(index)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftNumReagents(index)
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return 0
+		end
+		return originalGetCraftNumReagents(index)
+	end
+
+	GetCraftReagentInfo = function(index, reagentIndex)
+		if IsCraftSearchBypassActive() then
+			return originalGetCraftReagentInfo(index, reagentIndex)
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index then
+			return nil
+		end
+		return originalGetCraftReagentInfo(index, reagentIndex)
+	end
+
+	GetCraftReagentItemLink = function(index, reagentIndex)
+		if IsCraftSearchBypassActive() then
+			if type(originalGetCraftReagentItemLink) ~= "function" then
+				return nil
+			end
+			return originalGetCraftReagentItemLink(index, reagentIndex)
+		end
+		index = ResolveFilteredCraftIndex(index)
+		if not index or type(originalGetCraftReagentItemLink) ~= "function" then
+			return nil
+		end
+		return originalGetCraftReagentItemLink(index, reagentIndex)
+	end
+
+	craftSearchHooksInstalled = true
+	return true
+end
+
+local function EnsureCraftSearchSelection()
+	local craftName
+	local craftSubSpellName
+	local visibleCount
+	local selectedIndex
+	local craftType
+
+	if not craftSearchHooksInstalled or NormalizeCraftSearchText(craftSearchText) == "" or not IsEnchantingCraftFrameVisible() then
+		return
+	end
+
+	visibleCount = math.max(0, math.floor(tonumber(GetNumCrafts()) or 0))
+	selectedIndex = math.floor(tonumber(GetCraftSelectionIndex and GetCraftSelectionIndex() or 0) or 0)
+	if selectedIndex > 0 and selectedIndex <= visibleCount then
+		return
+	end
+
+	if visibleCount > 0 and type(SelectCraft) == "function" then
+		for visibleIndex = 1, visibleCount do
+			craftName, craftSubSpellName, craftType = GetCraftInfo(visibleIndex)
+			if craftType ~= "header" and craftType ~= "subheader" then
+				SelectCraft(visibleIndex)
+				return
+			end
+		end
+	end
+end
+
+local function SetCraftSearchBoxDisplayText(searchBox, value)
+	if not searchBox or not searchBox.SetText then
+		return
+	end
+
+	searchBox._ECUpdatingSearchText = true
+	searchBox:SetText(value)
+	searchBox._ECUpdatingSearchText = nil
+end
+
+local function SyncCraftSearchBoxDisplayText()
+	local displayText
+
+	if not enchantingCraftSearchBox then
+		return
+	end
+
+	displayText = NormalizeCraftSearchText(craftSearchText)
+	if displayText == "" and not enchantingCraftSearchBox._ECHasFocus then
+		displayText = type(SEARCH) == "string" and SEARCH or "Search"
+	end
+
+	SetCraftSearchBoxDisplayText(enchantingCraftSearchBox, displayText)
+end
+
+local function RefreshCraftSearchResults()
+	if not EnsureCraftSearchApiHooks() then
+		return
+	end
+
+	EnsureCraftSearchSelection()
+	if type(CraftFrame_Update) == "function" and IsFrameShown(CraftFrame) then
+		CraftFrame_Update()
+	end
+end
+
+GetCraftSearchText = function()
+	return NormalizeCraftSearchText(craftSearchText)
+end
+
+SetCraftSearchText = function(value)
+	craftSearchText = NormalizeCraftSearchText(value)
+	EnsureCraftSearchApiHooks()
+	SyncCraftSearchBoxDisplayText()
+	RefreshCraftSearchResults()
+end
+
+local function EnsureEnchantingCraftSearchBox()
 	local created
 	local ok
 
-	if enchantingTradeSkillSearchBox or not CreateFrame or not TradeSkillFrame then
-		return enchantingTradeSkillSearchBox
+	if enchantingCraftSearchBox or not CreateFrame or not CraftFrame then
+		return enchantingCraftSearchBox
 	end
 
-	ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingTradeSkillSearchBox", TradeSkillFrame, "InputBoxInstructionsTemplate")
+	ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingCraftSearchBox", CraftFrame, "InputBoxTemplate")
 	if not ok or not created then
-		ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingTradeSkillSearchBox", TradeSkillFrame)
+		ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingCraftSearchBox", CraftFrame)
 		if not ok or not created then
 			return nil
 		end
 	end
 
 	created:SetAutoFocus(false)
+	created:SetWidth(150)
 	created:SetHeight(20)
 	if created.SetTextInsets then
 		created:SetTextInsets(6, 6, 0, 0)
-	end
-	if created.Instructions then
-		if created.Instructions.SetText then
-			created.Instructions:SetText(SEARCH or "Search")
-		end
-		if created.Instructions.SetFontObject then
-			created.Instructions:SetFontObject("ChatFontNormal")
-		end
 	end
 	if created.SetFontObject then
 		created:SetFontObject("ChatFontNormal")
 	end
 
+	created:SetScript("OnShow", function(self)
+		self._ECHasFocus = nil
+		SyncCraftSearchBoxDisplayText()
+	end)
 	created:SetScript("OnEnterPressed", function(self)
 		self:ClearFocus()
 	end)
 	created:SetScript("OnEscapePressed", function(self)
 		self:ClearFocus()
 	end)
+	created:SetScript("OnEditFocusGained", function(self)
+		self._ECHasFocus = true
+		if NormalizeCraftSearchText(self:GetText()) == "" then
+			SetCraftSearchBoxDisplayText(self, "")
+		end
+		if self.HighlightText then
+			self:HighlightText()
+		end
+	end)
+	created:SetScript("OnEditFocusLost", function(self)
+		self._ECHasFocus = nil
+		SyncCraftSearchBoxDisplayText()
+	end)
 	created:SetScript("OnTextChanged", function(self)
 		if self._ECUpdatingSearchText then
 			return
 		end
-
-		SyncTradeSkillSearchControlText(self:GetText())
-		ApplyTradeSkillSearchFilter()
+		craftSearchText = NormalizeCraftSearchText(self:GetText())
+		RefreshCraftSearchResults()
 	end)
 	created:Hide()
 
-	enchantingTradeSkillSearchBox = created
-	EC.EnchantingTradeSkillSearchBox = created
-	return enchantingTradeSkillSearchBox
+	enchantingCraftSearchBox = created
+	EC.EnchantingCraftSearchBox = created
+	return enchantingCraftSearchBox
 end
 
-local function RefreshTradeSkillSearchUI()
-	local nativeSearchBoxVisible = TradeSearchInputBox
-		and TradeSearchInputBox.IsShown
-		and TradeSearchInputBox:IsShown()
-	local shouldShowCustomSearch = IsEnchantingTradeSkillFrameVisible() and not nativeSearchBoxVisible
-	local searchBox = shouldShowCustomSearch and EnsureEnchantingTradeSkillSearchBox() or enchantingTradeSkillSearchBox
+RefreshCraftSearchUI = function()
+	local searchBox
+	local shouldShow = IsEnchantingCraftFrameVisible()
 
+	if not shouldShow and not enchantingCraftSearchBox then
+		return
+	end
+
+	searchBox = shouldShow and EnsureEnchantingCraftSearchBox() or enchantingCraftSearchBox
 	if not searchBox then
 		return
 	end
 
-	if shouldShowCustomSearch then
-		SyncTradeSkillSearchControlText(GetTradeSkillSearchText())
+	if shouldShow then
+		EnsureCraftSearchApiHooks()
 		searchBox:ClearAllPoints()
-		if TradeSkillFrameAvailableFilterCheckButtonText and TradeSkillInvSlotDropdown then
-			searchBox:SetPoint("TOPLEFT", TradeSkillFrameAvailableFilterCheckButtonText, "TOPRIGHT", 18, -4)
-			searchBox:SetPoint("RIGHT", TradeSkillInvSlotDropdown, "LEFT", -10, 0)
-		elseif TradeSkillInvSlotDropdown then
-			searchBox:SetPoint("TOPRIGHT", TradeSkillInvSlotDropdown, "TOPLEFT", -10, 0)
-			searchBox:SetWidth(160)
+		if CraftFrame.Dropdown then
+			searchBox:SetPoint("TOPLEFT", CraftFrame, "TOPLEFT", 168, -66)
+			searchBox:SetPoint("RIGHT", CraftFrame.Dropdown, "LEFT", -10, 0)
 		else
-			searchBox:SetPoint("TOPLEFT", TradeSkillFrame, "TOPLEFT", 168, -66)
-			searchBox:SetWidth(160)
+			searchBox:SetPoint("TOPLEFT", CraftFrame, "TOPLEFT", 168, -66)
+			searchBox:SetWidth(150)
 		end
+		SyncCraftSearchBoxDisplayText()
 		searchBox:Show()
+		RefreshCraftSearchResults()
 	else
 		searchBox:Hide()
 	end
 end
 
-EC.RefreshTradeSkillSearchUI = RefreshTradeSkillSearchUI
+EC.GetCraftSearchText = GetCraftSearchText
+EC.SetCraftSearchText = SetCraftSearchText
+EC.RefreshCraftSearchUI = RefreshCraftSearchUI
 
 local function BuildAuctionSearchTermForRecipe(recipeName)
 	recipeName = TrimText(recipeName)
@@ -2846,8 +3202,8 @@ function EC.Init()
 
 	EC.OptionsInit()
 	EC.OptionsUpdate()
-	if EC.RefreshTradeSkillSearchUI then
-		EC.RefreshTradeSkillSearchUI()
+	if EC.RefreshCraftSearchUI then
+		EC.RefreshCraftSearchUI()
 	end
 	if EC.Workbench and EC.Workbench.SyncVisibility then
 		EC.Workbench.SyncVisibility()
@@ -3009,8 +3365,9 @@ local function Event_PLAYER_FLAGS_CHANGED(unitToken)
 end
 
 local function Event_UI_CONTEXT_REFRESH()
-	if EC.RefreshTradeSkillSearchUI then
-		EC.RefreshTradeSkillSearchUI()
+	if EC.RefreshCraftSearchUI then
+		EC.RefreshCraftSearchUI()
+		After(0, EC.RefreshCraftSearchUI)
 	end
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
@@ -3110,8 +3467,8 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("GET_ITEM_INFO_RECEIVED", Event_ITEM_DATA_RECEIVED)
 	EC.Tool.RegisterEvent("ITEM_DATA_LOAD_RESULT", Event_ITEM_DATA_RECEIVED)
 	EC.Tool.RegisterEvent("TRADE_SKILL_SHOW", Event_UI_CONTEXT_REFRESH)
-	EC.Tool.RegisterEvent("TRADE_SKILL_UPDATE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("TRADE_SKILL_CLOSE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_SHOW", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("CRAFT_UPDATE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_CLOSE", Event_UI_CONTEXT_REFRESH)
 end

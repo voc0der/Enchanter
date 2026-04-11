@@ -3431,28 +3431,33 @@ local function TryCastRecipe(recipeName)
 		return nil
 	end
 
-	local function SnapshotCraftFilters()
-		local snapshot = {
-			available = nil,
-			slot = 0,
-		}
-		local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
+		local function SnapshotCraftFilters()
+			local snapshot = {
+				available = nil,
+				slot = 0,
+				searchText = "",
+			}
+			local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
 
 		if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.GetChecked then
 			snapshot.available = CraftFrameAvailableFilterCheckButton:GetChecked() and true or false
 		end
 
-		if GetCraftFilter then
-			for index = 0, #craftSlots do
-				if GetCraftFilter(index) then
-					snapshot.slot = index
-					break
+			if GetCraftFilter then
+				for index = 0, #craftSlots do
+					if GetCraftFilter(index) then
+						snapshot.slot = index
+						break
+					end
 				end
 			end
-		end
 
-		return snapshot
-	end
+			if EC and EC.GetCraftSearchText then
+				snapshot.searchText = EC.GetCraftSearchText()
+			end
+
+			return snapshot
+		end
 
 	local function RestoreCraftFilters(snapshot)
 		if not snapshot then
@@ -3466,10 +3471,14 @@ local function TryCastRecipe(recipeName)
 			end
 		end
 
-		if snapshot.slot ~= nil and SetCraftFilter then
-			SetCraftFilter(snapshot.slot)
+			if snapshot.slot ~= nil and SetCraftFilter then
+				SetCraftFilter(snapshot.slot)
+			end
+
+			if EC and EC.SetCraftSearchText then
+				EC.SetCraftSearchText(snapshot.searchText or "")
+			end
 		end
-	end
 
 	if GetNumCrafts and GetCraftInfo and DoCraft then
 		local index = FindCraftIndexByName()
@@ -3482,12 +3491,15 @@ local function TryCastRecipe(recipeName)
 				if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.SetChecked then
 					CraftFrameAvailableFilterCheckButton:SetChecked(false)
 				end
+				end
+				if SetCraftFilter then
+					SetCraftFilter(0)
+				end
+				if EC and EC.SetCraftSearchText then
+					EC.SetCraftSearchText("")
+				end
+				index = FindCraftIndexByName()
 			end
-			if SetCraftFilter then
-				SetCraftFilter(0)
-			end
-			index = FindCraftIndexByName()
-		end
 
 		if index then
 			local usedCraftFrameSelection = false
