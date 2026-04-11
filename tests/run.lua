@@ -532,6 +532,21 @@ local function setup_env(opts)
         return tonumber(state.selected_craft) or 0
     end
     _G.DoCraft = function(index)
+        if opts.simulate_blizzard_do_craft_uses_live_api then
+            local selectedIndex = tonumber(GetCraftSelectionIndex()) or 0
+            local craftName = GetCraftInfo(index)
+
+            state.do_craft_live_attempt = {
+                index = index,
+                selected = selectedIndex,
+                craft_name = craftName,
+            }
+            if selectedIndex ~= index or not craftName then
+                state.do_craft_blocked = true
+                return false
+            end
+        end
+
         state.do_craft_calls[#state.do_craft_calls + 1] = {
             index = index,
             selected = state.selected_craft,
@@ -3456,6 +3471,35 @@ local function test_enchanting_craft_search_keeps_selection_on_original_recipe_d
     assert_true(not state.craft_frame_selection_out_of_range, "filtered craft selection should not trip Blizzard's out-of-range selection guard")
 end
 
+local function test_enchanting_craft_search_keeps_the_enchant_button_working()
+    local addon, state = setup_env({
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
+        simulate_blizzard_craft_frame_selection = true,
+        simulate_blizzard_do_craft_uses_live_api = true,
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+            },
+            {
+                name = "Enchant Weapon - Crusader",
+                link = "craft:20034",
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["CRAFT_SHOW"]()
+    addon.SetCraftSearchText("weapon")
+
+    CraftFrame_SetSelection(1)
+    DoCraft(GetCraftSelectionIndex())
+
+    assert_true(not state.do_craft_blocked, "filtered enchanting search should not make the Enchant button silently fail")
+    assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
+end
+
 local function test_scan_clears_craft_filters_and_restores_search_afterward()
     local addon = setup_env({
         craft_frame_shown = true,
@@ -4863,6 +4907,7 @@ test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unreso
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_enchanting_craft_pane_gets_a_working_search_box()
 test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
+test_enchanting_craft_search_keeps_the_enchant_button_working()
 test_scan_clears_craft_filters_and_restores_search_afterward()
 test_non_enchanting_craft_pane_skips_the_search_box()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
