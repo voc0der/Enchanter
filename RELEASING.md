@@ -27,7 +27,7 @@ Before automated release can work end-to-end, configure:
 
 1. Update version in `Enchanter.toc`
 2. Update `CHANGELOG.md` with release notes
-3. Update any matching version or behavior notes in `README.md`
+3. Update any matching version or behavior notes in `README.md`, and refresh `CONTRIBUTING.md` / `RELEASING.md` too if the workflow or release checklist changed
 4. Run:
    ```bash
    luac -p Enchanter.lua Workbench.lua LibGPIOptions.lua LibGPIToolBox.lua Options.lua Tags.lua tests/run.lua
@@ -44,8 +44,8 @@ Before automated release can work end-to-end, configure:
 ### Troubleshooting
 
 - No new tag created:
-  - Check `## Version:` in `Enchanter.toc` is bumped (for example `2.1.6`)
-  - If the tag already exists (for example `v2.1.6`), the workflow skips by design
+  - Check `## Version:` in `Enchanter.toc` is bumped (for example `2.1.42`)
+  - If the tag already exists (for example `v2.1.42`), the workflow skips by design
 - Tag created but no CurseForge upload:
   - Confirm `CF_API_KEY` exists in repo secrets
   - Confirm `## X-Curse-Project-ID:` is set to a valid numeric project ID
@@ -60,7 +60,7 @@ Before automated release can work end-to-end, configure:
    cd /home/vocoder/Code/Enchanter
    bash ./.github/scripts/stage-addon.sh ./dist/Enchanter
    cd dist
-   zip -r Enchanter-v2.1.6.zip Enchanter
+   zip -r Enchanter-v2.1.42.zip Enchanter
    ```
 2. Upload at your CurseForge project files page.
 

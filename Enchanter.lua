@@ -1299,6 +1299,50 @@ local function IsAlreadyGroupedMessage(message, customerName)
 	return false
 end
 
+local function MessageMatchesDeclinedGroupTemplate(message, customerName)
+	local templates = {
+		_G and _G.ERR_DECLINE_GROUP_S,
+	}
+	local normalizedCustomer = NormalizeNameKey(customerName)
+
+	for _, template in ipairs(templates) do
+		local pattern = BuildGlobalStringPattern(template)
+		if pattern then
+			local captures = { string.match(message, pattern) }
+			if #captures == 0 and message == template then
+				return true
+			end
+			for _, capture in ipairs(captures) do
+				if NormalizeNameKey(capture) == normalizedCustomer then
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function IsDeclinedGroupInviteMessage(message, customerName)
+	local normalizedMessage = NormalizePhrase(message)
+	if normalizedMessage == "" then
+		return false
+	end
+
+	if MessageMatchesDeclinedGroupTemplate(message, customerName) then
+		return true
+	end
+
+	if string.find(normalizedMessage, "declinesyourgroupinvitation", 1, true) then
+		local normalizedCustomer = NormalizePhrase(customerName)
+		if normalizedCustomer == "" or string.find(normalizedMessage, normalizedCustomer, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function PrunePendingInvites()
 	local cutoff = Now() - pendingInviteWindow
 	for key, pending in pairs(EC.PendingInvites) do
@@ -1306,6 +1350,31 @@ local function PrunePendingInvites()
 			EC.PendingInvites[key] = nil
 		end
 	end
+end
+
+local function FindPendingInviteByMatcher(message, matcher)
+	local matchedPending
+	local pendingCount = 0
+	local latestPending
+
+	for _, pending in pairs(EC.PendingInvites) do
+		if pending and pending.Name then
+			pendingCount = pendingCount + 1
+			if not latestPending or (pending.Timestamp or 0) > (latestPending.Timestamp or 0) then
+				latestPending = pending
+			end
+			if matcher(message, pending.Name) then
+				matchedPending = pending
+				break
+			end
+		end
+	end
+
+	if not matchedPending and pendingCount == 1 and latestPending and matcher(message, nil) then
+		matchedPending = latestPending
+	end
+
+	return matchedPending
 end
 
 function EC.GetMatchedRecipeNames(recipeMap)
@@ -1610,6 +1679,20 @@ local function GetBracketedRecipeMatchContext(parsedMessage, matchStart, matchEn
 	return TrimText(string.sub(parsedMessage, bracketStart + 1, bracketEnd - 1))
 end
 
+local function IsFormulaRecipeContext(parsedMessage, matchStart, matchEnd)
+	local bracketContext = GetBracketedRecipeMatchContext(parsedMessage, matchStart, matchEnd)
+	if bracketContext ~= "" and string.match(string.lower(bracketContext), "^formula:%s*") then
+		return true
+	end
+
+	local prefixContext = TrimText(string.sub(parsedMessage or "", 1, math.max(0, (tonumber(matchStart) or 1) - 1)))
+	if prefixContext ~= "" and string.find(string.lower(prefixContext), "formula:", 1, true) then
+		return true
+	end
+
+	return false
+end
+
 local function GetRecipeBlacklistContext(parsedMessage, matchStart, matchEnd)
 	local bracketContext = GetBracketedRecipeMatchContext(parsedMessage, matchStart, matchEnd)
 	if bracketContext ~= "" then
@@ -1789,7 +1872,8 @@ local function MatchRecipeTags(parsedMessage, tagBuckets)
 					if matchEnd <= messageLength and string.sub(parsedMessage, matchStart, matchEnd) == entry.Tag then
 						local recipeName = entry.RecipeName
 						local blacklistContext = GetRecipeBlacklistContext(parsedMessage, matchStart, matchEnd)
-						if not GetMatchedRecipeBlacklist(blacklistContext, recipeName) then
+						if not IsFormulaRecipeContext(parsedMessage, matchStart, matchEnd)
+							and not GetMatchedRecipeBlacklist(blacklistContext, recipeName) then
 							candidates[#candidates + 1] = {
 								RecipeName = recipeName,
 								Tag = entry.Tag,
@@ -1939,6 +2023,10 @@ function EC.InviteCustomer(name, sourceLabel)
 		return
 	end
 
+	if EC.Workbench and EC.Workbench.ClearOrderInviteDeclined then
+		EC.Workbench.ClearOrderInviteDeclined(name)
+	end
+
 	PrunePendingInvites()
 	EC.PendingInvites[NormalizeNameKey(name)] = {
 		Name = name,
@@ -1959,42 +2047,32 @@ function EC.HandleInviteFailureMessage(message)
 
 	PrunePendingInvites()
 
-	local matchedPending
-	local pendingCount = 0
-	local latestPending
-
-	for _, pending in pairs(EC.PendingInvites) do
-		if pending and pending.Name then
-			pendingCount = pendingCount + 1
-			if not latestPending or (pending.Timestamp or 0) > (latestPending.Timestamp or 0) then
-				latestPending = pending
-			end
-			if IsAlreadyGroupedMessage(message, pending.Name) then
-				matchedPending = pending
-				break
-			end
+	local matchedPending = FindPendingInviteByMatcher(message, IsAlreadyGroupedMessage)
+	if matchedPending then
+		EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
+		if EC.Workbench and EC.Workbench.MarkOrderAlreadyGrouped then
+			EC.Workbench.MarkOrderAlreadyGrouped(matchedPending.Name)
 		end
+		EC.DebugPrint("detected already-grouped invite failure for", matchedPending.Name)
+		if EC.DB and EC.DB.GroupedFollowUp then
+			After(EC.DB.GroupedFollowUpDelay, function()
+				EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
+			end)
+		end
+		return true
 	end
 
-	if not matchedPending and pendingCount == 1 and latestPending and IsAlreadyGroupedMessage(message, nil) then
-		matchedPending = latestPending
+	matchedPending = FindPendingInviteByMatcher(message, IsDeclinedGroupInviteMessage)
+	if matchedPending then
+		EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
+		if EC.Workbench and EC.Workbench.MarkOrderInviteDeclined then
+			EC.Workbench.MarkOrderInviteDeclined(matchedPending.Name)
+		end
+		EC.DebugPrint("detected declined invite for", matchedPending.Name)
+		return true
 	end
 
-	if not matchedPending then
-		return false
-	end
-
-	EC.PendingInvites[NormalizeNameKey(matchedPending.Name)] = nil
-	if EC.Workbench and EC.Workbench.MarkOrderAlreadyGrouped then
-		EC.Workbench.MarkOrderAlreadyGrouped(matchedPending.Name)
-	end
-	EC.DebugPrint("detected already-grouped invite failure for", matchedPending.Name)
-	if EC.DB and EC.DB.GroupedFollowUp then
-		After(EC.DB.GroupedFollowUpDelay, function()
-			EC.SendGroupedFollowUp(matchedPending.Name, "grouped follow-up")
-		end)
-	end
-	return true
+	return false
 end
 
 local function EnsureSavedVariables()
@@ -2025,6 +2103,8 @@ local function EnsureSavedVariables()
 	if EC.DB.GroupedFollowUpDelay == nil then EC.DB.GroupedFollowUpDelay = 1 end
 	if EC.DB.GroupedQueueExpireSeconds == nil then EC.DB.GroupedQueueExpireSeconds = 0 end
 	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
+	if EC.DB.DeclinedInviteRemovalSeconds == nil then EC.DB.DeclinedInviteRemovalSeconds = 0 end
+	EC.DB.DeclinedInviteRemovalSeconds = math.max(0, math.floor(tonumber(EC.DB.DeclinedInviteRemovalSeconds) or 0))
 	if EC.DB.MaxGroupedCustomers == nil then EC.DB.MaxGroupedCustomers = 0 end
 	EC.DB.MaxGroupedCustomers = GetMaxGroupedCustomers()
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end

@@ -430,6 +430,7 @@ function EC.Default()
 	EC.DB.WhisperTimeDelay = 0
 	EC.DB.GroupedFollowUpDelay = 1
 	EC.DB.GroupedQueueExpireSeconds = 0
+	EC.DB.DeclinedInviteRemovalSeconds = 0
 	EC.DB.MaxGroupedCustomers = 0
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
@@ -463,6 +464,10 @@ function EC.OptionsUpdate()
 		EC.DB.GroupedQueueExpireSeconds = 0
 	end
 	EC.DB.GroupedQueueExpireSeconds = math.max(0, math.floor(tonumber(EC.DB.GroupedQueueExpireSeconds) or 0))
+	if EC.DB.DeclinedInviteRemovalSeconds == nil then
+		EC.DB.DeclinedInviteRemovalSeconds = 0
+	end
+	EC.DB.DeclinedInviteRemovalSeconds = math.max(0, math.floor(tonumber(EC.DB.DeclinedInviteRemovalSeconds) or 0))
 	if EC.DB.MaxGroupedCustomers == nil then
 		EC.DB.MaxGroupedCustomers = 0
 	end
@@ -598,6 +603,7 @@ function EC.OptionsInit()
 	MakeSavedEditBox(EC.DB, "InviteTimeDelay", 0, "Invite Delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "GroupedFollowUpDelay", 1, "Grouped follow-up delay (seconds)", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "GroupedQueueExpireSeconds", 0, "Grouped queue expiry (0 disables)", 60, nil, true)
+	MakeSavedEditBox(EC.DB, "DeclinedInviteRemovalSeconds", 0, "Party declined removal timer", 60, nil, true)
 	MakeSavedEditBox(EC.DB, "MaxGroupedCustomers", 0, "Max customers in group (0 disables)", 60, nil, true)
 
 	EC.OptionsBuilder.AddHeaderToCurrentPanel("Search Patterns")

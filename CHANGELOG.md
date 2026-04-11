@@ -1,3 +1,11 @@
+## [2.1.42] - 2026-04-11
+
+### Added
+- Added a `Party declined removal timer` setting so queued customers who decline your group invite can be removed automatically after a chosen number of seconds; `0` keeps the timer disabled
+
+### Fixed
+- Stopped exact-name enchant matching from reacting to `Formula: ...` item links or plain formula sale posts, so formula buyers no longer get enchant service whispers or invites
+
 ## [2.1.41] - 2026-04-11
 
 ### Fixed
