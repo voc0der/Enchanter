@@ -1,3 +1,8 @@
+## [2.1.44] - 2026-04-11
+
+### Fixed
+- Restored a working search box to the legacy enchanting `CraftFrame`, with Enchanter-managed filtering that clears and restores correctly for `/ec scan` and legacy craft casts
+
 ## [2.1.43] - 2026-04-11
 
 ### Fixed

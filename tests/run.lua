@@ -3356,58 +3356,85 @@ local function test_scan_clears_trade_skill_filters_and_restores_them_afterward(
     assert_equal(TradeSearchInputBox:GetText(), "zzz", "trade-skill search text should be restored after scanning")
 end
 
-local function test_enchanting_trade_skill_pane_gets_a_working_search_box()
+local function test_enchanting_craft_pane_gets_a_working_search_box()
     local addon, state = setup_env({
-        trade_skill_frame_shown = true,
-        trade_skill_line_name = "Enchanting",
-        trade_skill_search_text = "boots",
-        trade_skills = {
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
+        crafts = {
             {
                 name = "Enchant Boots - Minor Speed",
-                link = "spell:13890",
+                link = "craft:13890",
             },
             {
                 name = "Enchant Weapon - Crusader",
-                link = "spell:20034",
+                link = "craft:20034",
             },
         },
     })
 
     addon.OnLoad()
-    state.event_handlers["TRADE_SKILL_SHOW"]()
+    state.event_handlers["CRAFT_SHOW"]()
 
-    local searchBox = addon.EnchantingTradeSkillSearchBox
-    local visibleName = GetTradeSkillInfo(1)
+    local searchBox = addon.EnchantingCraftSearchBox
+    local visibleName = GetCraftInfo(1)
 
-    assert_not_nil(searchBox, "enchanting should create a fallback search box when the pane does not expose one")
-    assert_true(searchBox.shown, "the fallback enchanting search box should be visible while the pane is open")
-    assert_equal(searchBox.parent, TradeSkillFrame, "the fallback search box should live on the enchanting trade-skill frame")
-    assert_equal(searchBox:GetText(), "boots", "the fallback search box should mirror the current trade-skill search text")
-    assert_equal(GetNumTradeSkills(), 1, "the existing trade-skill search filter should still be active before editing the fallback box")
-    assert_equal(visibleName, "Enchant Boots - Minor Speed", "the initial active search should keep the matching recipe visible")
+    assert_not_nil(searchBox, "enchanting craft pane should create a dedicated search box")
+    assert_true(searchBox.shown, "the enchanting craft search box should be visible while the pane is open")
+    assert_equal(searchBox.parent, CraftFrame, "the enchanting craft search box should live on the craft frame")
+    assert_equal(visibleName, "Enchant Boots - Minor Speed", "craft pane should still expose the full unfiltered list before searching")
 
     searchBox:SetText("weapon")
     searchBox.scripts["OnTextChanged"](searchBox)
 
-    visibleName = GetTradeSkillInfo(1)
-    assert_equal(state.trade_skill_search_text, "weapon", "typing in the fallback enchanting search box should drive the trade-skill name filter")
-    assert_equal(TradeSearchInputBox:GetText(), "weapon", "the hidden native trade-skill search text should stay in sync with the fallback box")
-    assert_equal(GetNumTradeSkills(), 1, "filtering from the fallback search box should narrow the visible recipe list")
-    assert_equal(visibleName, "Enchant Weapon - Crusader", "the fallback search box should update the visible enchanting recipes")
+    visibleName = GetCraftInfo(1)
+    assert_equal(addon.GetCraftSearchText(), "weapon", "typing in the enchanting craft search box should update the runtime search state")
+    assert_equal(GetNumCrafts(), 1, "craft search should filter the visible enchanting recipe list")
+    assert_equal(visibleName, "Enchant Weapon - Crusader", "craft search should keep the matching enchanting recipe visible")
 end
 
-local function test_non_enchanting_trade_skill_pane_skips_the_fallback_search_box()
+local function test_scan_clears_craft_filters_and_restores_search_afterward()
+    local addon = setup_env({
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
+        craft_available_only = true,
+        craft_filter = 1,
+        craft_slots = { "INVTYPE_FEET" },
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+                filter_index = 1,
+                num_available = 0,
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    addon.SetCraftSearchText("zzz")
+
+    local ok = addon.GetItems()
+
+    assert_true(ok, "scan should still succeed after temporarily clearing craft filters and search text")
+    assert_not_nil(EnchanterDBChar.RecipeList["Enchant Boots - Minor Speed"], "scan should capture enchanting crafts even when the pane search would otherwise hide them")
+    assert_true(CraftFrameAvailableFilterCheckButton:GetChecked(), "craft makeable filter should be restored after scanning")
+    assert_equal(GetCraftFilter(1), true, "craft slot filter should be restored after scanning")
+    assert_equal(addon.GetCraftSearchText(), "zzz", "craft search text should be restored after scanning")
+end
+
+local function test_non_enchanting_craft_pane_skips_the_search_box()
     local addon, state = setup_env({
-        trade_skill_frame_shown = true,
-        trade_skill_line_name = "Leatherworking",
+        craft_frame_shown = true,
+        craft_skill_line_name = "Blacksmithing",
     })
 
     addon.OnLoad()
-    state.event_handlers["TRADE_SKILL_SHOW"]()
+    state.event_handlers["CRAFT_SHOW"]()
 
     assert_true(
-        addon.EnchantingTradeSkillSearchBox == nil or addon.EnchantingTradeSkillSearchBox.shown == false,
-        "the fallback search box should stay scoped to the enchanting pane"
+        addon.EnchantingCraftSearchBox == nil or addon.EnchantingCraftSearchBox.shown == false,
+        "the craft search box should stay scoped to enchanting"
     )
 end
 
@@ -3633,6 +3660,8 @@ end
 
 local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
     local addon, state = setup_env({
+        craft_frame_shown = true,
+        craft_skill_line_name = "Enchanting",
         craft_available_only = true,
         craft_filter = 1,
         craft_slots = { "INVTYPE_WEAPON" },
@@ -3646,6 +3675,8 @@ local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clear
         },
     })
 
+    addon.SetCraftSearchText("zzz")
+
     local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
 
     assert_true(casted, "cast should still start when only the legacy craft api exposes the recipe")
@@ -3654,6 +3685,7 @@ local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clear
     assert_equal(state.craft_filter, 1, "craft casting should restore the previous craft slot filter after casting")
     assert_true(state.craft_available_only, "craft casting should restore the previous makeable-only filter after casting")
     assert_true(CraftFrameAvailableFilterCheckButton.checked, "craft casting should keep the craft filter checkbox aligned with the restored state")
+    assert_equal(addon.GetCraftSearchText(), "zzz", "craft casting should restore the previous craft search text after temporarily clearing it")
 end
 
 local function test_workbench_legacy_timestamps_are_reformatted_on_load()
@@ -4765,8 +4797,9 @@ test_scan_marks_empty_link_text_reagents_pending_until_item_data_arrives()
 test_workbench_lazily_hydrates_unresolved_material_names_before_render()
 test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
-test_enchanting_trade_skill_pane_gets_a_working_search_box()
-test_non_enchanting_trade_skill_pane_skips_the_fallback_search_box()
+test_enchanting_craft_pane_gets_a_working_search_box()
+test_scan_clears_craft_filters_and_restores_search_afterward()
+test_non_enchanting_craft_pane_skips_the_search_box()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
