@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.38`
+Current version: `2.1.39`
 
 ## What It Does
 
@@ -23,6 +23,7 @@ Current version: `2.1.38`
 - Avoid starting shorthand matches in the middle of unrelated tokens, so posts like `1815 resto druid LF 2's partner` do not trip `15 res`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
 - Split multi-enchant chat lines into local request segments so one phrase does not pollute the whole message
+- Expand attached quantity hints like `x2` / `2x` on matched enchants so duplicate asks queue repeated recipe rows and scale their mats totals correctly
 - Auto-invite matched players when `Auto Invite` is enabled
 - Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
 - Whisper the matching enchant links with a configurable delay and message prefix
@@ -76,6 +77,7 @@ Current version: `2.1.38`
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
 - Multi-enchant orders only turn green once every requested enchant has been confirmed automatically.
+- Duplicate queued enchants from messages like `Crusader x2` stay as separate rows, so each copy verifies independently while the mats tracker totals both copies together.
 - The workbench now watches the customer's current trade offer for matching mats and shows each material as `?` or a green check automatically.
 - Use the row-level `Inv` and `Msg` buttons to manually re-invite or re-whisper a queued customer when needed.
 - Queue rows turn red when an invite fails because the customer is already grouped, then flip back to the normal border once they join your party or raid.

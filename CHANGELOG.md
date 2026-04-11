@@ -1,3 +1,9 @@
+## [2.1.39] - 2026-04-11
+
+### Fixed
+- Expanded attached quantity hints like `x2` and `2x` into repeated queued recipe rows, so orders such as `Crusader x2` now total duplicate mats correctly and verify one copy at a time across separate trades
+- Kept reagent rows even when the client only exposes the item link text for a mat during the scan, which avoids intermittent snapshots that dropped mats like `Righteous Orb`
+
 ## [2.1.38] - 2026-04-10
 
 ### Fixed
