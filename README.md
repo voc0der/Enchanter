@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.41`
+Current version: `2.1.42`
 
 ## What It Does
 
@@ -32,6 +32,7 @@ Current version: `2.1.41`
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Automatically pause chat matching if you go AFK while it is running
 - Optionally pause chat matching automatically once a chosen number of queued customers have joined your group
+- Optionally auto-remove queued customers who decline your party invite after a configurable timer
 - While the Auction House is open, optionally hand every missing enchant formula to Auctionator from the workbench in one exact-name bulk search
 - Search and tune per-recipe search phrases plus additive per-recipe blacklist phrases from the settings panel
 - Queue matched customers into a workbench window with per-order recipe and materials snapshots
@@ -87,6 +88,7 @@ Current version: `2.1.41`
 - Accepted trades keep partial mats and early tips attached to the queue entry, and the order retires automatically as soon as a settled trade verifies every requested enchant, even if the live trade offer clears while the window is closing.
 - Click the per-order `X` when the order is done or you want to clear it from the queue.
 - In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them).
+- In settings, you can set `Party declined removal timer` so customers who decline your group invite are removed from the queue after a chosen number of seconds (`0` leaves the timer disabled).
 - In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself and later auto-resumes once the group drops back under that limit, optionally send a direct `/thank` emote after a successful applied-enchant trade, and switch workbench sounds over to party-join alerts instead of first-queue-entry alerts.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 

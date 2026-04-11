@@ -411,6 +411,8 @@ local function setup_env(opts)
         LFG_ROLE_CHECK = 17317,
     }
     _G.ERR_TRADE_COMPLETE = "Trade complete."
+    _G.ERR_ALREADY_IN_GROUP_S = "%s is already in a group."
+    _G.ERR_DECLINE_GROUP_S = "%s declines your group invitation."
     _G.PlaySound = function(sound_kit, channel)
         if opts.play_sound_errors_on_channel and channel ~= nil then
             error("channel playback unsupported")
@@ -1616,6 +1618,32 @@ local function test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
     assert_equal(#state.whispers, 2, "unsupported scanned enchants should not gain new shorthand aliases")
 end
 
+local function test_formula_purchase_requests_do_not_match_enchant_service()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Major Resilience"] = { "enchant chest - major resilience" },
+            },
+            RecipeLinks = {
+                ["Enchant Chest - Major Resilience"] = "[Enchant Chest - Major Resilience] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("[Formula: Enchant Chest - Major Resilience] WTB", "Buyer-FormulaLink")
+
+    assert_equal(#state.invites, 0, "formula item links should not trigger enchant invites")
+    assert_equal(#state.whispers, 0, "formula item links should not trigger enchant whispers")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-FormulaLink"), "formula item links should not queue an enchant order")
+
+    addon.ParseMessage("WTB Formula: Enchant Chest - Major Resilience pst", "Buyer-FormulaText")
+
+    assert_equal(#state.invites, 0, "plain formula sale text should not trigger enchant invites")
+    assert_equal(#state.whispers, 0, "plain formula sale text should not trigger enchant whispers")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-FormulaText"), "plain formula sale text should not queue an enchant order")
+end
+
 local function test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
     local addon = setup_env({
         crafts = {
@@ -1849,6 +1877,7 @@ local function test_incomplete_order_settings_default_on()
     assert_true(addon.DB.WarnIncompleteOrder, "incomplete-order warnings should default to enabled")
     assert_true(addon.DB.InviteIncompleteOrder, "incomplete-order invites should default to enabled")
     assert_true(addon.DB.EmoteThankAfterCast == false, "thank emotes should default to disabled")
+    assert_equal(addon.DB.DeclinedInviteRemovalSeconds, 0, "declined invite removal timer should default to disabled")
     assert_equal(addon.DB.MaxGroupedCustomers, 0, "max grouped customers should default to unlimited")
 end
 
@@ -4023,6 +4052,86 @@ local function test_grouped_queue_auto_expires_when_customer_never_joins()
     assert_true(string.find(frame.QueueCountText.text or "", "0 orders", 1, true) ~= nil, "expiring grouped orders should refresh the open workbench summary immediately")
 end
 
+local function test_declined_invite_order_auto_expires_when_timer_enabled()
+    local addon, state = setup_env({
+        defer_timers = true,
+        db = {
+            AutoInvite = true,
+            DeclinedInviteRemovalSeconds = 45,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Declined")
+    run_timer(state, 1)
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Declined")
+    local handled = addon.HandleInviteFailureMessage("Buyer-Declined declines your group invitation.")
+
+    assert_true(handled, "declined group invites should be recognized")
+    assert_not_nil(order, "declined invite expiry test should start with a queued order")
+    assert_true(order.InviteDeclined, "declined invite expiry test should flag the order while the removal timer is active")
+    assert_true(state.timer_delays[3] > 45, "declined invite removal should schedule just after the configured seconds so the callback lands past the deadline")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "declined invite removal should leave the order queued until the timer fires")
+
+    state.current_time = 46
+    run_timer(state, 3)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "declined invite removal should remove queued customers after the timer expires")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Declined"), "declined invite removal should clear the queued order")
+    assert_nil(addon.PlayerList["Buyer-Declined"], "declined invite removal should clear the anti-spam player gate")
+end
+
+local function test_manual_reinvite_clears_declined_invite_timer()
+    local addon, state = setup_env({
+        defer_timers = true,
+        db = {
+            AutoInvite = true,
+            DeclinedInviteRemovalSeconds = 45,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Retry")
+    run_timer(state, 1)
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Retry")
+    local handled = addon.HandleInviteFailureMessage("Buyer-Retry declines your group invitation.")
+
+    assert_true(handled, "manual re-invite test should recognize the declined invite")
+    assert_true(order.InviteDeclined, "manual re-invite test should start from a declined order")
+    assert_true(addon.Workbench.InviteOrder(order.Id), "manual re-invite should succeed for declined orders")
+    assert_true(not addon.Workbench.GetOrderByCustomer("Buyer-Retry").InviteDeclined, "manual re-invite should clear the declined-removal flag before retrying")
+    assert_equal(#state.invites, 2, "manual re-invite should issue a second invite attempt")
+
+    state.current_time = 46
+    run_timer(state, 3)
+
+    assert_not_nil(addon.Workbench.GetOrderByCustomer("Buyer-Retry"), "an old declined-removal timer should not delete an order after a retry invite")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 1, "the order should remain queued after a retry invite clears the old timer")
+end
+
 local function test_trade_with_unmatched_partner_does_not_complete_selected_order()
     local addon = setup_env({
         char_db = {
@@ -4606,6 +4715,7 @@ test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
 test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
+test_formula_purchase_requests_do_not_match_enchant_service()
 test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
 test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
 test_grouped_customer_join_marks_player_with_star()
@@ -4625,6 +4735,8 @@ test_grouped_customer_limit_auto_resumes_when_customer_leaves()
 test_grouped_customer_limit_does_not_auto_resume_after_manual_stop()
 test_player_afk_event_auto_stops_chat_scanning()
 test_grouped_queue_auto_expires_when_customer_never_joins()
+test_declined_invite_order_auto_expires_when_timer_enabled()
+test_manual_reinvite_clears_declined_invite_timer()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()

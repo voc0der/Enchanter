@@ -65,6 +65,7 @@ bash ./.github/scripts/verify-release-package.sh
 ## Releases
 
 - Release-specific steps are documented in [RELEASING.md](RELEASING.md).
-- Version bumps should update the addon version in [Enchanter.toc](Enchanter.toc), plus any matching references in docs or changelog entries.
+- Version bumps should update the addon version in [Enchanter.toc](Enchanter.toc), plus any matching references in `README.md`, `CHANGELOG.md`, and release-process docs when they changed.
 - Keep `README.md` aligned with the current workbench behavior so release notes do not drift from the actual in-game flow.
+- If you change packaging or release workflow expectations, update [RELEASING.md](RELEASING.md) and this file together so contributor instructions do not drift.
 - Packaging changes should keep working with both the PR artifact workflow and the GitHub/CurseForge release workflow.

@@ -11,7 +11,7 @@ local MAX_FRAME_WIDTH = 960
 local MAX_FRAME_HEIGHT = 960
 local MIN_QUEUE_HEIGHT = 160
 local DETAIL_RESERVED_HEIGHT = 220
-local GROUPED_QUEUE_EXPIRY_TIMER_BUFFER = 0.05
+local ORDER_EXPIRY_TIMER_BUFFER = 0.05
 local QUEUE_ALERT_SOUND_CHANNEL = "Master"
 local LOCK_BUTTON_ICON_TEXTURE = "Interface\\PetBattles\\PetBattle-LockIcon"
 local LOCK_BUTTON_UNLOCKED_TEXTURE = "Interface\\Buttons\\UI-CheckBox-Check"
@@ -707,6 +707,11 @@ local function GetGroupedQueueExpirySeconds()
 	return math.max(0, math.floor(tonumber(configuredSeconds) or 0))
 end
 
+local function GetDeclinedInviteRemovalSeconds()
+	local configuredSeconds = EC and EC.DB and EC.DB.DeclinedInviteRemovalSeconds or 0
+	return math.max(0, math.floor(tonumber(configuredSeconds) or 0))
+end
+
 local function IsCustomerInCurrentGroup(customerName)
 	if TrimText(customerName) == "" then
 		return false
@@ -804,6 +809,26 @@ local function ClearGroupedExpiryRuntime(orderId)
 	end
 end
 
+local function GetDeclinedInviteExpiryRuntime(orderId, createIfMissing)
+	local runtime = EnsureRuntime()
+	runtime.DeclinedInviteExpiry = runtime.DeclinedInviteExpiry or {}
+
+	local declinedInviteExpiry = runtime.DeclinedInviteExpiry[orderId]
+	if not declinedInviteExpiry and createIfMissing ~= false then
+		declinedInviteExpiry = {}
+		runtime.DeclinedInviteExpiry[orderId] = declinedInviteExpiry
+	end
+
+	return declinedInviteExpiry
+end
+
+local function ClearDeclinedInviteExpiryRuntime(orderId)
+	local runtime = EnsureRuntime()
+	if runtime.DeclinedInviteExpiry then
+		runtime.DeclinedInviteExpiry[orderId] = nil
+	end
+end
+
 local function FindOrderIndexById(orderId, state)
 	state = state or Workbench.EnsureState()
 	for index, order in ipairs(state.Orders) do
@@ -864,6 +889,8 @@ local function EnsureOrderFields(order)
 	end
 	order.AlreadyGrouped = order.AlreadyGrouped and true or nil
 	order.AlreadyGroupedAt = order.AlreadyGrouped and math.max(0, tonumber(order.AlreadyGroupedAt) or 0) or nil
+	order.InviteDeclined = order.InviteDeclined and true or order.InviteDeclinedAt ~= nil and true or nil
+	order.InviteDeclinedAt = order.InviteDeclined and math.max(0, tonumber(order.InviteDeclinedAt) or 0) or nil
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
@@ -962,6 +989,23 @@ local function ResetGroupedState(order)
 	return changed and true or false
 end
 
+local function ResetInviteDeclinedState(order)
+	if not order then
+		return false
+	end
+
+	local changed = order.InviteDeclined or order.InviteDeclinedAt ~= nil
+	order.InviteDeclined = nil
+	order.InviteDeclinedAt = nil
+	if order.Id then
+		ClearDeclinedInviteExpiryRuntime(order.Id)
+	end
+	if changed then
+		order.UpdatedAt = TimestampText()
+	end
+	return changed and true or false
+end
+
 local function GetGroupedOrderExpireAt(order)
 	if not order or not order.AlreadyGrouped or order.AlreadyGroupedAt == nil then
 		return nil
@@ -975,6 +1019,19 @@ local function GetGroupedOrderExpireAt(order)
 	return math.max(0, tonumber(order.AlreadyGroupedAt) or 0) + expirySeconds
 end
 
+local function GetDeclinedInviteExpireAt(order)
+	if not order or not order.InviteDeclined or order.InviteDeclinedAt == nil then
+		return nil
+	end
+
+	local removalSeconds = GetDeclinedInviteRemovalSeconds()
+	if removalSeconds <= 0 then
+		return nil
+	end
+
+	return math.max(0, tonumber(order.InviteDeclinedAt) or 0) + removalSeconds
+end
+
 local function RemoveOrderByIndex(state, index, reasonPrefix)
 	local removedOrder = table.remove(state.Orders, index)
 	if not removedOrder then
@@ -982,6 +1039,7 @@ local function RemoveOrderByIndex(state, index, reasonPrefix)
 	end
 
 	ClearGroupedExpiryRuntime(removedOrder.Id)
+	ClearDeclinedInviteExpiryRuntime(removedOrder.Id)
 	EC.PlayerList[removedOrder.Customer] = nil
 	EC.LfRecipeList[removedOrder.Customer] = nil
 	WorkbenchDebug(reasonPrefix or "removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
@@ -1010,7 +1068,7 @@ local function ScheduleGroupedOrderExpiry(order)
 	if C_Timer and C_Timer.After then
 		local token = groupedExpiry.Token
 		local orderId = order.Id
-		local delay = math.max(0, expireAt - Now()) + GROUPED_QUEUE_EXPIRY_TIMER_BUFFER
+		local delay = math.max(0, expireAt - Now()) + ORDER_EXPIRY_TIMER_BUFFER
 
 		C_Timer.After(delay, function()
 			local workbenchState = EC and EC.DBChar and EC.DBChar.Workbench or nil
@@ -1060,7 +1118,79 @@ local function ScheduleGroupedOrderExpiry(order)
 	return true
 end
 
-local function SyncGroupedOrders(state)
+local function ScheduleDeclinedInviteExpiry(order)
+	if not order or not order.Id then
+		return false
+	end
+
+	local expireAt = GetDeclinedInviteExpireAt(order)
+	if not expireAt or IsCustomerInCurrentGroup(order.Customer) then
+		ClearDeclinedInviteExpiryRuntime(order.Id)
+		return false
+	end
+
+	local declinedInviteExpiry = GetDeclinedInviteExpiryRuntime(order.Id)
+	if declinedInviteExpiry.ExpireAt == expireAt then
+		return true
+	end
+
+	declinedInviteExpiry.Token = math.floor(tonumber(declinedInviteExpiry.Token) or 0) + 1
+	declinedInviteExpiry.ExpireAt = expireAt
+
+	if C_Timer and C_Timer.After then
+		local token = declinedInviteExpiry.Token
+		local orderId = order.Id
+		local delay = math.max(0, expireAt - Now()) + ORDER_EXPIRY_TIMER_BUFFER
+
+		C_Timer.After(delay, function()
+			local workbenchState = EC and EC.DBChar and EC.DBChar.Workbench or nil
+			local currentOrder
+			local currentDeclinedInviteExpiry = GetDeclinedInviteExpiryRuntime(orderId, false)
+			if workbenchState and workbenchState.Orders then
+				local orderIndex = FindOrderIndexById(orderId, workbenchState)
+				currentOrder = orderIndex and workbenchState.Orders[orderIndex] or nil
+			end
+			if not currentOrder or not currentDeclinedInviteExpiry then
+				if Workbench.Frame then
+					Workbench.Refresh()
+				end
+				return
+			end
+			if currentDeclinedInviteExpiry.Token ~= token or currentDeclinedInviteExpiry.ExpireAt ~= expireAt then
+				return
+			end
+			if not currentOrder.InviteDeclined then
+				ClearDeclinedInviteExpiryRuntime(orderId)
+				return
+			end
+			if IsCustomerInCurrentGroup(currentOrder.Customer) then
+				if ResetInviteDeclinedState(currentOrder) and Workbench.Frame then
+					Workbench.Refresh()
+				end
+				return
+			end
+			if Now() + 0.001 < expireAt then
+				return
+			end
+			WorkbenchDebug("expired declined invite order for", currentOrder.Customer, "(" .. tostring(GetDeclinedInviteRemovalSeconds()) .. "s after decline)")
+			Workbench.RemoveOrder(orderId)
+			if Workbench.Frame and Workbench.Frame.OrderRows then
+				for _, row in ipairs(Workbench.Frame.OrderRows) do
+					if row and row.OrderId == orderId and row.Hide then
+						row:Hide()
+					end
+				end
+			end
+			if Workbench.Frame then
+				Workbench.Refresh()
+			end
+		end)
+	end
+
+	return true
+end
+
+local function SyncGroupedOrdersInternal(state)
 	state = state or Workbench.EnsureState()
 
 	local changed = false
@@ -1084,6 +1214,55 @@ local function SyncGroupedOrders(state)
 		else
 			ClearGroupedExpiryRuntime(order.Id)
 		end
+	end
+
+	return changed
+end
+
+local function SyncDeclinedInviteOrders(state)
+	state = state or Workbench.EnsureState()
+
+	local changed = false
+	local removalSeconds = GetDeclinedInviteRemovalSeconds()
+
+	for index = #state.Orders, 1, -1 do
+		local order = state.Orders[index]
+		if order.InviteDeclined then
+			if removalSeconds <= 0 then
+				if ResetInviteDeclinedState(order) then
+					changed = true
+				end
+			elseif IsCustomerInCurrentGroup(order.Customer) then
+				if ResetInviteDeclinedState(order) then
+					WorkbenchDebug("cleared declined invite flag for", order.Customer, "(now in group)")
+					changed = true
+				end
+			else
+				local expireAt = GetDeclinedInviteExpireAt(order)
+				if expireAt and Now() >= expireAt then
+					RemoveOrderByIndex(state, index, "expired declined invite order for")
+					changed = true
+				else
+					ScheduleDeclinedInviteExpiry(order)
+				end
+			end
+		else
+			ClearDeclinedInviteExpiryRuntime(order.Id)
+		end
+	end
+
+	return changed
+end
+
+local function SyncQueueOrderStates(state)
+	state = state or Workbench.EnsureState()
+
+	local changed = false
+	if SyncGroupedOrdersInternal(state) then
+		changed = true
+	end
+	if SyncDeclinedInviteOrders(state) then
+		changed = true
 	end
 
 	if state.SelectedOrderId and not FindOrderIndexById(state.SelectedOrderId, state) then
@@ -1769,7 +1948,7 @@ function Workbench.EnsureState()
 		state.SelectedOrderId = state.Orders[1].Id
 	end
 
-	SyncGroupedOrders(state)
+	SyncQueueOrderStates(state)
 
 	return state
 end
@@ -1816,7 +1995,7 @@ end
 
 function Workbench.SyncGroupedOrders()
 	local state = Workbench.EnsureState()
-	local changed = SyncGroupedOrders(state)
+	local changed = SyncQueueOrderStates(state)
 	if Workbench.Frame then
 		Workbench.Refresh()
 	else
@@ -1831,6 +2010,8 @@ function Workbench.MarkOrderAlreadyGrouped(customerName)
 		return false
 	end
 
+	ResetInviteDeclinedState(order)
+
 	if IsCustomerInCurrentGroup(order.Customer) then
 		if ResetGroupedState(order) and Workbench.Frame then
 			Workbench.Refresh()
@@ -1843,6 +2024,45 @@ function Workbench.MarkOrderAlreadyGrouped(customerName)
 	order.UpdatedAt = TimestampText()
 	ScheduleGroupedOrderExpiry(order)
 	WorkbenchDebug("marked order as already grouped for", order.Customer)
+	if Workbench.Frame then
+		Workbench.Refresh()
+	end
+	return true
+end
+
+function Workbench.ClearOrderInviteDeclined(customerName)
+	local order = Workbench.GetOrderByCustomer(customerName)
+	if not order then
+		return false
+	end
+
+	local changed = ResetInviteDeclinedState(order)
+	if changed and Workbench.Frame then
+		Workbench.Refresh()
+	end
+	return changed
+end
+
+function Workbench.MarkOrderInviteDeclined(customerName)
+	local order = Workbench.GetOrderByCustomer(customerName)
+	if not order then
+		return false
+	end
+
+	ResetGroupedState(order)
+
+	if GetDeclinedInviteRemovalSeconds() <= 0 or IsCustomerInCurrentGroup(order.Customer) then
+		if ResetInviteDeclinedState(order) and Workbench.Frame then
+			Workbench.Refresh()
+		end
+		return true
+	end
+
+	order.InviteDeclined = true
+	order.InviteDeclinedAt = Now()
+	order.UpdatedAt = TimestampText()
+	ScheduleDeclinedInviteExpiry(order)
+	WorkbenchDebug("marked order as declined invite for", order.Customer)
 	if Workbench.Frame then
 		Workbench.Refresh()
 	end
@@ -2985,6 +3205,7 @@ function Workbench.ClearOrders()
 	runtime.ActiveTrade = nil
 	runtime.PendingClosedTrades = nil
 	runtime.GroupedExpiry = nil
+	runtime.DeclinedInviteExpiry = nil
 
 	WorkbenchDebug("cleared queue and totals (" .. tostring(removedCount) .. " orders)")
 	Workbench.Refresh()
@@ -3989,7 +4210,7 @@ end
 function Workbench.Refresh()
 	local frame = Workbench.Frame
 	local state = Workbench.EnsureState()
-	SyncGroupedOrders(state)
+	SyncQueueOrderStates(state)
 	UpdateGroupedCustomerSnapshot(state)
 	if not frame then
 		return
