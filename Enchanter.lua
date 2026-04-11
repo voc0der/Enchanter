@@ -34,6 +34,7 @@ local simulationFallbackCounter = 0
 local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
 local ENCHANTING_SPELL_ID = 7411
 local RECIPE_FORMULA_PREFIX = "Formula: "
+local enchantingTradeSkillSearchBox
 local simulationNamePrefixes = {
 	"SimAldren",
 	"SimBrenna",
@@ -674,6 +675,90 @@ EC.GetPendingRecipeMaterialCount = function()
 	return math.max(0, math.floor(tonumber(EC.DBChar and EC.DBChar.PendingRecipeMaterialCount or 0) or 0))
 end
 
+local function NormalizeTradeSkillSearchText(value)
+	if value == nil then
+		return ""
+	end
+
+	value = tostring(value)
+	if value == SEARCH then
+		return ""
+	end
+
+	return value
+end
+
+local function GetVisibleEnchantingTradeSkillSearchBox()
+	if not enchantingTradeSkillSearchBox then
+		return nil
+	end
+
+	if enchantingTradeSkillSearchBox.IsShown then
+		local ok, shown = pcall(enchantingTradeSkillSearchBox.IsShown, enchantingTradeSkillSearchBox)
+		if ok and shown then
+			return enchantingTradeSkillSearchBox
+		end
+		return nil
+	end
+
+	return enchantingTradeSkillSearchBox.shown ~= false and enchantingTradeSkillSearchBox or nil
+end
+
+local function GetTradeSkillSearchText()
+	local searchBox = GetVisibleEnchantingTradeSkillSearchBox()
+
+	if not searchBox and TradeSearchInputBox and TradeSearchInputBox.GetText then
+		searchBox = TradeSearchInputBox
+	end
+
+	if not searchBox and enchantingTradeSkillSearchBox and enchantingTradeSkillSearchBox.GetText then
+		searchBox = enchantingTradeSkillSearchBox
+	end
+
+	if searchBox and searchBox.GetText then
+		return NormalizeTradeSkillSearchText(searchBox:GetText())
+	end
+
+	return ""
+end
+
+local function SetTradeSkillSearchControlText(searchBox, value)
+	if not searchBox or not searchBox.SetText then
+		return
+	end
+
+	value = NormalizeTradeSkillSearchText(value)
+	if searchBox.GetText and NormalizeTradeSkillSearchText(searchBox:GetText()) == value then
+		return
+	end
+
+	searchBox._ECUpdatingSearchText = true
+	searchBox:SetText(value)
+	searchBox._ECUpdatingSearchText = nil
+end
+
+local function SyncTradeSkillSearchControlText(value)
+	value = NormalizeTradeSkillSearchText(value)
+	SetTradeSkillSearchControlText(TradeSearchInputBox, value)
+	SetTradeSkillSearchControlText(enchantingTradeSkillSearchBox, value)
+end
+
+local function ApplyTradeSkillSearchFilter()
+	local filterInput = TradeSearchInputBox or enchantingTradeSkillSearchBox
+
+	if TradeSkillFilter_OnTextChanged and filterInput then
+		TradeSkillFilter_OnTextChanged(filterInput)
+		return
+	end
+
+	if SetTradeSkillItemLevelFilter then
+		SetTradeSkillItemLevelFilter(0, 0)
+	end
+	if SetTradeSkillItemNameFilter then
+		SetTradeSkillItemNameFilter(GetTradeSkillSearchText())
+	end
+end
+
 local function SnapshotTradeSkillFilters()
 	local snapshot = {
 		available = nil,
@@ -700,9 +785,7 @@ local function SnapshotTradeSkillFilters()
 		end
 	end
 
-	if TradeSearchInputBox and TradeSearchInputBox.GetText then
-		snapshot.searchText = TradeSearchInputBox:GetText()
-	end
+	snapshot.searchText = GetTradeSkillSearchText()
 
 	return snapshot
 end
@@ -743,12 +826,8 @@ local function RestoreTradeSkillFilters(snapshot)
 		SetTradeSkillInvSlotFilter(GetSelectedTradeSkillFilterIndex(snapshot.invSlot), 1, 1)
 	end
 
-	if TradeSearchInputBox and TradeSearchInputBox.SetText then
-		TradeSearchInputBox:SetText(snapshot.searchText or "")
-	end
-	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
-		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
-	end
+	SyncTradeSkillSearchControlText(snapshot.searchText or "")
+	ApplyTradeSkillSearchFilter()
 end
 
 local function ClearTradeSkillFiltersForScan()
@@ -769,18 +848,8 @@ local function ClearTradeSkillFiltersForScan()
 		SetTradeSkillInvSlotFilter(0, 1, 1)
 	end
 
-	if TradeSearchInputBox and TradeSearchInputBox.SetText then
-		TradeSearchInputBox:SetText("")
-	end
-	if SetTradeSkillItemLevelFilter then
-		SetTradeSkillItemLevelFilter(0, 0)
-	end
-	if SetTradeSkillItemNameFilter then
-		SetTradeSkillItemNameFilter("")
-	end
-	if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
-		TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
-	end
+	SyncTradeSkillSearchControlText("")
+	ApplyTradeSkillSearchFilter()
 end
 
 local function SnapshotCraftFilters()
@@ -1085,6 +1154,104 @@ local function SkillLineMatchesEnchanting(skillLineName)
 	local normalizedEnchantingName = NormalizePhrase(GetEnchantingSkillLineName())
 	return normalizedSkillLineName ~= "" and normalizedSkillLineName == normalizedEnchantingName
 end
+
+local function IsEnchantingTradeSkillFrameVisible()
+	if not IsFrameShown(TradeSkillFrame) then
+		return false
+	end
+
+	if type(GetTradeSkillLine) ~= "function" then
+		return true
+	end
+
+	return SkillLineMatchesEnchanting(GetTradeSkillLine())
+end
+
+local function EnsureEnchantingTradeSkillSearchBox()
+	local created
+	local ok
+
+	if enchantingTradeSkillSearchBox or not CreateFrame or not TradeSkillFrame then
+		return enchantingTradeSkillSearchBox
+	end
+
+	ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingTradeSkillSearchBox", TradeSkillFrame, "InputBoxInstructionsTemplate")
+	if not ok or not created then
+		ok, created = pcall(CreateFrame, "EditBox", TOCNAME .. "EnchantingTradeSkillSearchBox", TradeSkillFrame)
+		if not ok or not created then
+			return nil
+		end
+	end
+
+	created:SetAutoFocus(false)
+	created:SetHeight(20)
+	if created.SetTextInsets then
+		created:SetTextInsets(6, 6, 0, 0)
+	end
+	if created.Instructions then
+		if created.Instructions.SetText then
+			created.Instructions:SetText(SEARCH or "Search")
+		end
+		if created.Instructions.SetFontObject then
+			created.Instructions:SetFontObject("ChatFontNormal")
+		end
+	end
+	if created.SetFontObject then
+		created:SetFontObject("ChatFontNormal")
+	end
+
+	created:SetScript("OnEnterPressed", function(self)
+		self:ClearFocus()
+	end)
+	created:SetScript("OnEscapePressed", function(self)
+		self:ClearFocus()
+	end)
+	created:SetScript("OnTextChanged", function(self)
+		if self._ECUpdatingSearchText then
+			return
+		end
+
+		SyncTradeSkillSearchControlText(self:GetText())
+		ApplyTradeSkillSearchFilter()
+	end)
+	created:Hide()
+
+	enchantingTradeSkillSearchBox = created
+	EC.EnchantingTradeSkillSearchBox = created
+	return enchantingTradeSkillSearchBox
+end
+
+local function RefreshTradeSkillSearchUI()
+	local nativeSearchBoxVisible = TradeSearchInputBox
+		and TradeSearchInputBox.IsShown
+		and TradeSearchInputBox:IsShown()
+	local shouldShowCustomSearch = IsEnchantingTradeSkillFrameVisible() and not nativeSearchBoxVisible
+	local searchBox = shouldShowCustomSearch and EnsureEnchantingTradeSkillSearchBox() or enchantingTradeSkillSearchBox
+
+	if not searchBox then
+		return
+	end
+
+	if shouldShowCustomSearch then
+		SyncTradeSkillSearchControlText(GetTradeSkillSearchText())
+		searchBox:ClearAllPoints()
+		if TradeSkillFrameAvailableFilterCheckButtonText and TradeSkillInvSlotDropdown then
+			searchBox:SetPoint("TOPLEFT", TradeSkillFrameAvailableFilterCheckButtonText, "TOPRIGHT", 18, -4)
+			searchBox:SetPoint("RIGHT", TradeSkillInvSlotDropdown, "LEFT", -10, 0)
+		elseif TradeSkillInvSlotDropdown then
+			searchBox:SetPoint("TOPRIGHT", TradeSkillInvSlotDropdown, "TOPLEFT", -10, 0)
+			searchBox:SetWidth(160)
+		else
+			searchBox:SetPoint("TOPLEFT", TradeSkillFrame, "TOPLEFT", 168, -66)
+			searchBox:SetWidth(160)
+		end
+		searchBox:Show()
+	else
+		searchBox:Hide()
+	end
+end
+
+EC.RefreshTradeSkillSearchUI = RefreshTradeSkillSearchUI
 
 local function BuildAuctionSearchTermForRecipe(recipeName)
 	recipeName = TrimText(recipeName)
@@ -2679,6 +2846,9 @@ function EC.Init()
 
 	EC.OptionsInit()
 	EC.OptionsUpdate()
+	if EC.RefreshTradeSkillSearchUI then
+		EC.RefreshTradeSkillSearchUI()
+	end
 	if EC.Workbench and EC.Workbench.SyncVisibility then
 		EC.Workbench.SyncVisibility()
 	end
@@ -2839,6 +3009,9 @@ local function Event_PLAYER_FLAGS_CHANGED(unitToken)
 end
 
 local function Event_UI_CONTEXT_REFRESH()
+	if EC.RefreshTradeSkillSearchUI then
+		EC.RefreshTradeSkillSearchUI()
+	end
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
 	end
@@ -2937,6 +3110,7 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("GET_ITEM_INFO_RECEIVED", Event_ITEM_DATA_RECEIVED)
 	EC.Tool.RegisterEvent("ITEM_DATA_LOAD_RESULT", Event_ITEM_DATA_RECEIVED)
 	EC.Tool.RegisterEvent("TRADE_SKILL_SHOW", Event_UI_CONTEXT_REFRESH)
+	EC.Tool.RegisterEvent("TRADE_SKILL_UPDATE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("TRADE_SKILL_CLOSE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_SHOW", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_CLOSE", Event_UI_CONTEXT_REFRESH)
