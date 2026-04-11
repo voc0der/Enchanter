@@ -1955,6 +1955,46 @@ local function test_workbench_tracks_and_merges_orders()
     assert_equal(materials[2].Name, "Primal Air", "other materials should remain in the snapshot")
 end
 
+local function test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Crusader"] = { "crusader" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Crusader"] = "[Enchant Weapon - Crusader] ",
+            },
+            RecipeMats = {
+                ["Enchant Weapon - Crusader"] = {
+                    { Name = "Large Brilliant Shard", Count = 4, Link = "item:14344" },
+                    { Name = "Righteous Orb", Count = 2, Link = "item:12811" },
+                },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF Crusader x2 my mats will tip", "Buyer-Quantity")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Quantity")
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+    local _, whisperRecipeCount = string.gsub(state.whispers[1].message or "", "%[" .. escape_lua_pattern("Enchant Weapon - Crusader") .. "%]", "")
+
+    assert_not_nil(order, "quantity-matched requests should still create a workbench order")
+    assert_equal(#order.Recipes, 2, "quantity-matched requests should expand into duplicate queued recipe rows")
+    assert_equal(order.Recipes[1], "Enchant Weapon - Crusader", "the first queued recipe row should keep the matched recipe name")
+    assert_equal(order.Recipes[2], "Enchant Weapon - Crusader", "the second queued recipe row should keep the matched recipe name")
+    assert_equal(order.RequestedRecipeCount, 2, "quantity-matched requests should track the expanded requested count")
+    assert_equal(#materials, 2, "quantity-matched requests should still keep the full reagent list")
+    assert_equal(materials[1].Count, 8, "shared mats should scale with the expanded recipe quantity")
+    assert_equal(materials[2].Count, 4, "non-shared mats should also scale with the expanded recipe quantity")
+    assert_equal(whisperRecipeCount, 2, "quantity-matched recipe whispers should repeat the linked enchant for each requested copy")
+end
+
 local function test_workbench_remove_clears_player_gate()
     local addon = setup_env({
         char_db = {
@@ -3011,6 +3051,32 @@ local function test_scan_keeps_full_reagent_snapshot_when_only_one_mat_is_owned(
     assert_equal(total, 3, "material progress should reflect the full reagent count for the queued order")
 end
 
+local function test_scan_keeps_reagent_rows_when_only_the_item_link_has_a_name()
+    local addon = setup_env({
+        require_trade_frame_selection_for_reagents = true,
+        trade_reagent_info_includes_item_id = true,
+        trade_skills = {
+            {
+                name = "Enchant Weapon - Crusader",
+                link = "spell:20034",
+                reagents = {
+                    { name = "Large Brilliant Shard", count = 4, player_count = 0, link = "item:14344", item_id = 14344 },
+                    { name = nil, count = 2, player_count = 0, link = "|cffffffff|Hitem:12811::::::::|h[Righteous Orb]|h|r", item_id = 12811 },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+    local scannedMaterials = EnchanterDBChar.RecipeMats["Enchant Weapon - Crusader"]
+
+    assert_true(ok, "scan should still succeed when a reagent name falls back to the item link text")
+    assert_not_nil(scannedMaterials, "scan should still save mats when only the item link carries the reagent name")
+    assert_equal(#scannedMaterials, 2, "scan should keep link-backed reagents instead of dropping them from the snapshot")
+    assert_equal(scannedMaterials[2].Name, "Righteous Orb", "scan should recover the reagent name from the item link text")
+    assert_equal(scannedMaterials[2].Count, 2, "scan should preserve the required count for link-backed reagents")
+end
+
 local function test_scan_clears_trade_skill_filters_and_restores_them_afterward()
     local addon = setup_env({
         trade_skill_available_only = true,
@@ -3839,6 +3905,50 @@ local function test_workbench_auto_verifies_trade_enchant_without_apply_click()
     assert_equal(frame.Detail.Title.text, "No active order selected", "the detail pane should reset after auto-verification retires the order")
 end
 
+local function test_workbench_tracks_duplicate_recipe_verification_one_trade_at_a_time()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed x2 pst", "Buyer-DoubleVerify")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-DoubleVerify")
+
+    assert_not_nil(order, "duplicate recipe requests should still queue a workbench order")
+    assert_equal(#order.Recipes, 2, "duplicate recipe requests should keep both queued recipe rows")
+
+    addon.Workbench.BeginTrade("Buyer-DoubleVerify")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-DoubleVerify")
+    local verifiedAfterFirstTrade, totalAfterFirstTrade = addon.Workbench.GetRecipeVerificationProgress(order)
+    local state = addon.Workbench.EnsureState()
+
+    assert_not_nil(order, "the first successful trade should leave the duplicate order queued until every copy is verified")
+    assert_equal(verifiedAfterFirstTrade, 1, "the first successful trade should verify only one copy of the duplicate recipe")
+    assert_equal(totalAfterFirstTrade, 2, "duplicate recipe verification should keep the full queued total")
+    assert_equal(order.VerifiedRecipeCounts["Enchant Boots - Minor Speed"], 1, "duplicate recipe orders should store how many copies have already been verified")
+    assert_equal(state.CompletedOrders, 0, "partially verified duplicate orders should not auto-complete early")
+
+    addon.Workbench.BeginTrade("Buyer-DoubleVerify")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-DoubleVerify"), "the duplicate order should retire once the final copy is verified")
+    assert_equal(state.CompletedOrders, 1, "the final duplicate verification should auto-complete the order")
+end
+
 local function test_successful_trade_can_emote_thank_directly_to_customer()
     local addon, state = setup_env({
         db = {
@@ -4230,6 +4340,7 @@ test_parse_message_skips_incomplete_warning_when_disabled()
 test_incomplete_order_can_be_left_unflagged_until_corrected()
 test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
+test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
@@ -4266,6 +4377,7 @@ test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()
 test_scan_keeps_full_reagent_snapshot_when_only_one_mat_is_owned()
+test_scan_keeps_reagent_rows_when_only_the_item_link_has_a_name()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
@@ -4295,6 +4407,7 @@ test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
+test_workbench_tracks_duplicate_recipe_verification_one_trade_at_a_time()
 test_successful_trade_can_emote_thank_directly_to_customer()
 test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
 test_tip_only_trade_does_not_emote_thank()

@@ -572,28 +572,91 @@ end
 
 local function CopyRecipeNames(recipeMapOrList)
 	local out = {}
-	local seen = {}
 
 	if type(recipeMapOrList) ~= "table" then
 		return out
 	end
 
-	for key, value in pairs(recipeMapOrList) do
-		local recipeName
-		if type(key) == "number" then
-			recipeName = value
-		else
-			recipeName = key
+	if #recipeMapOrList > 0 then
+		for index = 1, #recipeMapOrList do
+			local recipeName = recipeMapOrList[index]
+			if type(recipeName) == "string" and recipeName ~= "" then
+				out[#out + 1] = recipeName
+			end
 		end
+	else
+		local seen = {}
+		for key, value in pairs(recipeMapOrList) do
+			local recipeName
+			if type(key) == "number" then
+				recipeName = value
+			else
+				recipeName = key
+			end
 
-		if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
-			seen[recipeName] = true
-			out[#out + 1] = recipeName
+			if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
+				seen[recipeName] = true
+				out[#out + 1] = recipeName
+			end
 		end
 	end
 
 	table.sort(out)
 	return out
+end
+
+local function NormalizeRecipeCount(value)
+	local normalized = math.floor(tonumber(value) or 0)
+	if normalized < 0 then
+		return 0
+	end
+	return normalized
+end
+
+local function BuildRecipeCountMap(recipeNames)
+	local counts = {}
+
+	if type(recipeNames) ~= "table" then
+		return counts
+	end
+
+	for _, recipeName in ipairs(recipeNames) do
+		if type(recipeName) == "string" and recipeName ~= "" then
+			counts[recipeName] = (counts[recipeName] or 0) + 1
+		end
+	end
+
+	return counts
+end
+
+local function BuildRecipeListFromCountMap(recipeCounts)
+	local recipes = {}
+
+	if type(recipeCounts) ~= "table" then
+		return recipes
+	end
+
+	for recipeName, count in pairs(recipeCounts) do
+		local normalizedCount = NormalizeRecipeCount(count)
+		if type(recipeName) == "string" and recipeName ~= "" then
+			for _ = 1, normalizedCount do
+				recipes[#recipes + 1] = recipeName
+			end
+		end
+	end
+
+	table.sort(recipes)
+	return recipes
+end
+
+local function MergeRecipeLists(existingRecipes, incomingRecipes)
+	local mergedCounts = BuildRecipeCountMap(existingRecipes)
+
+	for recipeName, count in pairs(BuildRecipeCountMap(incomingRecipes)) do
+		mergedCounts[recipeName] = count
+	end
+
+	return BuildRecipeListFromCountMap(mergedCounts)
 end
 
 local function NormalizeCustomerName(name)
@@ -736,11 +799,35 @@ local function FindOrderIndexById(orderId, state)
 	return nil
 end
 
+local OrderHasRecipe
+
 local function EnsureOrderFields(order)
 	order.Recipes = order.Recipes or {}
 	order.MaterialCounts = order.MaterialCounts or {}
 	order.MaterialState = order.MaterialState or {}
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
+	order.VerifiedRecipeCounts = order.VerifiedRecipeCounts or {}
+	table.sort(order.Recipes)
+	do
+		local requiredRecipeCounts = BuildRecipeCountMap(order.Recipes)
+		local normalizedVerifiedRecipes = {}
+		local normalizedVerifiedCounts = {}
+
+		for recipeName, requiredCount in pairs(requiredRecipeCounts) do
+			local verifiedCount = NormalizeRecipeCount(order.VerifiedRecipeCounts[recipeName] or 0)
+			if verifiedCount <= 0 and order.VerifiedRecipes[recipeName] then
+				verifiedCount = 1
+			end
+			verifiedCount = math.min(requiredCount, verifiedCount)
+			if verifiedCount > 0 then
+				normalizedVerifiedRecipes[recipeName] = true
+				normalizedVerifiedCounts[recipeName] = verifiedCount
+			end
+		end
+
+		order.VerifiedRecipes = normalizedVerifiedRecipes
+		order.VerifiedRecipeCounts = normalizedVerifiedCounts
+	end
 	order.RequestedRecipeCount = math.max(#order.Recipes, math.floor(tonumber(order.RequestedRecipeCount) or 0))
 	order.Message = order.Message or ""
 	order.PendingTipText = order.PendingTipText or ""
@@ -765,6 +852,82 @@ local function EnsureOrderFields(order)
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
+end
+
+local function GetRecipeRequiredCount(order, recipeName)
+	local requiredCount = NormalizeRecipeCount(BuildRecipeCountMap(order and order.Recipes or nil)[recipeName] or 0)
+	return requiredCount
+end
+
+local function GetVerifiedRecipeCount(order, recipeName)
+	local verifiedCount
+	local requiredCount
+
+	if not order or not recipeName or recipeName == "" then
+		return 0
+	end
+
+	verifiedCount = NormalizeRecipeCount(order.VerifiedRecipeCounts and order.VerifiedRecipeCounts[recipeName] or 0)
+	if verifiedCount <= 0 and order.VerifiedRecipes and order.VerifiedRecipes[recipeName] then
+		verifiedCount = 1
+	end
+
+	requiredCount = GetRecipeRequiredCount(order, recipeName)
+	if requiredCount > 0 then
+		verifiedCount = math.min(requiredCount, verifiedCount)
+	end
+
+	return verifiedCount
+end
+
+local function SetVerifiedRecipeCount(order, recipeName, count)
+	local requiredCount
+	local currentCount
+
+	if not order or not recipeName or recipeName == "" or not OrderHasRecipe(order, recipeName) then
+		return 0, false
+	end
+
+	requiredCount = GetRecipeRequiredCount(order, recipeName)
+	currentCount = GetVerifiedRecipeCount(order, recipeName)
+	count = math.min(requiredCount, NormalizeRecipeCount(count))
+	if currentCount == count then
+		return count, false
+	end
+
+	order.VerifiedRecipes = order.VerifiedRecipes or {}
+	order.VerifiedRecipeCounts = order.VerifiedRecipeCounts or {}
+	order.VerifiedRecipeCounts[recipeName] = count > 0 and count or nil
+	order.VerifiedRecipes[recipeName] = count > 0 and true or nil
+	return count, true
+end
+
+local function GetAppliedRecipeCount(activeTrade, recipeName)
+	local appliedCount
+
+	if not activeTrade or not recipeName or recipeName == "" then
+		return 0
+	end
+
+	appliedCount = NormalizeRecipeCount(activeTrade.AppliedRecipeCounts and activeTrade.AppliedRecipeCounts[recipeName] or 0)
+	if appliedCount <= 0 and activeTrade.AppliedRecipes and activeTrade.AppliedRecipes[recipeName] then
+		appliedCount = 1
+	end
+
+	return appliedCount
+end
+
+local function SetAppliedRecipeCount(activeTrade, recipeName, count)
+	if not activeTrade or not recipeName or recipeName == "" then
+		return 0
+	end
+
+	count = NormalizeRecipeCount(count)
+	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
+	activeTrade.AppliedRecipeCounts = activeTrade.AppliedRecipeCounts or {}
+	activeTrade.AppliedRecipeCounts[recipeName] = count > 0 and count or nil
+	activeTrade.AppliedRecipes[recipeName] = count > 0 and true or nil
+	return count
 end
 
 local function ResetGroupedState(order)
@@ -918,9 +1081,13 @@ end
 
 local function CountAppliedRecipes(activeTrade)
 	local count = 0
+	local appliedRecipes = activeTrade and activeTrade.AppliedRecipeCounts
+	if type(appliedRecipes) ~= "table" or next(appliedRecipes) == nil then
+		appliedRecipes = activeTrade and activeTrade.AppliedRecipes or {}
+	end
 
-	for _ in pairs(activeTrade and activeTrade.AppliedRecipes or {}) do
-		count = count + 1
+	for recipeName in pairs(appliedRecipes or {}) do
+		count = count + GetAppliedRecipeCount(activeTrade, recipeName)
 	end
 
 	return count
@@ -1623,7 +1790,7 @@ function Workbench.MarkOrderAlreadyGrouped(customerName)
 	return true
 end
 
-local function OrderHasRecipe(order, recipeName)
+OrderHasRecipe = function(order, recipeName)
 	if not order or not recipeName then
 		return false
 	end
@@ -1712,28 +1879,52 @@ local function RecipeMatchesTradeEnchantment(recipeName, enchantmentText)
 	return false
 end
 
-local function GetTradeRecipeMatches(order, enchantmentText, onlyUnverified)
+local function GetRemainingRecipeCount(order, recipeName, activeTrade)
+	local remainingCount = GetRecipeRequiredCount(order, recipeName) - GetVerifiedRecipeCount(order, recipeName)
+	if remainingCount <= 0 then
+		return 0
+	end
+
+	if activeTrade then
+		remainingCount = remainingCount - GetAppliedRecipeCount(activeTrade, recipeName)
+	end
+
+	return math.max(0, remainingCount)
+end
+
+local function GetTradeRecipeMatches(order, activeTrade, enchantmentText, onlyUnverified)
 	local matches = {}
+	local seen = {}
 
 	for _, recipeName in ipairs(order and order.Recipes or {}) do
-		local isVerified = order.VerifiedRecipes and order.VerifiedRecipes[recipeName]
-		if (not onlyUnverified or not isVerified) and RecipeMatchesTradeEnchantment(recipeName, enchantmentText) then
-			matches[#matches + 1] = recipeName
+		if not seen[recipeName] then
+			seen[recipeName] = true
+			if (not onlyUnverified or GetRemainingRecipeCount(order, recipeName, activeTrade) > 0)
+				and RecipeMatchesTradeEnchantment(recipeName, enchantmentText)
+			then
+				matches[#matches + 1] = recipeName
+			end
 		end
 	end
 
+	table.sort(matches)
 	return matches
 end
 
-local function GetUnverifiedRecipeNames(order)
+local function GetUnverifiedRecipeNames(order, activeTrade)
 	local unverifiedRecipes = {}
+	local seen = {}
 
 	for _, recipeName in ipairs(order and order.Recipes or {}) do
-		if not (order.VerifiedRecipes and order.VerifiedRecipes[recipeName]) then
-			unverifiedRecipes[#unverifiedRecipes + 1] = recipeName
+		if not seen[recipeName] then
+			seen[recipeName] = true
+			if GetRemainingRecipeCount(order, recipeName, activeTrade) > 0 then
+				unverifiedRecipes[#unverifiedRecipes + 1] = recipeName
+			end
 		end
 	end
 
+	table.sort(unverifiedRecipes)
 	return unverifiedRecipes
 end
 
@@ -1742,28 +1933,31 @@ local function ResolveTradeAppliedRecipeName(order, activeTrade, enchantmentText
 	local unverifiedMatches
 	local allMatches
 	local unverifiedRecipes
-	local totalRecipes = #(order and order.Recipes or {})
+	local uniqueRecipeNames = CopyRecipeNames(order and order.Recipes or nil)
 
 	if not order then
 		return nil
 	end
 
-	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and RecipeMatchesTradeEnchantment(castedRecipeName, enchantmentText) then
+	if castedRecipeName
+		and GetRemainingRecipeCount(order, castedRecipeName, activeTrade) > 0
+		and RecipeMatchesTradeEnchantment(castedRecipeName, enchantmentText)
+	then
 		return castedRecipeName
 	end
 
-	unverifiedMatches = GetTradeRecipeMatches(order, enchantmentText, true)
+	unverifiedMatches = GetTradeRecipeMatches(order, activeTrade, enchantmentText, true)
 	if #unverifiedMatches == 1 then
 		return unverifiedMatches[1]
 	end
 
-	allMatches = GetTradeRecipeMatches(order, enchantmentText, false)
+	allMatches = GetTradeRecipeMatches(order, activeTrade, enchantmentText, false)
 	if #allMatches == 1 then
 		return allMatches[1]
 	end
 
-	unverifiedRecipes = GetUnverifiedRecipeNames(order)
-	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and #unverifiedRecipes == 1 then
+	unverifiedRecipes = GetUnverifiedRecipeNames(order, activeTrade)
+	if castedRecipeName and GetRemainingRecipeCount(order, castedRecipeName, activeTrade) > 0 and #unverifiedRecipes == 1 then
 		return castedRecipeName
 	end
 
@@ -1771,32 +1965,31 @@ local function ResolveTradeAppliedRecipeName(order, activeTrade, enchantmentText
 		return unverifiedRecipes[1]
 	end
 
-	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and totalRecipes == 1 then
+	if castedRecipeName and OrderHasRecipe(order, castedRecipeName) and #uniqueRecipeNames == 1 then
 		return castedRecipeName
 	end
 
-	if totalRecipes == 1 then
-		return order.Recipes[1]
+	if #uniqueRecipeNames == 1 then
+		return uniqueRecipeNames[1]
 	end
 
 	return nil
 end
 
 local function SetRecipeVerifiedInternal(order, recipeName, verified)
+	local currentCount
+	local changed
+
 	if not order or not recipeName or not OrderHasRecipe(order, recipeName) then
 		return false
 	end
 
-	order.VerifiedRecipes = order.VerifiedRecipes or {}
-	local hadValue = order.VerifiedRecipes[recipeName] and true or false
-	local wantsValue = verified and true or false
-	if hadValue == wantsValue then
-		return false
+	currentCount = GetVerifiedRecipeCount(order, recipeName)
+	_, changed = SetVerifiedRecipeCount(order, recipeName, currentCount + (verified and 1 or -1))
+	if changed then
+		order.UpdatedAt = TimestampText()
 	end
-
-	order.VerifiedRecipes[recipeName] = wantsValue and true or nil
-	order.UpdatedAt = TimestampText()
-	return true
+	return changed
 end
 
 local function MergeTradeMaterialCounts(order, offeredMaterialCounts, alreadyRecordedCounts)
@@ -1984,8 +2177,8 @@ local function TrackTradeAppliedRecipe(order, activeTrade)
 	end
 
 	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
-	if not activeTrade.AppliedRecipes[recipeName] then
-		activeTrade.AppliedRecipes[recipeName] = true
+	if GetAppliedRecipeCount(activeTrade, recipeName) <= 0 then
+		SetAppliedRecipeCount(activeTrade, recipeName, 1)
 		WorkbenchDebug("tracked trade application for", recipeName, "on", order.Customer, "(" .. tostring(activeTrade.LastSeenEnchantmentText) .. ")")
 	end
 	if activeTrade.CastedRecipeName == recipeName then
@@ -2006,9 +2199,8 @@ local function TrackCompletedTradeCast(order, activeTrade)
 		return false
 	end
 
-	activeTrade.AppliedRecipes = activeTrade.AppliedRecipes or {}
-	if not activeTrade.AppliedRecipes[recipeName] then
-		activeTrade.AppliedRecipes[recipeName] = true
+	if GetAppliedRecipeCount(activeTrade, recipeName) <= 0 then
+		SetAppliedRecipeCount(activeTrade, recipeName, 1)
 		WorkbenchDebug("trade completion fell back to the recorded cast for", recipeName, "on", order.Customer)
 	end
 	activeTrade.CastedRecipeName = nil
@@ -2023,9 +2215,21 @@ CommitTradeState = function(order, activeTrade)
 		return appliedRecipeCount, appliedMaterialCount
 	end
 
-	for recipeName in pairs(activeTrade.AppliedRecipes or {}) do
-		if SetRecipeVerifiedInternal(order, recipeName, true) then
-			appliedRecipeCount = appliedRecipeCount + 1
+	local appliedRecipes = activeTrade.AppliedRecipeCounts
+	if type(appliedRecipes) ~= "table" or next(appliedRecipes) == nil then
+		appliedRecipes = activeTrade.AppliedRecipes or {}
+	end
+
+	for recipeName in pairs(appliedRecipes) do
+		local currentVerifiedCount = GetVerifiedRecipeCount(order, recipeName)
+		local appliedCount = GetAppliedRecipeCount(activeTrade, recipeName)
+		local verifiedCount
+		local changed
+
+		verifiedCount, changed = SetVerifiedRecipeCount(order, recipeName, currentVerifiedCount + appliedCount)
+		if changed then
+			appliedRecipeCount = appliedRecipeCount + math.max(0, verifiedCount - currentVerifiedCount)
+			order.UpdatedAt = TimestampText()
 		end
 	end
 
@@ -2037,19 +2241,28 @@ CommitTradeState = function(order, activeTrade)
 	return appliedRecipeCount, appliedMaterialCount
 end
 
-local function IsRecipeVerifiedForDisplay(order, recipeName)
+local function GetDisplayedVerifiedRecipeCount(order, recipeName)
 	local activeTrade
+	local displayedCount
 
+	if not order or not recipeName or recipeName == "" then
+		return 0
+	end
+
+	activeTrade = GetActiveTradeForOrder(order)
+	displayedCount = GetVerifiedRecipeCount(order, recipeName)
+	if activeTrade then
+		displayedCount = displayedCount + GetAppliedRecipeCount(activeTrade, recipeName)
+	end
+	return math.min(GetRecipeRequiredCount(order, recipeName), displayedCount)
+end
+
+local function IsRecipeVerifiedForDisplay(order, recipeName, occurrenceIndex)
 	if not order or not recipeName or recipeName == "" then
 		return false
 	end
 
-	if order.VerifiedRecipes and order.VerifiedRecipes[recipeName] then
-		return true
-	end
-
-	activeTrade = GetActiveTradeForOrder(order)
-	return activeTrade and activeTrade.AppliedRecipes and activeTrade.AppliedRecipes[recipeName] and true or false
+	return math.max(1, NormalizeRecipeCount(occurrenceIndex or 1)) <= GetDisplayedVerifiedRecipeCount(order, recipeName)
 end
 
 local function GetDisplayedRecipeVerificationProgress(order)
@@ -2062,10 +2275,8 @@ local function GetDisplayedRecipeVerificationProgress(order)
 	end
 
 	total = #(order.Recipes or {})
-	for _, recipeName in ipairs(order.Recipes or {}) do
-		if IsRecipeVerifiedForDisplay(order, recipeName) then
-			checked = checked + 1
-		end
+	for recipeName in pairs(BuildRecipeCountMap(order.Recipes or {})) do
+		checked = checked + GetDisplayedVerifiedRecipeCount(order, recipeName)
 	end
 
 	return checked, total
@@ -2141,10 +2352,8 @@ function Workbench.GetRecipeVerificationProgress(order)
 	end
 
 	total = #(order.Recipes or {})
-	for _, recipeName in ipairs(order.Recipes or {}) do
-		if order.VerifiedRecipes and order.VerifiedRecipes[recipeName] then
-			checked = checked + 1
-		end
+	for recipeName in pairs(BuildRecipeCountMap(order.Recipes or {})) do
+		checked = checked + GetVerifiedRecipeCount(order, recipeName)
 	end
 
 	return checked, total
@@ -2278,6 +2487,7 @@ function Workbench.BeginTrade(customerName)
 		OrderId = order and order.Id or nil,
 		CastedRecipeName = nil,
 		AppliedRecipes = {},
+		AppliedRecipeCounts = {},
 		LastSeenEnchantItemName = "",
 		LastSeenEnchantmentText = "",
 		OfferedMaterialState = {},
@@ -2768,18 +2978,8 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecip
 		isNewOrder = true
 	end
 
-	local seen = {}
-	for _, recipeName in ipairs(order.Recipes) do
-		seen[recipeName] = true
-	end
-	for _, recipeName in ipairs(recipeNames) do
-		if not seen[recipeName] then
-			order.Recipes[#order.Recipes + 1] = recipeName
-			seen[recipeName] = true
-		end
-	end
-
-	table.sort(order.Recipes)
+	order.Recipes = MergeRecipeLists(order.Recipes, recipeNames)
+	EnsureOrderFields(order)
 	order.RequestedRecipeCount = math.max(#order.Recipes, math.floor(tonumber(requestedRecipeCount) or 0))
 	order.Message = TrimText(message)
 	order.UpdatedAt = TimestampText()
@@ -3887,13 +4087,15 @@ function Workbench.Refresh()
 
 	local recipeAnchor = frame.Detail.RecipesHeader
 	local detailContentWidth = GetDetailContentWidth(frame)
+	local displayedRecipeOccurrences = {}
 	for index, recipeName in ipairs(order.Recipes or {}) do
 		if not frame.Detail.RecipeLines[index] then
 			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail.Content, index)
 		end
 		local line = frame.Detail.RecipeLines[index]
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
-		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName)
+		displayedRecipeOccurrences[recipeName] = (displayedRecipeOccurrences[recipeName] or 0) + 1
+		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName, displayedRecipeOccurrences[recipeName])
 		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
 		line.CastButton.RecipeName = recipeName
 		if isVerified then

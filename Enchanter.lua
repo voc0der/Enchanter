@@ -284,6 +284,21 @@ local function ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthVa
 	return math.max(1, math.floor(requiredCount))
 end
 
+local function ExtractReagentDisplayName(reagentName, reagentLink)
+	if type(reagentName) == "string" and reagentName ~= "" then
+		return reagentName
+	end
+
+	if type(reagentLink) == "string" and reagentLink ~= "" then
+		local linkedName = reagentLink:match("%[(.-)%]")
+		if linkedName and linkedName ~= "" then
+			return linkedName
+		end
+	end
+
+	return reagentName
+end
+
 local function CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
 	local getNumReagents, getReagentInfo, getReagentLink = GetRecipeReagentApi(apiKind)
 	local materials = {}
@@ -295,9 +310,10 @@ local function CaptureRecipeMaterialsForIndex(recipeIndex, apiKind)
 	for reagentIndex = 1, getNumReagents(recipeIndex) or 0 do
 		local reagentName, _, thirdValue, fourthValue, fifthValue = getReagentInfo(recipeIndex, reagentIndex)
 		local reagentLink = getReagentLink and getReagentLink(recipeIndex, reagentIndex) or nil
-		if reagentName and reagentName ~= "" then
+		local displayName = ExtractReagentDisplayName(reagentName, reagentLink)
+		if (displayName and displayName ~= "") or (type(reagentLink) == "string" and reagentLink ~= "") then
 			materials[#materials + 1] = {
-				Name = reagentName,
+				Name = displayName,
 				Count = ExtractReagentCount(reagentLink, thirdValue, fourthValue, fifthValue),
 				Link = reagentLink,
 			}
@@ -482,6 +498,10 @@ local function ClearCraftFiltersForScan()
 end
 
 local function CountRecipeEntries(recipeMap)
+	if type(recipeMap) == "table" and #recipeMap > 0 then
+		return #recipeMap
+	end
+
 	local count = 0
 	if type(recipeMap) ~= "table" then
 		return 0
@@ -492,6 +512,14 @@ local function CountRecipeEntries(recipeMap)
 	end
 
 	return count
+end
+
+local function NormalizePositiveInteger(value, fallback)
+	local normalized = math.floor(tonumber(value) or 0)
+	if normalized < 1 then
+		return fallback or 1
+	end
+	return normalized
 end
 
 local function NormalizePhrase(value)
@@ -944,22 +972,31 @@ end
 
 function EC.GetMatchedRecipeNames(recipeMap)
 	local out = {}
-	local seen = {}
 	if type(recipeMap) ~= "table" then
 		return out
 	end
 
-	for key, value in pairs(recipeMap) do
-		local recipeName
-		if type(key) == "number" then
-			recipeName = value
-		else
-			recipeName = key
+	if #recipeMap > 0 then
+		for index = 1, #recipeMap do
+			local recipeName = recipeMap[index]
+			if type(recipeName) == "string" and recipeName ~= "" then
+				out[#out + 1] = recipeName
+			end
 		end
+	else
+		local seen = {}
+		for key, value in pairs(recipeMap) do
+			local recipeName
+			if type(key) == "number" then
+				recipeName = value
+			else
+				recipeName = key
+			end
 
-		if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
-			seen[recipeName] = true
-			out[#out + 1] = recipeName
+			if type(recipeName) == "string" and recipeName ~= "" and not seen[recipeName] then
+				seen[recipeName] = true
+				out[#out + 1] = recipeName
+			end
 		end
 	end
 
@@ -1319,6 +1356,60 @@ local function MergeRecipeMatches(targetMap, sourceMap)
 	return targetMap
 end
 
+local function GetRecipeMatchQuantity(parsedMessage, matchStart, matchEnd)
+	local prefixContext
+	local suffixContext
+	local quantity
+
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return 1
+	end
+
+	prefixContext = TrimText(string.sub(parsedMessage, 1, math.max(0, matchStart - 1)))
+	suffixContext = TrimText(string.sub(parsedMessage, matchEnd + 1))
+
+	quantity = suffixContext:match("^x%s*(%d+)%f[%D]")
+		or suffixContext:match("^(%d+)%s*x%f[%D]")
+		or prefixContext:match("^x%s*(%d+)$")
+		or prefixContext:match("%s+x%s*(%d+)$")
+		or prefixContext:match("^(%d+)%s*x$")
+		or prefixContext:match("%s+(%d+)%s*x$")
+
+	return NormalizePositiveInteger(quantity, 1)
+end
+
+local function ExpandRecipeMatchEntries(matchEntries)
+	local recipes = {}
+
+	if type(matchEntries) ~= "table" then
+		return recipes
+	end
+
+	for _, entry in ipairs(matchEntries) do
+		local recipeName = entry and entry.RecipeName
+		local quantity = NormalizePositiveInteger(entry and entry.Quantity, 1)
+		if type(recipeName) == "string" and recipeName ~= "" then
+			for _ = 1, quantity do
+				recipes[#recipes + 1] = recipeName
+			end
+		end
+	end
+
+	return recipes
+end
+
+local function AppendRecipeMatches(targetList, sourceList)
+	if type(targetList) ~= "table" or type(sourceList) ~= "table" then
+		return targetList
+	end
+
+	for _, recipeName in ipairs(sourceList) do
+		targetList[#targetList + 1] = recipeName
+	end
+
+	return targetList
+end
+
 local function MatchRecipeTags(parsedMessage, tagBuckets)
 	local candidates = {}
 	local matches = {}
@@ -1368,7 +1459,13 @@ local function MatchRecipeTags(parsedMessage, tagBuckets)
 
 			if not isOverlapping then
 				matchedRecipes[candidate.RecipeName] = true
-				matches[candidate.RecipeName] = candidate.Tag
+				matches[#matches + 1] = {
+					RecipeName = candidate.RecipeName,
+					Tag = candidate.Tag,
+					Start = candidate.Start,
+					Finish = candidate.Finish,
+					Quantity = GetRecipeMatchQuantity(parsedMessage, candidate.Start, candidate.Finish),
+				}
 				acceptedRanges[#acceptedRanges + 1] = {
 					Start = candidate.Start,
 					Finish = candidate.Finish,
@@ -1389,8 +1486,8 @@ local function GetRecipeRequestDetails(parsedMessage)
 	end
 
 	for _, segment in ipairs(segments) do
-		MergeRecipeMatches(matchedRecipeMap, MatchRecipeTags(segment, EC.RecipeTagBuckets))
-		MergeRecipeMatches(requestedRecipeMap, MatchRecipeTags(segment, EC.RequestRecipeTagBuckets))
+		AppendRecipeMatches(matchedRecipeMap, ExpandRecipeMatchEntries(MatchRecipeTags(segment, EC.RecipeTagBuckets)))
+		AppendRecipeMatches(requestedRecipeMap, ExpandRecipeMatchEntries(MatchRecipeTags(segment, EC.RequestRecipeTagBuckets)))
 	end
 
 	local matchedCount = CountRecipeEntries(matchedRecipeMap)
