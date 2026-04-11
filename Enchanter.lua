@@ -1106,6 +1106,27 @@ local function GetConfiguredRecipeTags(recipeName)
 	return nil
 end
 
+local function GetScannedRecipeTags(recipeName)
+	recipeName = TrimText(recipeName)
+	if recipeName == "" then
+		return nil
+	end
+
+	local configuredTags = GetConfiguredRecipeTags(recipeName)
+	if type(configuredTags) == "table" and #configuredTags > 0 then
+		return configuredTags
+	end
+
+	local normalizedRecipeName = string.lower(recipeName)
+	if string.find(normalizedRecipeName, "enchant ", 1, true) == 1 then
+		-- Preserve unsupported enchant formulas as exact-name-only matches so scan coverage can grow
+		-- without broadening shorthand aliases or custom keyword behavior.
+		return { normalizedRecipeName }
+	end
+
+	return nil
+end
+
 local function MergePhraseLists(...)
 	local merged = {}
 	local seen = {}
@@ -1822,13 +1843,14 @@ function EC.GetItems()
 
 		for index = 1, getCount() or 0 do
 			local recipeName = getInfo(index)
-			if recipeName and not IsRecipeHeader(index, apiKind) and EC.RecipeTags["enGB"][recipeName] then
+			local recipeTags = GetScannedRecipeTags(recipeName)
+			if recipeName and not IsRecipeHeader(index, apiKind) and recipeTags then
 				if selectRecipe then
 					selectRecipe(index)
 				end
 				recipeLinks[recipeName] = getLink and getLink(index) or nil
 				recipeMats[recipeName] = CaptureRecipeMaterials(index, apiKind)
-				recipeList[recipeName] = EC.RecipeTags["enGB"][recipeName]
+				recipeList[recipeName] = recipeTags
 			end
 		end
 
