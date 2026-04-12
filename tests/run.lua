@@ -291,6 +291,7 @@ local function setup_env(opts)
         function frame:SetBackdropColor(...) self.backdrop_color = { ... } end
         function frame:SetBackdropBorderColor(...) self.backdrop_border_color = { ... } end
         function frame:SetScript(script_name, fn) self.scripts[script_name] = fn end
+        function frame:GetScript(script_name) return self.scripts[script_name] end
         function frame:CreateFontString() return new_font_string() end
         function frame:CreateTexture() return new_texture() end
         function frame:SetScrollChild(child) self.scroll_child = child end
@@ -440,6 +441,10 @@ local function setup_env(opts)
     _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
     }, opts.craft_frame_shown)
+    _G.CraftCreateButton = new_frame("Button", "CraftCreateButton", _G.CraftFrame)
+    _G.CraftCreateButton:SetScript("OnClick", function()
+        DoCraft(GetCraftSelectionIndex())
+    end)
     _G.CraftFrame_Update = function()
         state.craft_frame_update_calls = (state.craft_frame_update_calls or 0) + 1
         if opts.simulate_craft_frame_update_cancels_targeting and state.spell_is_targeting then
@@ -3516,7 +3521,7 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
     addon.SetCraftSearchText("weapon")
 
     CraftFrame_SetSelection(1)
-    DoCraft(GetCraftSelectionIndex())
+    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
 
     assert_true(not state.do_craft_blocked, "filtered enchanting search should not make the Enchant button silently fail")
     assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
@@ -3549,7 +3554,7 @@ local function test_enchanting_craft_search_does_not_cancel_targeting_after_ench
     addon.EnchantingCraftSearchBox.scripts["OnEditFocusGained"](addon.EnchantingCraftSearchBox)
 
     CraftFrame_SetSelection(1)
-    DoCraft(GetCraftSelectionIndex())
+    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
 
     assert_true(addon.EnchantingCraftSearchBox.cleared_focus, "enchant click should clear the custom search box focus first")
     assert_true(not state.spell_targeting_canceled_by_refresh, "post-click craft refresh should not cancel the pending enchant targeting cursor")
