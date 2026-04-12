@@ -1,7 +1,17 @@
 ## [2.1.49] - 2026-04-12
 
 ### Fixed
-- Routed the legacy enchanting `CraftFrame` Enchant button through the real Blizzard button-click path for filtered search results, and stopped wrapping `DoCraft` in `pcall`, so clicking `Enchant` once again starts the normal blue item-apply cursor instead of failing silently
+- Packaged the full legacy enchanting `CraftFrame` search-path repair together, so filtered results once again flow through the real `CraftCreateButton` click path and reliably start the normal blue apply cursor
+
+## [2.1.48] - 2026-04-11
+
+### Fixed
+- Restored the Enchant button for filtered search results by calling `DoCraft` directly instead of through `pcall`; `pcall` was severing WoW's hardware-event secure execution chain and silently blocking the protected C API call that starts the enchanting targeting cursor
+
+## [2.1.47] - 2026-04-11
+
+### Fixed
+- Fixed filtered search results not crafting when clicking `CraftCreateButton` directly, by remapping the button's click handler to the correct original craft index when Enchanter's custom search is active
 
 ## [2.1.46] - 2026-04-11
 
