@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.52`
+Current version: `2.1.53`
 
 ## What It Does
 
@@ -28,6 +28,7 @@ Current version: `2.1.52`
 - Auto-invite matched players when `Auto Invite` is enabled
 - Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
 - Whisper the matching enchant links with a configurable delay and message prefix
+- Randomize recipe whisper prefixes by entering multiple `Message Prefix` choices separated with ` , ` in `/ec config`
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper
 - Automatically pause chat matching if you go AFK while it is running

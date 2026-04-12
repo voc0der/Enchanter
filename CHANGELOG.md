@@ -1,3 +1,8 @@
+## [2.1.53] - 2026-04-12
+
+### Added
+- Let `/ec config` -> `Message Prefix` rotate randomly between multiple choices when you separate them with ` , `, while keeping plain punctuation commas inside a single prefix literal
+
 ## [2.1.52] - 2026-04-12
 
 ### Fixed

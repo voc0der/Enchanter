@@ -29,8 +29,8 @@ EC.Simulation = EC.Simulation or {}
 
 local pendingInviteWindow = 10
 local simulationInterval = 180
-local simulationSeeded = false
-local simulationFallbackCounter = 0
+local randomSeeded = false
+local randomFallbackCounter = 0
 local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
 local ENCHANTING_SPELL_ID = 7411
 local RECIPE_FORMULA_PREFIX = "Formula: "
@@ -1153,8 +1153,8 @@ local function MarkSimulatedCustomer(name)
 	end
 end
 
-local function SeedSimulationRandom()
-	if simulationSeeded then
+local function SeedRandom()
+	if randomSeeded then
 		return
 	end
 
@@ -1177,7 +1177,7 @@ local function SeedSimulationRandom()
 		pcall(randomFn)
 		pcall(randomFn)
 	end
-	simulationSeeded = true
+	randomSeeded = true
 end
 
 local function PickRandomIndex(list)
@@ -1185,7 +1185,7 @@ local function PickRandomIndex(list)
 		return nil
 	end
 
-	SeedSimulationRandom()
+	SeedRandom()
 
 	local randomFn = (math and math.random) or random
 	local index
@@ -1198,8 +1198,8 @@ local function PickRandomIndex(list)
 	end
 
 	if not index or index < 1 or index > #list then
-		simulationFallbackCounter = simulationFallbackCounter + 1
-		index = ((simulationFallbackCounter - 1) % #list) + 1
+		randomFallbackCounter = randomFallbackCounter + 1
+		index = ((randomFallbackCounter - 1) % #list) + 1
 	end
 
 	return math.floor(index)
@@ -1211,6 +1211,54 @@ local function PickRandom(list)
 		return nil
 	end
 	return list[index]
+end
+
+local function SplitMessagePrefixChoices(value)
+	local out = {}
+	local prefixText = tostring(value or "")
+	local chunkStart = 1
+
+	if prefixText == "" then
+		return out
+	end
+
+	while true do
+		local delimiterStart, delimiterEnd = string.find(prefixText, "%s+,%s*", chunkStart)
+		if not delimiterStart then
+			break
+		end
+
+		local choice = TrimText(string.sub(prefixText, chunkStart, delimiterStart - 1))
+		if choice ~= "" then
+			out[#out + 1] = choice
+		end
+
+		chunkStart = delimiterEnd + 1
+	end
+
+	local finalChoice = TrimText(string.sub(prefixText, chunkStart))
+	if finalChoice ~= "" then
+		out[#out + 1] = finalChoice
+	end
+
+	return out
+end
+
+local function GetRecipeWhisperPrefix()
+	local prefixChoices = SplitMessagePrefixChoices(EC and EC.DB and EC.DB.MsgPrefix)
+	local prefix = PickRandom(prefixChoices)
+
+	if not prefix or prefix == "" then
+		prefix = TrimText(EC and EC.DB and EC.DB.MsgPrefix or EC.DefaultMsg)
+	end
+	if prefix == "" then
+		prefix = TrimText(EC.DefaultMsg)
+	end
+	if prefix == "" then
+		return ""
+	end
+
+	return prefix .. " "
 end
 
 local function GetSimulationRecipePool()
@@ -1977,7 +2025,7 @@ end
 
 function EC.BuildRecipeWhisper(recipeNames, requestedRecipeCount)
 	local matchedRecipeNames = EC.GetMatchedRecipeNames(recipeNames)
-	local msg = EC.DB.MsgPrefix or EC.DefaultMsg
+	local msg = GetRecipeWhisperPrefix()
 	local matchedCount = #matchedRecipeNames
 	local requestedCount = math.max(matchedCount, math.floor(tonumber(requestedRecipeCount) or 0))
 

@@ -1920,6 +1920,66 @@ local function test_parse_message_invites_once_and_whispers_link()
     assert_equal(state.timer_delays[2], 1, "whisper delay should flow through the timer helper")
 end
 
+local function test_message_prefix_randomizes_across_comma_separated_choices()
+    local random_results = { 2, 1 }
+    local random_choice_calls = 0
+    local addon, state = setup_env({
+        omit_math_random = true,
+        omit_math_randomseed = true,
+        global_random = function(max_value)
+            if max_value == nil then
+                return 1
+            end
+            random_choice_calls = random_choice_calls + 1
+            assert_equal(max_value, 3, "randomized message prefixes should pick from every configured choice")
+            return random_results[random_choice_calls]
+        end,
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ,Yo I got ,Wass good I got you fam ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Random-One")
+    addon.ParseMessage("LF mongoose pst", "Buyer-Random-Two")
+
+    assert_equal(#state.whispers, 2, "randomized prefixes should still whisper each matched customer once")
+    assert_true(string.find(state.whispers[1].message, "Yo I got ", 1, true) == 1, "the first whisper should use the randomly selected second prefix")
+    assert_true(string.find(state.whispers[2].message, "I can do ", 1, true) == 1, "the second whisper should reroll the prefix for the next customer")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "randomized prefixes should still include recipe links")
+    assert_equal(random_choice_calls, 2, "each outgoing recipe whisper should choose its prefix independently")
+end
+
+local function test_message_prefix_keeps_literal_commas_inside_one_phrase()
+    local addon = setup_env({
+        db = {
+            MsgPrefix = "Sending inv, can do ",
+        },
+        char_db = {
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local whisper = addon.BuildRecipeWhisper({
+        ["Enchant Weapon - Mongoose"] = true,
+    }, 1)
+
+    assert_true(string.find(whisper, "Sending inv, can do ", 1, true) == 1, "commas inside a single prefix phrase should stay literal")
+    assert_true(string.find(whisper, "can do [Enchant Weapon - Mongoose]", 1, true) ~= nil, "single-prefix commas should still keep normal link spacing")
+end
+
 local function test_parse_message_warns_for_incomplete_order()
     local addon, state = setup_env({
         db = {
@@ -4725,6 +4785,8 @@ test_parse_message_keeps_adjacent_linked_enchants_from_blacklisting_each_other()
 test_parse_message_ignores_mid_token_recipe_alias_false_positive()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
+test_message_prefix_randomizes_across_comma_separated_choices()
+test_message_prefix_keeps_literal_commas_inside_one_phrase()
 test_parse_message_warns_for_incomplete_order()
 test_parse_message_skips_incomplete_warning_when_disabled()
 test_incomplete_order_can_be_left_unflagged_until_corrected()
