@@ -14,12 +14,12 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.49`
+Current version: `2.1.50`
 
 ## What It Does
 
 - Run `/ec scan` once after learning recipes to build your known-enchant list
-- Add a search box back to the legacy enchanting craft pane, with filtering that stays compatible with scans, workbench casting, the live Enchant button, and the active enchant targeting cursor
+- Restore a search box to the enchanting profession pane when the client leaves Blizzard's native search control unavailable there
 - Match trade-chat requests against configured recipe tags
 - Avoid starting shorthand matches in the middle of unrelated tokens, so posts like `1815 resto druid LF 2's partner` do not trip `15 res`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`

@@ -61,7 +61,6 @@ local original_math_random = math.random
 local original_math_randomseed = math.randomseed
 local original_global_random = _G.random
 local original_global_randomseed = _G.randomseed
-local original_global_pcall = _G.pcall
 
 local function setup_env(opts)
     opts = opts or {}
@@ -123,7 +122,6 @@ local function setup_env(opts)
         previous_target_name = opts.previous_target_name or nil,
         raid_targets = copy_table(opts.raid_targets or {}),
         selected_craft = tonumber(opts.selected_craft) or nil,
-        spell_is_targeting = opts.spell_is_targeting and true or false,
         set_raid_target_calls = {},
         selected_trade_skill = nil,
         trade_skill_frame_selection = nil,
@@ -292,7 +290,6 @@ local function setup_env(opts)
         function frame:SetBackdropColor(...) self.backdrop_color = { ... } end
         function frame:SetBackdropBorderColor(...) self.backdrop_border_color = { ... } end
         function frame:SetScript(script_name, fn) self.scripts[script_name] = fn end
-        function frame:GetScript(script_name) return self.scripts[script_name] end
         function frame:CreateFontString() return new_font_string() end
         function frame:CreateTexture() return new_texture() end
         function frame:SetScrollChild(child) self.scroll_child = child end
@@ -350,12 +347,6 @@ local function setup_env(opts)
     end
     _G.random = original_global_random
     _G.randomseed = original_global_randomseed
-    _G.pcall = function(fn, ...)
-        state.pcall_depth = (state.pcall_depth or 0) + 1
-        local results = { original_global_pcall(fn, ...) }
-        state.pcall_depth = math.max(0, (state.pcall_depth or 1) - 1)
-        return table.unpack(results)
-    end
     if opts.omit_global_random then
         _G.random = nil
     elseif opts.global_random ~= nil then
@@ -409,12 +400,6 @@ local function setup_env(opts)
         }
         return false
     end
-    _G.SpellIsTargeting = function()
-        return state.spell_is_targeting and true or false
-    end
-    _G.CursorHasSpell = function()
-        return state.spell_is_targeting and true or false
-    end
     _G.SOUNDKIT = {
         IG_MAINMENU_OPTION_CHECKBOX_ON = 856,
         U_CHAT_SCROLL_BUTTON = 1115,
@@ -448,17 +433,6 @@ local function setup_env(opts)
     _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
     }, opts.craft_frame_shown)
-    _G.CraftCreateButton = new_frame("Button", "CraftCreateButton", _G.CraftFrame)
-    _G.CraftCreateButton:SetScript("OnClick", function()
-        DoCraft(GetCraftSelectionIndex())
-    end)
-    _G.CraftFrame_Update = function()
-        state.craft_frame_update_calls = (state.craft_frame_update_calls or 0) + 1
-        if opts.simulate_craft_frame_update_cancels_targeting and state.spell_is_targeting then
-            state.spell_targeting_canceled_by_refresh = true
-            state.spell_is_targeting = false
-        end
-    end
     _G.CraftFrameAvailableFilterCheckButton = {
         checked = state.craft_available_only and true or false,
     }
@@ -519,69 +493,15 @@ local function setup_env(opts)
         state.selected_craft = index
         _G.CraftFrame.selectedCraft = index
     end
-    if opts.simulate_blizzard_craft_frame_selection then
-        _G.CraftFrame_SetSelection = function(index)
-            if not index then
-                return
-            end
-
-            local craftName, craftSubSpellName, craftType = GetCraftInfo(index)
-            state.craft_frame_selection_info = {
-                index = index,
-                name = craftName,
-                sub_spell_name = craftSubSpellName,
-                craft_type = craftType,
-            }
-
-            if craftType == "header" then
-                return
-            end
-
-            SelectCraft(index)
-            if GetCraftSelectionIndex() > GetNumCrafts() then
-                state.craft_frame_selection_out_of_range = true
-                return
-            end
-
-            state.craft_frame_selection = index
-            state.selected_craft = _G.CraftFrame.selectedCraft
-            state.craft_frame_selected_num_reagents = GetCraftNumReagents(index)
-        end
-    else
-        _G.CraftFrame_SetSelection = function(index)
-            state.craft_frame_selection = index
-            state.selected_craft = index
-            _G.CraftFrame.selectedCraft = index
-        end
+    _G.CraftFrame_SetSelection = function(index)
+        state.craft_frame_selection = index
+        state.selected_craft = index
+        _G.CraftFrame.selectedCraft = index
     end
     _G.GetCraftSelectionIndex = function()
         return tonumber(state.selected_craft) or 0
     end
     _G.DoCraft = function(index)
-        if opts.simulate_do_craft_blocked_in_pcall and (state.pcall_depth or 0) > 0 then
-            state.do_craft_blocked = true
-            return false
-        end
-
-        if opts.simulate_blizzard_do_craft_uses_live_api then
-            local selectedIndex = tonumber(GetCraftSelectionIndex()) or 0
-            local craftName = GetCraftInfo(index)
-
-            state.do_craft_live_attempt = {
-                index = index,
-                selected = selectedIndex,
-                craft_name = craftName,
-            }
-            if selectedIndex ~= index or not craftName then
-                state.do_craft_blocked = true
-                return false
-            end
-        end
-
-        if opts.simulate_enchant_starts_targeting then
-            state.spell_is_targeting = true
-        end
-
         state.do_craft_calls[#state.do_craft_calls + 1] = {
             index = index,
             selected = state.selected_craft,
@@ -589,10 +509,6 @@ local function setup_env(opts)
         state.last_do_craft = {
             index = index,
         }
-
-        if opts.simulate_craft_update_after_do_craft and state.event_handlers["CRAFT_UPDATE"] then
-            state.event_handlers["CRAFT_UPDATE"]()
-        end
     end
     _G.GetCraftNumReagents = function(index)
         local craft = get_visible_crafts()[index]
@@ -3440,183 +3356,58 @@ local function test_scan_clears_trade_skill_filters_and_restores_them_afterward(
     assert_equal(TradeSearchInputBox:GetText(), "zzz", "trade-skill search text should be restored after scanning")
 end
 
-local function test_enchanting_craft_pane_gets_a_working_search_box()
+local function test_enchanting_trade_skill_pane_gets_a_working_search_box()
     local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
-        crafts = {
+        trade_skill_frame_shown = true,
+        trade_skill_line_name = "Enchanting",
+        trade_skill_search_text = "boots",
+        trade_skills = {
             {
                 name = "Enchant Boots - Minor Speed",
-                link = "craft:13890",
+                link = "spell:13890",
             },
             {
                 name = "Enchant Weapon - Crusader",
-                link = "craft:20034",
+                link = "spell:20034",
             },
         },
     })
 
     addon.OnLoad()
-    state.event_handlers["CRAFT_SHOW"]()
+    state.event_handlers["TRADE_SKILL_SHOW"]()
 
-    local searchBox = addon.EnchantingCraftSearchBox
-    local visibleName = GetCraftInfo(1)
+    local searchBox = addon.EnchantingTradeSkillSearchBox
+    local visibleName = GetTradeSkillInfo(1)
 
-    assert_not_nil(searchBox, "enchanting craft pane should create a dedicated search box")
-    assert_true(searchBox.shown, "the enchanting craft search box should be visible while the pane is open")
-    assert_equal(searchBox.parent, CraftFrame, "the enchanting craft search box should live on the craft frame")
-    assert_equal(visibleName, "Enchant Boots - Minor Speed", "craft pane should still expose the full unfiltered list before searching")
+    assert_not_nil(searchBox, "enchanting should create a fallback search box when the pane does not expose one")
+    assert_true(searchBox.shown, "the fallback enchanting search box should be visible while the pane is open")
+    assert_equal(searchBox.parent, TradeSkillFrame, "the fallback search box should live on the enchanting trade-skill frame")
+    assert_equal(searchBox:GetText(), "boots", "the fallback search box should mirror the current trade-skill search text")
+    assert_equal(GetNumTradeSkills(), 1, "the existing trade-skill search filter should still be active before editing the fallback box")
+    assert_equal(visibleName, "Enchant Boots - Minor Speed", "the initial active search should keep the matching recipe visible")
 
     searchBox:SetText("weapon")
     searchBox.scripts["OnTextChanged"](searchBox)
 
-    visibleName = GetCraftInfo(1)
-    assert_equal(addon.GetCraftSearchText(), "weapon", "typing in the enchanting craft search box should update the runtime search state")
-    assert_equal(GetNumCrafts(), 1, "craft search should filter the visible enchanting recipe list")
-    assert_equal(visibleName, "Enchant Weapon - Crusader", "craft search should keep the matching enchanting recipe visible")
+    visibleName = GetTradeSkillInfo(1)
+    assert_equal(state.trade_skill_search_text, "weapon", "typing in the fallback enchanting search box should drive the trade-skill name filter")
+    assert_equal(TradeSearchInputBox:GetText(), "weapon", "the hidden native trade-skill search text should stay in sync with the fallback box")
+    assert_equal(GetNumTradeSkills(), 1, "filtering from the fallback search box should narrow the visible recipe list")
+    assert_equal(visibleName, "Enchant Weapon - Crusader", "the fallback search box should update the visible enchanting recipes")
 end
 
-local function test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
+local function test_non_enchanting_trade_skill_pane_skips_the_fallback_search_box()
     local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
-        require_craft_selection_for_reagents = true,
-        simulate_blizzard_craft_frame_selection = true,
-        crafts = {
-            {
-                name = "Enchant Boots - Minor Speed",
-                link = "craft:13890",
-            },
-            {
-                name = "Enchant Weapon - Crusader",
-                link = "craft:20034",
-                reagents = {
-                    { name = "Righteous Orb", count = 1, link = "item:12811" },
-                },
-            },
-        },
+        trade_skill_frame_shown = true,
+        trade_skill_line_name = "Leatherworking",
     })
 
     addon.OnLoad()
-    state.event_handlers["CRAFT_SHOW"]()
-    addon.SetCraftSearchText("weapon")
-
-    CraftFrame_SetSelection(1)
-
-    assert_equal(state.craft_frame_selection_info.name, "Enchant Weapon - Crusader", "filtered craft selection should resolve the original recipe name before populating the detail pane")
-    assert_equal(state.selected_craft, 2, "filtered craft selection should keep the underlying original craft index selected")
-    assert_equal(GetCraftSelectionIndex(), 1, "filtered craft selection should still expose the visible filtered index to the UI")
-    assert_equal(state.craft_frame_selected_num_reagents, 1, "filtered craft selection should still populate reagent details from the original recipe data")
-    assert_true(not state.craft_frame_selection_out_of_range, "filtered craft selection should not trip Blizzard's out-of-range selection guard")
-end
-
-local function test_enchanting_craft_search_keeps_the_enchant_button_working()
-    local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
-        simulate_blizzard_craft_frame_selection = true,
-        simulate_blizzard_do_craft_uses_live_api = true,
-        simulate_do_craft_blocked_in_pcall = true,
-        crafts = {
-            {
-                name = "Enchant Boots - Minor Speed",
-                link = "craft:13890",
-            },
-            {
-                name = "Enchant Weapon - Crusader",
-                link = "craft:20034",
-            },
-        },
-    })
-
-    addon.OnLoad()
-    state.event_handlers["CRAFT_SHOW"]()
-    addon.SetCraftSearchText("weapon")
-
-    CraftFrame_SetSelection(1)
-    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
-
-    assert_true(not state.do_craft_blocked, "filtered enchanting search should not route DoCraft through pcall and lose the protected Enchant button action")
-    assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
-end
-
-local function test_enchanting_craft_search_does_not_cancel_targeting_after_enchant_click()
-    local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
-        simulate_blizzard_craft_frame_selection = true,
-        simulate_enchant_starts_targeting = true,
-        simulate_craft_update_after_do_craft = true,
-        simulate_craft_frame_update_cancels_targeting = true,
-        crafts = {
-            {
-                name = "Enchant Boots - Minor Speed",
-                link = "craft:13890",
-            },
-            {
-                name = "Enchant Weapon - Crusader",
-                link = "craft:20034",
-            },
-        },
-    })
-
-    addon.OnLoad()
-    state.event_handlers["CRAFT_SHOW"]()
-    addon.SetCraftSearchText("weapon")
-    addon.EnchantingCraftSearchBox:SetText("weapon")
-    addon.EnchantingCraftSearchBox.scripts["OnEditFocusGained"](addon.EnchantingCraftSearchBox)
-
-    CraftFrame_SetSelection(1)
-    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
-
-    assert_true(addon.EnchantingCraftSearchBox.cleared_focus, "enchant click should clear the custom search box focus first")
-    assert_true(not state.spell_targeting_canceled_by_refresh, "post-click craft refresh should not cancel the pending enchant targeting cursor")
-    assert_true(state.spell_is_targeting, "filtered enchanting results should still leave the targeting cursor active after clicking Enchant")
-end
-
-local function test_scan_clears_craft_filters_and_restores_search_afterward()
-    local addon = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
-        craft_available_only = true,
-        craft_filter = 1,
-        craft_slots = { "INVTYPE_FEET" },
-        crafts = {
-            {
-                name = "Enchant Boots - Minor Speed",
-                link = "craft:13890",
-                filter_index = 1,
-                num_available = 0,
-                reagents = {
-                    { name = "Soul Dust", count = 6, link = "item:11083" },
-                },
-            },
-        },
-    })
-
-    addon.SetCraftSearchText("zzz")
-
-    local ok = addon.GetItems()
-
-    assert_true(ok, "scan should still succeed after temporarily clearing craft filters and search text")
-    assert_not_nil(EnchanterDBChar.RecipeList["Enchant Boots - Minor Speed"], "scan should capture enchanting crafts even when the pane search would otherwise hide them")
-    assert_true(CraftFrameAvailableFilterCheckButton:GetChecked(), "craft makeable filter should be restored after scanning")
-    assert_equal(GetCraftFilter(1), true, "craft slot filter should be restored after scanning")
-    assert_equal(addon.GetCraftSearchText(), "zzz", "craft search text should be restored after scanning")
-end
-
-local function test_non_enchanting_craft_pane_skips_the_search_box()
-    local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Blacksmithing",
-    })
-
-    addon.OnLoad()
-    state.event_handlers["CRAFT_SHOW"]()
+    state.event_handlers["TRADE_SKILL_SHOW"]()
 
     assert_true(
-        addon.EnchantingCraftSearchBox == nil or addon.EnchantingCraftSearchBox.shown == false,
-        "the craft search box should stay scoped to enchanting"
+        addon.EnchantingTradeSkillSearchBox == nil or addon.EnchantingTradeSkillSearchBox.shown == false,
+        "the fallback search box should stay scoped to the enchanting pane"
     )
 end
 
@@ -3842,8 +3633,6 @@ end
 
 local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
     local addon, state = setup_env({
-        craft_frame_shown = true,
-        craft_skill_line_name = "Enchanting",
         craft_available_only = true,
         craft_filter = 1,
         craft_slots = { "INVTYPE_WEAPON" },
@@ -3857,8 +3646,6 @@ local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clear
         },
     })
 
-    addon.SetCraftSearchText("zzz")
-
     local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
 
     assert_true(casted, "cast should still start when only the legacy craft api exposes the recipe")
@@ -3867,7 +3654,6 @@ local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clear
     assert_equal(state.craft_filter, 1, "craft casting should restore the previous craft slot filter after casting")
     assert_true(state.craft_available_only, "craft casting should restore the previous makeable-only filter after casting")
     assert_true(CraftFrameAvailableFilterCheckButton.checked, "craft casting should keep the craft filter checkbox aligned with the restored state")
-    assert_equal(addon.GetCraftSearchText(), "zzz", "craft casting should restore the previous craft search text after temporarily clearing it")
 end
 
 local function test_workbench_legacy_timestamps_are_reformatted_on_load()
@@ -4979,12 +4765,8 @@ test_scan_marks_empty_link_text_reagents_pending_until_item_data_arrives()
 test_workbench_lazily_hydrates_unresolved_material_names_before_render()
 test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
-test_enchanting_craft_pane_gets_a_working_search_box()
-test_enchanting_craft_search_keeps_selection_on_original_recipe_data()
-test_enchanting_craft_search_keeps_the_enchant_button_working()
-test_enchanting_craft_search_does_not_cancel_targeting_after_enchant_click()
-test_scan_clears_craft_filters_and_restores_search_afterward()
-test_non_enchanting_craft_pane_skips_the_search_box()
+test_enchanting_trade_skill_pane_gets_a_working_search_box()
+test_non_enchanting_trade_skill_pane_skips_the_fallback_search_box()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()

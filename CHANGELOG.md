@@ -1,32 +1,7 @@
-## [2.1.49] - 2026-04-12
+## [2.1.50] - 2026-04-12
 
 ### Fixed
-- Packaged the full legacy enchanting `CraftFrame` search-path repair together, so filtered results once again flow through the real `CraftCreateButton` click path and reliably start the normal blue apply cursor
-
-## [2.1.48] - 2026-04-11
-
-### Fixed
-- Restored the Enchant button for filtered search results by calling `DoCraft` directly instead of through `pcall`; `pcall` was severing WoW's hardware-event secure execution chain and silently blocking the protected C API call that starts the enchanting targeting cursor
-
-## [2.1.47] - 2026-04-11
-
-### Fixed
-- Fixed filtered search results not crafting when clicking `CraftCreateButton` directly, by remapping the button's click handler to the correct original craft index when Enchanter's custom search is active
-
-## [2.1.46] - 2026-04-11
-
-### Fixed
-- Stopped Enchanter's legacy `CraftFrame` search refresh path from interfering with the live enchant targeting cursor, so filtered search results can still start and hold the normal glowing-hand enchant flow after clicking `Enchant`
-
-## [2.1.45] - 2026-04-11
-
-### Fixed
-- Kept the legacy enchanting `CraftFrame` Enchant button working while the pane is filtered by Enchanter's custom search box, so matching search results still start the glowing-hand enchant flow correctly
-
-## [2.1.44] - 2026-04-11
-
-### Fixed
-- Restored a working search box to the legacy enchanting `CraftFrame`, with Enchanter-managed filtering that clears and restores correctly for `/ec scan` and legacy craft casts
+- Rolled the addon back to the exact `03bec00f720c048ae2c10831bd65584011afe891` code state so it behaves exactly like that revision again
 
 ## [2.1.43] - 2026-04-11
 
