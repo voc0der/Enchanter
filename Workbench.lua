@@ -1835,6 +1835,9 @@ local function UpdateGroupedCustomerSnapshot(state)
 
 	runtime.GroupedCustomerSnapshot = currentSnapshot
 	if runtime.GroupedCustomerSnapshotInitialized and joinedCount > 0 then
+		if not state.Visible then
+			Workbench.Show()
+		end
 		if EC and EC.HandleGroupedCustomerJoin then
 			EC.HandleGroupedCustomerJoin(joinedCount)
 		end

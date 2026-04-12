@@ -1,3 +1,9 @@
+## [2.1.53] - 2026-04-12
+
+### Added
+- Let `/ec config` -> `Message Prefix` rotate randomly between multiple choices when you separate them with ` , `, while keeping plain punctuation commas inside a single prefix literal
+- Auto-show the hidden workbench when a queued customer newly joins your party or raid
+
 ## [2.1.52] - 2026-04-12
 
 ### Fixed

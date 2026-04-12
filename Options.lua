@@ -610,6 +610,7 @@ function EC.OptionsInit()
 	EC.OptionsBuilder.Indent(10)
 	EC.OptionsBuilder.AddTextToCurrentPanel('Use "," to separate patterns. Global blacklist entries still block the whole message; recipe blacklists now live in the Recipe Customizations subcategory.', 700)
 	EC.OptionsBuilder.AddSpacerToPanel()
+	EC.OptionsBuilder.AddTextToCurrentPanel('Use " ," between Message Prefix choices to randomize one per whisper. Plain commas inside one phrase stay literal.', 700)
 
 	MakeSavedEditBox(EC.DB, "MsgPrefix", EC.DefaultMsg, "Message Prefix", 445, 200, false)
 	MakeSavedEditBox(EC.DB, "LfWhisperMsg", EC.DefaultLfWhisperMsg, "Generic request whisper", 445, 200, false)

@@ -1920,6 +1920,66 @@ local function test_parse_message_invites_once_and_whispers_link()
     assert_equal(state.timer_delays[2], 1, "whisper delay should flow through the timer helper")
 end
 
+local function test_message_prefix_randomizes_across_comma_separated_choices()
+    local random_results = { 2, 1 }
+    local random_choice_calls = 0
+    local addon, state = setup_env({
+        omit_math_random = true,
+        omit_math_randomseed = true,
+        global_random = function(max_value)
+            if max_value == nil then
+                return 1
+            end
+            random_choice_calls = random_choice_calls + 1
+            assert_equal(max_value, 3, "randomized message prefixes should pick from every configured choice")
+            return random_results[random_choice_calls]
+        end,
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            MsgPrefix = "I can do ,Yo I got ,Wass good I got you fam ",
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Random-One")
+    addon.ParseMessage("LF mongoose pst", "Buyer-Random-Two")
+
+    assert_equal(#state.whispers, 2, "randomized prefixes should still whisper each matched customer once")
+    assert_true(string.find(state.whispers[1].message, "Yo I got ", 1, true) == 1, "the first whisper should use the randomly selected second prefix")
+    assert_true(string.find(state.whispers[2].message, "I can do ", 1, true) == 1, "the second whisper should reroll the prefix for the next customer")
+    assert_true(string.find(state.whispers[1].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "randomized prefixes should still include recipe links")
+    assert_equal(random_choice_calls, 2, "each outgoing recipe whisper should choose its prefix independently")
+end
+
+local function test_message_prefix_keeps_literal_commas_inside_one_phrase()
+    local addon = setup_env({
+        db = {
+            MsgPrefix = "Sending inv, can do ",
+        },
+        char_db = {
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local whisper = addon.BuildRecipeWhisper({
+        ["Enchant Weapon - Mongoose"] = true,
+    }, 1)
+
+    assert_true(string.find(whisper, "Sending inv, can do ", 1, true) == 1, "commas inside a single prefix phrase should stay literal")
+    assert_true(string.find(whisper, "can do [Enchant Weapon - Mongoose]", 1, true) ~= nil, "single-prefix commas should still keep normal link spacing")
+end
+
 local function test_parse_message_warns_for_incomplete_order()
     local addon, state = setup_env({
         db = {
@@ -3564,6 +3624,35 @@ local function test_grouped_customer_join_marks_player_with_star()
     assert_equal(#state.set_raid_target_calls, 1, "the star marker should only be applied once per join transition")
 end
 
+local function test_grouped_customer_join_auto_shows_hidden_workbench()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Unhide")
+    addon.Workbench.Hide()
+
+    assert_true(not frame:IsShown(), "workbench should stay hidden before the queued customer joins the group")
+    assert_true(not workbenchState.Visible, "hidden workbench state should persist before the customer joins")
+
+    state.current_party_members[1] = "Buyer-Unhide"
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_true(frame:IsShown(), "a queued customer joining the group should automatically show the hidden workbench")
+    assert_true(workbenchState.Visible, "auto-show should persist the visible workbench state")
+end
+
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
     local addon, state = setup_env({
         trade_skills = {
@@ -4725,6 +4814,8 @@ test_parse_message_keeps_adjacent_linked_enchants_from_blacklisting_each_other()
 test_parse_message_ignores_mid_token_recipe_alias_false_positive()
 test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
+test_message_prefix_randomizes_across_comma_separated_choices()
+test_message_prefix_keeps_literal_commas_inside_one_phrase()
 test_parse_message_warns_for_incomplete_order()
 test_parse_message_skips_incomplete_warning_when_disabled()
 test_incomplete_order_can_be_left_unflagged_until_corrected()
@@ -4782,6 +4873,7 @@ test_formula_purchase_requests_do_not_match_enchant_service()
 test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
 test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
 test_grouped_customer_join_marks_player_with_star()
+test_grouped_customer_join_auto_shows_hidden_workbench()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_cast_falls_back_to_all_craft_slots_when_saved_slot_becomes_invalid()
