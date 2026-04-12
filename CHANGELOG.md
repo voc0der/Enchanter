@@ -1,3 +1,8 @@
+## [2.1.49] - 2026-04-12
+
+### Fixed
+- Routed the legacy enchanting `CraftFrame` Enchant button through the real Blizzard button-click path for filtered search results, and stopped wrapping `DoCraft` in `pcall`, so clicking `Enchant` once again starts the normal blue item-apply cursor instead of failing silently
+
 ## [2.1.46] - 2026-04-11
 
 ### Fixed

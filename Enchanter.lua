@@ -38,12 +38,14 @@ local enchantingCraftSearchBox
 local craftSearchText = ""
 local craftSearchHooksInstalled = false
 local craftSearchBypassDepth = 0
+local craftCreateButtonHookInstalled = false
 local originalGetNumCrafts
 local originalGetCraftInfo
 local originalGetCraftRecipeLink
 local originalGetCraftSelectionIndex
 local originalSelectCraft
 local originalCraftFrame_SetSelection
+local originalCraftCreateButtonOnClick
 local originalDoCraft
 local originalGetCraftNumReagents
 local originalGetCraftReagentInfo
@@ -691,6 +693,7 @@ end
 local GetCraftSearchText
 local SetCraftSearchText
 local RefreshCraftSearchUI
+local EnsureCraftCreateButtonHook
 
 local function SnapshotTradeSkillFilters()
 	local snapshot = {
@@ -1327,6 +1330,44 @@ local function EnsureCraftSearchApiHooks()
 		return false
 	end
 
+	EnsureCraftCreateButtonHook = function()
+		if craftCreateButtonHookInstalled or not CraftCreateButton or not CraftCreateButton.SetScript then
+			return
+		end
+
+		if CraftCreateButton.GetScript then
+			originalCraftCreateButtonOnClick = CraftCreateButton:GetScript("OnClick")
+		end
+
+		CraftCreateButton:SetScript("OnClick", function(self, ...)
+			if ShouldApplyCraftSearchFilter() then
+				local selectedIndex = ResolveDisplayedCraftSelectionIndex()
+				local originalIndex = ResolveFilteredCraftIndex(selectedIndex)
+
+				if enchantingCraftSearchBox and enchantingCraftSearchBox.ClearFocus then
+					enchantingCraftSearchBox:ClearFocus()
+				end
+
+				if originalIndex and type(originalDoCraft) == "function" then
+					craftSearchBypassDepth = craftSearchBypassDepth + 1
+					originalDoCraft(originalIndex)
+					craftSearchBypassDepth = craftSearchBypassDepth - 1
+				end
+				return
+			end
+
+			if originalCraftCreateButtonOnClick then
+				return originalCraftCreateButtonOnClick(self, ...)
+			end
+
+			if type(originalDoCraft) == "function" and type(GetCraftSelectionIndex) == "function" then
+				return originalDoCraft(GetCraftSelectionIndex())
+			end
+		end)
+
+		craftCreateButtonHookInstalled = true
+	end
+
 	GetNumCrafts = function()
 		if IsCraftSearchBypassActive() then
 			return originalGetNumCrafts()
@@ -1414,7 +1455,9 @@ local function EnsureCraftSearchApiHooks()
 		if enchantingCraftSearchBox and enchantingCraftSearchBox.ClearFocus then
 			enchantingCraftSearchBox:ClearFocus()
 		end
-		CallWithCraftSearchBypass(originalDoCraft, index)
+		craftSearchBypassDepth = craftSearchBypassDepth + 1
+		originalDoCraft(index)
+		craftSearchBypassDepth = craftSearchBypassDepth - 1
 	end
 
 	GetCraftNumReagents = function(index)
@@ -1614,6 +1657,7 @@ RefreshCraftSearchUI = function()
 
 	if shouldShow then
 		EnsureCraftSearchApiHooks()
+		EnsureCraftCreateButtonHook()
 		searchBox:ClearAllPoints()
 		if CraftFrame.Dropdown then
 			searchBox:SetPoint("TOPLEFT", CraftFrame, "TOPLEFT", 168, -66)

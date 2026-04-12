@@ -61,6 +61,7 @@ local original_math_random = math.random
 local original_math_randomseed = math.randomseed
 local original_global_random = _G.random
 local original_global_randomseed = _G.randomseed
+local original_global_pcall = _G.pcall
 
 local function setup_env(opts)
     opts = opts or {}
@@ -291,6 +292,7 @@ local function setup_env(opts)
         function frame:SetBackdropColor(...) self.backdrop_color = { ... } end
         function frame:SetBackdropBorderColor(...) self.backdrop_border_color = { ... } end
         function frame:SetScript(script_name, fn) self.scripts[script_name] = fn end
+        function frame:GetScript(script_name) return self.scripts[script_name] end
         function frame:CreateFontString() return new_font_string() end
         function frame:CreateTexture() return new_texture() end
         function frame:SetScrollChild(child) self.scroll_child = child end
@@ -348,6 +350,12 @@ local function setup_env(opts)
     end
     _G.random = original_global_random
     _G.randomseed = original_global_randomseed
+    _G.pcall = function(fn, ...)
+        state.pcall_depth = (state.pcall_depth or 0) + 1
+        local results = { original_global_pcall(fn, ...) }
+        state.pcall_depth = math.max(0, (state.pcall_depth or 1) - 1)
+        return table.unpack(results)
+    end
     if opts.omit_global_random then
         _G.random = nil
     elseif opts.global_random ~= nil then
@@ -440,6 +448,10 @@ local function setup_env(opts)
     _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
     }, opts.craft_frame_shown)
+    _G.CraftCreateButton = new_frame("Button", "CraftCreateButton", _G.CraftFrame)
+    _G.CraftCreateButton:SetScript("OnClick", function()
+        DoCraft(GetCraftSelectionIndex())
+    end)
     _G.CraftFrame_Update = function()
         state.craft_frame_update_calls = (state.craft_frame_update_calls or 0) + 1
         if opts.simulate_craft_frame_update_cancels_targeting and state.spell_is_targeting then
@@ -546,6 +558,11 @@ local function setup_env(opts)
         return tonumber(state.selected_craft) or 0
     end
     _G.DoCraft = function(index)
+        if opts.simulate_do_craft_blocked_in_pcall and (state.pcall_depth or 0) > 0 then
+            state.do_craft_blocked = true
+            return false
+        end
+
         if opts.simulate_blizzard_do_craft_uses_live_api then
             local selectedIndex = tonumber(GetCraftSelectionIndex()) or 0
             local craftName = GetCraftInfo(index)
@@ -3499,6 +3516,7 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
         craft_skill_line_name = "Enchanting",
         simulate_blizzard_craft_frame_selection = true,
         simulate_blizzard_do_craft_uses_live_api = true,
+        simulate_do_craft_blocked_in_pcall = true,
         crafts = {
             {
                 name = "Enchant Boots - Minor Speed",
@@ -3516,9 +3534,9 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
     addon.SetCraftSearchText("weapon")
 
     CraftFrame_SetSelection(1)
-    DoCraft(GetCraftSelectionIndex())
+    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
 
-    assert_true(not state.do_craft_blocked, "filtered enchanting search should not make the Enchant button silently fail")
+    assert_true(not state.do_craft_blocked, "filtered enchanting search should not route DoCraft through pcall and lose the protected Enchant button action")
     assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
 end
 
@@ -3549,7 +3567,7 @@ local function test_enchanting_craft_search_does_not_cancel_targeting_after_ench
     addon.EnchantingCraftSearchBox.scripts["OnEditFocusGained"](addon.EnchantingCraftSearchBox)
 
     CraftFrame_SetSelection(1)
-    DoCraft(GetCraftSelectionIndex())
+    CraftCreateButton.scripts["OnClick"](CraftCreateButton)
 
     assert_true(addon.EnchantingCraftSearchBox.cleared_focus, "enchant click should clear the custom search box focus first")
     assert_true(not state.spell_targeting_canceled_by_refresh, "post-click craft refresh should not cancel the pending enchant targeting cursor")
