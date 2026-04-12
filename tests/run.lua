@@ -3673,6 +3673,26 @@ local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
     assert_equal(state.last_do_trade_skill.count, 1, "cast should use the Blizzard create count instead of omitting it")
 end
 
+local function test_workbench_cast_clears_trade_skill_search_and_restores_it_afterward()
+    local addon, state = setup_env({
+        trade_skill_search_text = "zzz",
+        trade_skills = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "spell:13890",
+            },
+        },
+    })
+
+    local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
+
+    assert_true(casted, "cast should still start after temporarily clearing the profession search text")
+    assert_equal(state.selected_trade_skill, 1, "cast should still select the matched trade skill after clearing the search text")
+    assert_equal(state.last_do_trade_skill.index, 1, "cast should still create the matched trade skill after clearing the search text")
+    assert_equal(TradeSearchInputBox:GetText(), "zzz", "cast should restore the previous profession search text after starting the enchant")
+    assert_equal(state.trade_skill_search_text, "zzz", "cast should keep the restored search text synced with the trade-skill filter state")
+end
+
 local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
     local addon, state = setup_env({
         craft_available_only = true,
@@ -4875,6 +4895,7 @@ test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_mem
 test_grouped_customer_join_marks_player_with_star()
 test_grouped_customer_join_auto_shows_hidden_workbench()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
+test_workbench_cast_clears_trade_skill_search_and_restores_it_afterward()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_cast_falls_back_to_all_craft_slots_when_saved_slot_becomes_invalid()
 test_workbench_legacy_timestamps_are_reformatted_on_load()

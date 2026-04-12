@@ -1,3 +1,8 @@
+## [2.1.54] - 2026-04-12
+
+### Fixed
+- Restored workbench `Cast` / `Apply` on the Blizzard enchanting profession pane when a remembered search text was hiding the queued enchant, by temporarily clearing the TradeSkill search filter before casting and then restoring it afterward
+
 ## [2.1.53] - 2026-04-12
 
 ### Added
