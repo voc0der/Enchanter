@@ -3624,6 +3624,35 @@ local function test_grouped_customer_join_marks_player_with_star()
     assert_equal(#state.set_raid_target_calls, 1, "the star marker should only be applied once per join transition")
 end
 
+local function test_grouped_customer_join_auto_shows_hidden_workbench()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    local workbenchState = addon.Workbench.EnsureState()
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Unhide")
+    addon.Workbench.Hide()
+
+    assert_true(not frame:IsShown(), "workbench should stay hidden before the queued customer joins the group")
+    assert_true(not workbenchState.Visible, "hidden workbench state should persist before the customer joins")
+
+    state.current_party_members[1] = "Buyer-Unhide"
+    addon.Workbench.SyncGroupedOrders()
+
+    assert_true(frame:IsShown(), "a queued customer joining the group should automatically show the hidden workbench")
+    assert_true(workbenchState.Visible, "auto-show should persist the visible workbench state")
+end
+
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
     local addon, state = setup_env({
         trade_skills = {
@@ -4844,6 +4873,7 @@ test_formula_purchase_requests_do_not_match_enchant_service()
 test_workbench_party_join_sound_mode_moves_alert_off_new_orders()
 test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_members()
 test_grouped_customer_join_marks_player_with_star()
+test_grouped_customer_join_auto_shows_hidden_workbench()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
 test_workbench_cast_falls_back_to_all_craft_slots_when_saved_slot_becomes_invalid()

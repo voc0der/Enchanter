@@ -27,6 +27,7 @@ Current version: `2.1.53`
 - Expand attached quantity hints like `x2` / `2x` on matched enchants so duplicate asks queue repeated recipe rows and scale their mats totals correctly
 - Auto-invite matched players when `Auto Invite` is enabled
 - Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
+- Auto-show the hidden workbench again when a queued customer newly joins your party or raid
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Randomize recipe whisper prefixes by entering multiple `Message Prefix` choices separated with ` , ` in `/ec config`
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
