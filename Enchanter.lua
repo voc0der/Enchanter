@@ -783,25 +783,61 @@ local function ClearTradeSkillFiltersForScan()
 	end
 end
 
+local function GetCraftSlotCount()
+	if not GetCraftSlots then
+		return 0
+	end
+
+	return select("#", GetCraftSlots())
+end
+
+local function GetSelectedCraftSlotFilter()
+	if not GetCraftFilter then
+		return 0
+	end
+
+	if GetCraftFilter(0) then
+		return 0
+	end
+
+	for index = 1, GetCraftSlotCount() do
+		if GetCraftFilter(index) then
+			return index
+		end
+	end
+
+	return 0
+end
+
+local function RestoreCraftSlotFilter(index)
+	if not SetCraftFilter then
+		return
+	end
+
+	local normalizedIndex = math.floor(tonumber(index) or 0)
+	if normalizedIndex <= 0 then
+		SetCraftFilter(0)
+		return
+	end
+
+	if normalizedIndex <= GetCraftSlotCount() then
+		SetCraftFilter(normalizedIndex)
+	else
+		SetCraftFilter(0)
+	end
+end
+
 local function SnapshotCraftFilters()
 	local snapshot = {
 		available = nil,
 		slot = 0,
 	}
-	local craftSlots = { GetCraftSlots and GetCraftSlots() or nil }
 
 	if CraftFrameAvailableFilterCheckButton and CraftFrameAvailableFilterCheckButton.GetChecked then
 		snapshot.available = CraftFrameAvailableFilterCheckButton:GetChecked() and true or false
 	end
 
-	if GetCraftFilter then
-		for index = 0, #craftSlots do
-			if GetCraftFilter(index) then
-				snapshot.slot = index
-				break
-			end
-		end
-	end
+	snapshot.slot = GetSelectedCraftSlotFilter()
 
 	return snapshot
 end
@@ -818,8 +854,8 @@ local function RestoreCraftFilters(snapshot)
 		end
 	end
 
-	if snapshot.slot ~= nil and SetCraftFilter then
-		SetCraftFilter(snapshot.slot)
+	if snapshot.slot ~= nil then
+		RestoreCraftSlotFilter(snapshot.slot)
 	end
 end
 

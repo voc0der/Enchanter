@@ -1,3 +1,8 @@
+## [2.1.52] - 2026-04-12
+
+### Fixed
+- Guarded legacy craft filter restores so the old craft pane falls back to the all-slots view instead of throwing `SetCraftFilter(index) index out of range` while scanning or casting
+
 ## [2.1.51] - 2026-04-12
 
 ### Fixed

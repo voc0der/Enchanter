@@ -97,6 +97,7 @@ local function setup_env(opts)
         crafts = copy_table(opts.crafts or {}),
         craft_available_only = opts.craft_available_only and true or false,
         craft_filter = tonumber(opts.craft_filter) or 0,
+        craft_slots = copy_table(opts.craft_slots or {}),
         do_craft_calls = {},
         do_trade_skill_calls = {},
         events = {},
@@ -460,13 +461,20 @@ local function setup_env(opts)
         return visible
     end
     _G.GetCraftSlots = function()
-        return table.unpack(opts.craft_slots or {})
+        return table.unpack(state.craft_slots or {})
     end
     _G.GetCraftFilter = function(index)
         return (tonumber(index) or 0) == state.craft_filter
     end
     _G.SetCraftFilter = function(index)
-        state.craft_filter = tonumber(index) or 0
+        index = math.floor(tonumber(index) or 0)
+        if index < 0 or index > #(state.craft_slots or {}) then
+            error("SetCraftFilter(index) index out of range")
+        end
+        state.craft_filter = index
+        if index == 0 and opts.craft_slots_after_clear_filter ~= nil then
+            state.craft_slots = copy_table(opts.craft_slots_after_clear_filter)
+        end
     end
     _G.CraftOnlyShowMakeable = function(value)
         state.craft_available_only = value and true or false
@@ -3601,6 +3609,60 @@ local function test_workbench_cast_uses_legacy_craft_api_after_temporarily_clear
     assert_true(CraftFrameAvailableFilterCheckButton.checked, "craft casting should keep the craft filter checkbox aligned with the restored state")
 end
 
+local function test_scan_restores_legacy_craft_filters_when_slot_list_changes()
+    local addon, state = setup_env({
+        craft_available_only = true,
+        craft_filter = 1,
+        craft_slots = { "INVTYPE_FEET" },
+        craft_slots_after_clear_filter = {},
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+                filter_index = 0,
+                num_available = 0,
+                reagents = {
+                    { name = "Soul Dust", count = 6, link = "item:11083" },
+                },
+            },
+        },
+    })
+
+    local ok = addon.GetItems()
+
+    assert_true(ok, "scan should not fail when the legacy craft slot list disappears during filter restore")
+    assert_not_nil(EnchanterDBChar.RecipeList["Enchant Boots - Minor Speed"], "scan should still capture the craft recipe after temporarily clearing filters")
+    assert_equal(state.craft_filter, 0, "scan should safely fall back to the all-slots filter when the saved craft slot is no longer valid")
+    assert_true(state.craft_available_only, "scan should still restore the makeable-only checkbox state")
+    assert_true(CraftFrameAvailableFilterCheckButton.checked, "scan should keep the craft filter checkbox aligned after restore fallback")
+end
+
+local function test_workbench_cast_falls_back_to_all_craft_slots_when_saved_slot_becomes_invalid()
+    local addon, state = setup_env({
+        craft_available_only = true,
+        craft_filter = 1,
+        craft_slots = { "INVTYPE_WEAPON" },
+        craft_slots_after_clear_filter = {},
+        crafts = {
+            {
+                name = "Enchant Boots - Minor Speed",
+                link = "craft:13890",
+                filter_index = 0,
+                num_available = 0,
+            },
+        },
+    })
+
+    local casted = addon.Workbench.CastRecipe("Enchant Boots - Minor Speed")
+
+    assert_true(casted, "cast should still start when the legacy craft slot filter disappears before restore")
+    assert_equal(state.craft_frame_selection, 1, "craft casting should still select the matched craft recipe")
+    assert_equal(state.last_do_craft.index, 1, "craft casting should still execute the matched legacy craft recipe")
+    assert_equal(state.craft_filter, 0, "craft casting should fall back to the all-slots filter instead of restoring an invalid slot index")
+    assert_true(state.craft_available_only, "craft casting should still restore the makeable-only filter")
+    assert_true(CraftFrameAvailableFilterCheckButton.checked, "craft casting should keep the craft filter checkbox aligned after fallback")
+end
+
 local function test_workbench_legacy_timestamps_are_reformatted_on_load()
     local addon = setup_env({
         char_db = {
@@ -4710,6 +4772,7 @@ test_scan_marks_empty_link_text_reagents_pending_until_item_data_arrives()
 test_workbench_lazily_hydrates_unresolved_material_names_before_render()
 test_trade_material_progress_matches_by_item_id_when_recipe_link_text_was_unresolved()
 test_scan_clears_trade_skill_filters_and_restores_them_afterward()
+test_scan_restores_legacy_craft_filters_when_slot_list_changes()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
@@ -4721,6 +4784,7 @@ test_workbench_party_join_sound_mode_does_not_false_alert_for_existing_group_mem
 test_grouped_customer_join_marks_player_with_star()
 test_workbench_cast_selects_trade_skill_and_uses_create_count()
 test_workbench_cast_uses_legacy_craft_api_after_temporarily_clearing_filters()
+test_workbench_cast_falls_back_to_all_craft_slots_when_saved_slot_becomes_invalid()
 test_workbench_legacy_timestamps_are_reformatted_on_load()
 test_workbench_trade_cast_keeps_order_until_verified()
 test_workbench_keeps_order_when_trade_has_no_completion_signal()
