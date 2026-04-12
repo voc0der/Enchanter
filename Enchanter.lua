@@ -1349,7 +1349,9 @@ local function EnsureCraftSearchApiHooks()
 				end
 
 				if originalIndex and type(originalDoCraft) == "function" then
-					CallWithCraftSearchBypass(originalDoCraft, originalIndex)
+					craftSearchBypassDepth = craftSearchBypassDepth + 1
+					originalDoCraft(originalIndex)
+					craftSearchBypassDepth = craftSearchBypassDepth - 1
 				end
 				return
 			end
@@ -1453,7 +1455,9 @@ local function EnsureCraftSearchApiHooks()
 		if enchantingCraftSearchBox and enchantingCraftSearchBox.ClearFocus then
 			enchantingCraftSearchBox:ClearFocus()
 		end
-		CallWithCraftSearchBypass(originalDoCraft, index)
+		craftSearchBypassDepth = craftSearchBypassDepth + 1
+		originalDoCraft(index)
+		craftSearchBypassDepth = craftSearchBypassDepth - 1
 	end
 
 	GetCraftNumReagents = function(index)
