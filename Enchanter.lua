@@ -1124,6 +1124,24 @@ local function NormalizeCraftSearchText(value)
 	return value
 end
 
+local function IsCraftSpellTargetingActive()
+	if type(SpellIsTargeting) == "function" then
+		local ok, active = pcall(SpellIsTargeting)
+		if ok and active then
+			return true
+		end
+	end
+
+	if type(CursorHasSpell) == "function" then
+		local ok, active = pcall(CursorHasSpell)
+		if ok and active then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function IsEnchantingCraftFrameVisible()
 	if not IsFrameShown(CraftFrame) then
 		return false
@@ -1393,6 +1411,9 @@ local function EnsureCraftSearchApiHooks()
 		if not index or type(originalDoCraft) ~= "function" then
 			return
 		end
+		if enchantingCraftSearchBox and enchantingCraftSearchBox.ClearFocus then
+			enchantingCraftSearchBox:ClearFocus()
+		end
 		CallWithCraftSearchBypass(originalDoCraft, index)
 	end
 
@@ -1491,6 +1512,10 @@ end
 
 local function RefreshCraftSearchResults()
 	if not EnsureCraftSearchApiHooks() then
+		return
+	end
+
+	if IsCraftSpellTargetingActive() then
 		return
 	end
 
@@ -3366,8 +3391,10 @@ end
 
 local function Event_UI_CONTEXT_REFRESH()
 	if EC.RefreshCraftSearchUI then
-		EC.RefreshCraftSearchUI()
-		After(0, EC.RefreshCraftSearchUI)
+		if not IsCraftSpellTargetingActive() then
+			EC.RefreshCraftSearchUI()
+			After(0, EC.RefreshCraftSearchUI)
+		end
 	end
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()

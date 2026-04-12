@@ -1,3 +1,8 @@
+## [2.1.46] - 2026-04-11
+
+### Fixed
+- Stopped Enchanter's legacy `CraftFrame` search refresh path from interfering with the live enchant targeting cursor, so filtered search results can still start and hold the normal glowing-hand enchant flow after clicking `Enchant`
+
 ## [2.1.45] - 2026-04-11
 
 ### Fixed
