@@ -61,6 +61,7 @@ local original_math_random = math.random
 local original_math_randomseed = math.randomseed
 local original_global_random = _G.random
 local original_global_randomseed = _G.randomseed
+local original_global_pcall = _G.pcall
 
 local function setup_env(opts)
     opts = opts or {}
@@ -349,6 +350,12 @@ local function setup_env(opts)
     end
     _G.random = original_global_random
     _G.randomseed = original_global_randomseed
+    _G.pcall = function(fn, ...)
+        state.pcall_depth = (state.pcall_depth or 0) + 1
+        local results = { original_global_pcall(fn, ...) }
+        state.pcall_depth = math.max(0, (state.pcall_depth or 1) - 1)
+        return table.unpack(results)
+    end
     if opts.omit_global_random then
         _G.random = nil
     elseif opts.global_random ~= nil then
@@ -551,6 +558,11 @@ local function setup_env(opts)
         return tonumber(state.selected_craft) or 0
     end
     _G.DoCraft = function(index)
+        if opts.simulate_do_craft_blocked_in_pcall and (state.pcall_depth or 0) > 0 then
+            state.do_craft_blocked = true
+            return false
+        end
+
         if opts.simulate_blizzard_do_craft_uses_live_api then
             local selectedIndex = tonumber(GetCraftSelectionIndex()) or 0
             local craftName = GetCraftInfo(index)
@@ -3504,6 +3516,7 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
         craft_skill_line_name = "Enchanting",
         simulate_blizzard_craft_frame_selection = true,
         simulate_blizzard_do_craft_uses_live_api = true,
+        simulate_do_craft_blocked_in_pcall = true,
         crafts = {
             {
                 name = "Enchant Boots - Minor Speed",
@@ -3523,7 +3536,7 @@ local function test_enchanting_craft_search_keeps_the_enchant_button_working()
     CraftFrame_SetSelection(1)
     CraftCreateButton.scripts["OnClick"](CraftCreateButton)
 
-    assert_true(not state.do_craft_blocked, "filtered enchanting search should not make the Enchant button silently fail")
+    assert_true(not state.do_craft_blocked, "filtered enchanting search should not route DoCraft through pcall and lose the protected Enchant button action")
     assert_equal(state.last_do_craft.index, 2, "the Enchant button should still drive the original craft index after filtering")
 end
 

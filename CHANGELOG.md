@@ -1,3 +1,8 @@
+## [2.1.49] - 2026-04-12
+
+### Fixed
+- Packaged the full legacy enchanting `CraftFrame` search-path repair together, so filtered results once again flow through the real `CraftCreateButton` click path and reliably start the normal blue apply cursor
+
 ## [2.1.48] - 2026-04-11
 
 ### Fixed

@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.48`
+Current version: `2.1.49`
 
 ## What It Does
 
