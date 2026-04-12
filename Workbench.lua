@@ -3317,6 +3317,7 @@ local function TryCastRecipe(recipeName)
 			available = nil,
 			subClass = {},
 			invSlot = {},
+			searchText = nil,
 		}
 		local subClassNames = { GetTradeSkillSubClasses and GetTradeSkillSubClasses() or nil }
 		local invSlotNames = { GetTradeSkillInvSlots and GetTradeSkillInvSlots() or nil }
@@ -3335,6 +3336,10 @@ local function TryCastRecipe(recipeName)
 			if GetTradeSkillInvSlotFilter then
 				snapshot.invSlot[index] = GetTradeSkillInvSlotFilter(index)
 			end
+		end
+
+		if TradeSearchInputBox and TradeSearchInputBox.GetText then
+			snapshot.searchText = TradeSearchInputBox:GetText()
 		end
 
 		return snapshot
@@ -3375,6 +3380,13 @@ local function TryCastRecipe(recipeName)
 		if SetTradeSkillInvSlotFilter then
 			SetTradeSkillInvSlotFilter(GetSelectedFilterIndex(snapshot.invSlot), 1, 1)
 		end
+
+		if TradeSearchInputBox and TradeSearchInputBox.SetText then
+			TradeSearchInputBox:SetText(snapshot.searchText or "")
+		end
+		if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+			TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
+		end
 	end
 
 	if GetNumTradeSkills and GetTradeSkillInfo and DoTradeSkill then
@@ -3397,6 +3409,15 @@ local function TryCastRecipe(recipeName)
 			end
 			if SetTradeSkillInvSlotFilter then
 				SetTradeSkillInvSlotFilter(0, 1, 1)
+			end
+			if TradeSearchInputBox and TradeSearchInputBox.SetText then
+				TradeSearchInputBox:SetText("")
+			end
+			if SetTradeSkillItemNameFilter then
+				SetTradeSkillItemNameFilter("")
+			end
+			if TradeSkillFilter_OnTextChanged and TradeSearchInputBox then
+				TradeSkillFilter_OnTextChanged(TradeSearchInputBox)
 			end
 			index = FindTradeSkillIndexByName()
 		end
