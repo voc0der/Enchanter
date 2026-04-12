@@ -1,3 +1,8 @@
+## [2.1.51] - 2026-04-12
+
+### Fixed
+- Restored the addon from the accidental `2.1.50` rollback to the exact `37e3d97eff353879fff17077eec493baf214e998` code state, bringing back the declined-invite removal timer and the exact-name guard that ignores `Formula: ...` sale posts
+
 ## [2.1.50] - 2026-04-12
 
 ### Fixed
