@@ -1,3 +1,8 @@
+## [2.1.47] - 2026-04-11
+
+### Fixed
+- Fixed filtered search results not crafting when clicking `CraftCreateButton` directly, by remapping the button's click handler to the correct original craft index when Enchanter's custom search is active
+
 ## [2.1.46] - 2026-04-11
 
 ### Fixed
