@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.54`
+Current version: `2.1.55`
 
 ## What It Does
 
@@ -68,6 +68,7 @@ Current version: `2.1.54`
 - Use the small cog button beside the close `X` to jump straight into `/ec config` from the workbench header.
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
+- Queued and updated timestamps now use your client-local clock while still following the game's 12-hour or 24-hour display preference.
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.

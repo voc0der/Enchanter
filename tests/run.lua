@@ -61,6 +61,7 @@ local original_math_random = math.random
 local original_math_randomseed = math.randomseed
 local original_global_random = _G.random
 local original_global_randomseed = _G.randomseed
+local original_os_date = os.date
 
 local function setup_env(opts)
     opts = opts or {}
@@ -955,6 +956,13 @@ local function setup_env(opts)
     _G.TIME_TWELVEHOURAM = "%d:%02d AM"
     _G.TIME_TWELVEHOURPM = "%d:%02d PM"
     _G.date = opts.date_impl
+    if opts.disable_os_date then
+        os.date = nil
+    elseif opts.os_date_impl ~= nil then
+        os.date = opts.os_date_impl
+    else
+        os.date = original_os_date
+    end
     _G.CreateFrame = function(frame_type, name, parent, template)
         return new_frame(frame_type, name, parent, template)
     end
@@ -3456,9 +3464,18 @@ end
 
 local function test_workbench_timestamps_follow_clock_style()
     local addon = setup_env({
+        date_impl = function(format_string)
+            if format_string == "*t" then
+                return {
+                    hour = 13,
+                    min = 11,
+                }
+            end
+            return nil
+        end,
         game_time = {
-            hour = 13,
-            min = 11,
+            hour = 6,
+            min = 58,
         },
     })
 
@@ -3469,14 +3486,13 @@ local function test_workbench_timestamps_follow_clock_style()
     local order = addon.Workbench.GetOrderByCustomer("Buyer-Time")
 
     assert_not_nil(order, "queued order should exist for timestamp checks")
-    assert_equal(order.CreatedAt, "1:11 PM", "workbench timestamps should use the in-game 12-hour clock style")
+    assert_equal(order.CreatedAt, "1:11 PM", "workbench timestamps should prefer the client-local clock while keeping the 12-hour style")
     assert_equal(order.UpdatedAt, "1:11 PM", "updated timestamp should match the same clock style")
 end
 
 local function test_workbench_timestamps_honor_military_and_local_clock_settings()
     local addon = setup_env({
         use_military_time = true,
-        use_local_time = true,
         date_impl = function(format_string)
             if format_string == "*t" then
                 return {
@@ -3499,7 +3515,26 @@ local function test_workbench_timestamps_honor_military_and_local_clock_settings
     local order = addon.Workbench.GetOrderByCustomer("Buyer-Local-Time")
 
     assert_not_nil(order, "queued order should exist for local clock checks")
-    assert_equal(order.CreatedAt, "06:05", "timestamps should honor local clock and military time settings when enabled")
+    assert_equal(order.CreatedAt, "06:05", "timestamps should still honor the user's military time preference while using local time")
+end
+
+local function test_workbench_timestamps_fall_back_to_game_time_when_local_clock_is_unavailable()
+    local addon = setup_env({
+        disable_os_date = true,
+        game_time = {
+            hour = 13,
+            min = 11,
+        },
+    })
+
+    addon.Workbench.AddOrUpdateOrder("Buyer-Realm-Time-Fallback", "LF mongoose pst", {
+        ["Enchant Weapon - Mongoose"] = "mongoose",
+    })
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Realm-Time-Fallback")
+
+    assert_not_nil(order, "queued order should exist for realm-time fallback checks")
+    assert_equal(order.CreatedAt, "1:11 PM", "timestamps should fall back to realm time when the client-local clock is unavailable")
 end
 
 local function test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
@@ -4887,6 +4922,7 @@ test_scan_restores_legacy_craft_filters_when_slot_list_changes()
 test_run_recipe_scan_does_not_claim_success_when_zero_supported_recipes_are_found()
 test_workbench_timestamps_follow_clock_style()
 test_workbench_timestamps_honor_military_and_local_clock_settings()
+test_workbench_timestamps_fall_back_to_game_time_when_local_clock_is_unavailable()
 test_workbench_queue_alert_only_plays_for_new_orders_when_enabled()
 test_workbench_queue_alert_falls_back_when_channel_argument_is_unsupported()
 test_formula_purchase_requests_do_not_match_enchant_service()
