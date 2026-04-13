@@ -149,11 +149,9 @@ local function GetLocalClockParts()
 end
 
 local function TimestampText()
-	if GetCVarBool and GetCVarBool("timeMgrUseLocalTime") then
-		local localHours, localMinutes = GetLocalClockParts()
-		if localHours ~= nil and localMinutes ~= nil then
-			return FormatClockTime(localHours, localMinutes)
-		end
+	local localHours, localMinutes = GetLocalClockParts()
+	if localHours ~= nil and localMinutes ~= nil then
+		return FormatClockTime(localHours, localMinutes)
 	end
 
 	if GetGameTime then
@@ -161,11 +159,6 @@ local function TimestampText()
 		if gameHours ~= nil and gameMinutes ~= nil then
 			return FormatClockTime(gameHours, gameMinutes)
 		end
-	end
-
-	local localHours, localMinutes = GetLocalClockParts()
-	if localHours ~= nil and localMinutes ~= nil then
-		return FormatClockTime(localHours, localMinutes)
 	end
 
 	if GetTime then

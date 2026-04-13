@@ -1,3 +1,8 @@
+## [2.1.55] - 2026-04-13
+
+### Fixed
+- Switched workbench queued and updated timestamps over to the client-local clock instead of realm time, while still respecting the game's 12-hour or 24-hour display style
+
 ## [2.1.54] - 2026-04-12
 
 ### Fixed
