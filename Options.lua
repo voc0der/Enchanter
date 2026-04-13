@@ -50,8 +50,23 @@ local function NormalizeCSVText(value)
 end
 
 local function GetDefaultRecipeTags(recipeName)
-	local localeTags = EC.DefaultRecipeTags and EC.DefaultRecipeTags["enGB"]
-	return localeTags and localeTags[recipeName] or {}
+	local defaultLocaleTags = EC.DefaultRecipeTags and EC.DefaultRecipeTags["enGB"]
+	local generatedLocaleTags = EC.GeneratedRecipeTags and EC.GeneratedRecipeTags["enGB"]
+	local scannedRecipeTags = EC.DBChar and EC.DBChar.RecipeList
+
+	if defaultLocaleTags and type(defaultLocaleTags[recipeName]) == "table" and #defaultLocaleTags[recipeName] > 0 then
+		return defaultLocaleTags[recipeName]
+	end
+
+	if generatedLocaleTags and type(generatedLocaleTags[recipeName]) == "table" and #generatedLocaleTags[recipeName] > 0 then
+		return generatedLocaleTags[recipeName]
+	end
+
+	if scannedRecipeTags and type(scannedRecipeTags[recipeName]) == "table" and #scannedRecipeTags[recipeName] > 0 then
+		return scannedRecipeTags[recipeName]
+	end
+
+	return {}
 end
 
 local function GetRecipeBlacklistStore()
@@ -96,9 +111,21 @@ end
 
 local function GetSortedRecipeNames()
 	local out = {}
-	for recipeName in pairs(EC.RecipeTags and EC.RecipeTags["enGB"] or {}) do
-		out[#out + 1] = recipeName
+	local seen = {}
+
+	local function AddRecipeNames(recipeMap)
+		for recipeName in pairs(recipeMap or {}) do
+			if not seen[recipeName] then
+				seen[recipeName] = true
+				out[#out + 1] = recipeName
+			end
+		end
 	end
+
+	AddRecipeNames(EC.RecipeTags and EC.RecipeTags["enGB"] or {})
+	AddRecipeNames(EC.GeneratedRecipeTags and EC.GeneratedRecipeTags["enGB"] or {})
+	AddRecipeNames(EC.DBChar and EC.DBChar.RecipeList or {})
+
 	table.sort(out)
 	return out
 end

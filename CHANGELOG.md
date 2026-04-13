@@ -1,3 +1,9 @@
+## [2.1.56] - 2026-04-13
+
+### Fixed
+- Expanded classic-era enchant matching with specific slot/effect aliases, including compact and plus-prefixed numeric variants such as `22int weapon`, `+22 int weapon`, `9 stam to bracers`, `+3 agi cloak`, and `3 agi cape`, while still avoiding broad generic matches like `stam to bracers`
+- Let unsupported scanned enchants generate editable specific fallback aliases in the recipe customization flow instead of staying exact-name-only
+
 ## [2.1.55] - 2026-04-13
 
 ### Fixed
