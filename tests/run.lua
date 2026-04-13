@@ -1288,6 +1288,83 @@ local function test_valid_request_matching_scenarios()
             requested = 2,
         },
         {
+            name = "classic superior stamina bracer request uses specific numeric alias",
+            message = "lf enchanter with 9 stam to bracers",
+            scanned = {
+                "Enchant Bracer - Superior Stamina",
+            },
+            expected = {
+                "Enchant Bracer - Superior Stamina",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses specific numeric alias",
+            message = "wtb 22 int weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses numeric to-slot alias",
+            message = "wtb 22 int to weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses compact numeric alias",
+            message = "wtb 22int weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses plus numeric to-slot alias",
+            message = "wtb +22 int to weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses plus numeric alias",
+            message = "wtb +22 int weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
+            name = "classic mighty intellect weapon request uses compact plus numeric alias",
+            message = "wtb +22int weapon pst",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            expected = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+            requested = 1,
+        },
+        {
             name = "incomplete list keeps accurate request count",
             message = "lf mongoose, boar, dodge",
             scanned = {
@@ -1413,6 +1490,13 @@ local function test_invalid_request_matching_scenarios()
             message = "lf enchant shield major stamina",
             scanned = {
                 "Enchant Shield - Resilience",
+            },
+        },
+        {
+            name = "generic stamina bracer ask does not match a classic stamina rank",
+            message = "lf stam to bracers",
+            scanned = {
+                "Enchant Bracer - Superior Stamina",
             },
         },
     }
@@ -1608,7 +1692,7 @@ local function test_scan_filters_unknown_and_nether_recipes()
     assert_nil(EnchanterDBChar.RecipeList["Completely Unknown Recipe"], "unknown recipes should not be added")
 end
 
-local function test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
+local function test_scan_builds_specific_slot_aliases_for_unsupported_enchants()
     local addon, state = setup_env({
         trade_skills = {
             { name = "Enchant Cloak - Lesser Agility" },
@@ -1618,10 +1702,15 @@ local function test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
     local ok = addon.GetItems()
     local scannedTags = EnchanterDBChar.RecipeList["Enchant Cloak - Lesser Agility"]
 
-    assert_true(ok, "scan should keep unsupported enchant formulas when their exact official names are available")
+    assert_true(ok, "scan should keep unsupported enchant formulas when their official names are available")
     assert_not_nil(scannedTags, "unsupported enchant formulas should still be stored after scanning")
-    assert_equal(#scannedTags, 1, "unsupported enchant formulas should keep a single exact-name fallback tag")
-    assert_equal(scannedTags[1], "enchant cloak - lesser agility", "unsupported enchant formulas should only match their official names")
+    assert_true(list_contains(scannedTags, "enchant cloak - lesser agility"), "unsupported enchant formulas should still keep the official recipe name")
+    assert_true(list_contains(scannedTags, "lesser agility to cloak"), "unsupported enchant formulas should gain specific slot-aware fallback aliases")
+    assert_true(list_contains(scannedTags, "lesser agility to back"), "unsupported enchant formulas should include specific back-slot phrasing")
+    assert_true(list_contains(scannedTags, "3 agi cloak"), "unsupported enchant formulas should include recipe-specific numeric phrasing")
+    assert_true(list_contains(scannedTags, "+3 agi cloak"), "unsupported enchant formulas should include plus-prefixed numeric phrasing")
+    assert_true(list_contains(scannedTags, "3 agi cape"), "unsupported enchant formulas should include cape as a cloak synonym")
+    assert_true(not list_contains(scannedTags, "agility to back"), "unsupported enchant formulas should not gain generic shorthand aliases")
 
     addon.ParseMessage("LF Enchant Cloak - Lesser Agility pst", "Buyer-ExactName")
     assert_equal(#state.whispers, 1, "exact recipe names should match unsupported scanned enchants")
@@ -1630,8 +1719,33 @@ local function test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
     addon.ParseMessage("LF [Enchanting: Enchant Cloak - Lesser Agility] pst", "Buyer-LinkedName")
     assert_equal(#state.whispers, 2, "linked recipe names should match unsupported scanned enchants")
 
+    addon.ParseMessage("LF lesser agility to back pst", "Buyer-SpecificFallback")
+    assert_equal(#state.whispers, 3, "unsupported scanned enchants should match their generated specific fallback aliases")
+
+    addon.ParseMessage("LF +3 agi cloak pst", "Buyer-PlusNumeric")
+    assert_equal(#state.whispers, 4, "unsupported scanned enchants should match plus-prefixed numeric cloak aliases")
+
+    addon.ParseMessage("LF 3 agi cape pst", "Buyer-CapeNumeric")
+    assert_equal(#state.whispers, 5, "unsupported scanned enchants should match numeric cape aliases")
+
     addon.ParseMessage("LF agility to back pst", "Buyer-Shorthand")
-    assert_equal(#state.whispers, 2, "unsupported scanned enchants should not gain new shorthand aliases")
+    assert_equal(#state.whispers, 5, "unsupported scanned enchants should not gain new generic shorthand aliases")
+end
+
+local function test_classic_recipe_aliases_stay_specific()
+    local addon = setup_env()
+    local staminaTags = addon.DefaultRecipeTags.enGB["Enchant Bracer - Superior Stamina"] or {}
+    local intellectTags = addon.DefaultRecipeTags.enGB["Enchant Weapon - Mighty Intellect"] or {}
+
+    assert_true(list_contains(staminaTags, "9 stam to bracers"), "classic rank aliases should include specific numeric phrasing")
+    assert_true(list_contains(staminaTags, "superior stamina to bracers"), "classic rank aliases should include specific named-effect phrasing")
+    assert_true(not list_contains(staminaTags, "stam to bracers"), "classic rank aliases should avoid generic ambiguous phrasing")
+    assert_true(list_contains(intellectTags, "22int weapon"), "classic rank aliases should include compact numeric phrasing")
+    assert_true(list_contains(intellectTags, "22 int to weapon"), "classic rank aliases should keep spaced numeric phrasing")
+    assert_true(list_contains(intellectTags, "+22 int to weapon"), "classic rank aliases should include plus-prefixed spaced phrasing")
+    assert_true(list_contains(intellectTags, "+22 int weapon"), "classic rank aliases should include plus-prefixed slot phrasing")
+    assert_true(list_contains(intellectTags, "+22int weapon"), "classic rank aliases should include compact plus-prefixed phrasing")
+    assert_true(not list_contains(intellectTags, "int weapon"), "classic rank aliases should not fall back to generic ambiguous phrasing")
 end
 
 local function test_formula_purchase_requests_do_not_match_enchant_service()
@@ -4854,7 +4968,8 @@ local function test_slash_commands_expose_simulate_entry()
 end
 
 test_scan_filters_unknown_and_nether_recipes()
-test_scan_keeps_unsupported_enchants_as_exact_name_only_matches()
+test_scan_builds_specific_slot_aliases_for_unsupported_enchants()
+test_classic_recipe_aliases_stay_specific()
 test_scan_prefers_trade_skill_recipe_data_when_both_apis_exist()
 test_default_recipe_blacklists_compile_and_merge_with_custom_blacklists()
 test_valid_request_matching_scenarios()

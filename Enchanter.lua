@@ -12,6 +12,7 @@ EC.DefaultGroupedFollowUpMsg = 'You were in a group, but if you still need, plea
 EC.EnchanterTags = EC.DefaultEnchanterTags or {}
 EC.PrefixTags = EC.DefaultPrefixTags or {}
 EC.RecipeTags = EC.DefaultRecipeTags or {}
+EC.GeneratedRecipeTags = EC.GeneratedRecipeTags or { enGB = {} }
 EC.RecipesWithNether = {"Enchant Boots - Surefooted"}
 EC.PrefixTagsCompiled = {}
 EC.BlacklistCompiled = {}
@@ -1591,7 +1592,17 @@ local function GetConfiguredRecipeTags(recipeName)
 	end
 
 	if EC.RecipeTags and EC.RecipeTags["enGB"] then
-		return EC.RecipeTags["enGB"][recipeName]
+		local defaultTags = EC.RecipeTags["enGB"][recipeName]
+		if type(defaultTags) == "table" and #defaultTags > 0 then
+			return defaultTags
+		end
+	end
+
+	if EC.GeneratedRecipeTags and EC.GeneratedRecipeTags["enGB"] then
+		local generatedTags = EC.GeneratedRecipeTags["enGB"][recipeName]
+		if type(generatedTags) == "table" and #generatedTags > 0 then
+			return generatedTags
+		end
 	end
 
 	return nil
@@ -1610,8 +1621,14 @@ local function GetScannedRecipeTags(recipeName)
 
 	local normalizedRecipeName = string.lower(recipeName)
 	if string.find(normalizedRecipeName, "enchant ", 1, true) == 1 then
-		-- Preserve unsupported enchant formulas as exact-name-only matches so scan coverage can grow
-		-- without broadening shorthand aliases or custom keyword behavior.
+		local generatedTags = EC.BuildSpecificRecipeTagList and EC.BuildSpecificRecipeTagList(recipeName) or nil
+		if type(generatedTags) == "table" and #generatedTags > 0 then
+			EC.GeneratedRecipeTags = EC.GeneratedRecipeTags or { enGB = {} }
+			EC.GeneratedRecipeTags["enGB"] = EC.GeneratedRecipeTags["enGB"] or {}
+			EC.GeneratedRecipeTags["enGB"][recipeName] = generatedTags
+			return generatedTags
+		end
+
 		return { normalizedRecipeName }
 	end
 
@@ -2309,6 +2326,8 @@ function EC.RefreshCompiledData()
 end
 
 function EC.GetItems()
+	EC.GeneratedRecipeTags = { enGB = {} }
+
 	local function CountScannedRecipes(recipeList)
 		return CountRecipeEntries(recipeList)
 	end

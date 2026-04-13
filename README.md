@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.55`
+Current version: `2.1.56`
 
 ## What It Does
 
@@ -22,7 +22,7 @@ Current version: `2.1.55`
 - Match trade-chat requests against configured recipe tags
 - Avoid starting shorthand matches in the middle of unrelated tokens, so posts like `1815 resto druid LF 2's partner` do not trip `15 res`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
-- Keep scanned enchants outside the built-in shorthand table as exact-name-only matches, so linked recipes and typed-out names still work without broadening alias matches
+- Give scanned enchants outside the built-in shorthand table specific slot/effect fallback aliases, so old-world formulas can still match typed requests without broadening into generic asks
 - Split multi-enchant chat lines into local request segments so one phrase does not pollute the whole message
 - Expand attached quantity hints like `x2` / `2x` on matched enchants so duplicate asks queue repeated recipe rows and scale their mats totals correctly
 - Auto-invite matched players when `Auto Invite` is enabled
