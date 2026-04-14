@@ -1,3 +1,15 @@
+## [2.1.57] - 2026-04-14
+
+### Added
+- Whisper missing materials button in each workbench queue row — click the envelope icon to send the customer a whisper listing the materials they have not yet traded
+- Ban from Enchanter right-click menu option on player context menus — silently ignores the player without a social ignore, persisted in `EnchanterDB.BanList`
+- Banlist management section in `/e config` to review and remove banned players
+- Expanded test suite with many permutations of enchant requests across all slot types, plus- and numeric-prefix variants, slot synonyms, and invalid cross-slot and cross-rank cases
+
+### Fixed
+- Rank matching: `Enchant Cloak - Greater Resistance` (`+5`) no longer matched by requests that only say `5 resistance` when `Enchant Cloak - Major Resistance` (`+7`) is what is scanned; added `5 resistance` / `5 all resistance` and `7 resist` / `7 resistance` phrases to the respective recipes
+- Removed dead tag `35+ agi` from `Enchant 2H Weapon - Major Agility` — the `+` character is a request-context separator, so `35+ agi` could never match a customer message
+
 ## [2.1.56] - 2026-04-13
 
 ### Fixed

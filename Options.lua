@@ -184,6 +184,7 @@ local function CreateTextLabel(parent, text)
 end
 
 local RefreshRecipeCustomizationUI
+local RefreshBanlistUI
 
 local function CreateCSVEditBox(parent, name, sampleText, getter, setter)
 	local editBox = CreateFrame("EditBox", name, parent, "InputBoxInstructionsTemplate")
@@ -424,6 +425,154 @@ local function BuildRecipeCustomizationPanel(panel)
 	RefreshRecipeCustomizationUI(true)
 end
 
+RefreshBanlistUI = function()
+	local ui = EC.Options.BanlistUI
+	if not ui or not ui.Panel then
+		return
+	end
+
+	EC.DB.BanList = EC.DB.BanList or {}
+
+	for _, row in ipairs(ui.Rows or {}) do
+		row:Hide()
+	end
+	ui.Rows = {}
+
+	local bannedNames = {}
+	for name in pairs(EC.DB.BanList) do
+		bannedNames[#bannedNames + 1] = name
+	end
+	table.sort(bannedNames)
+
+	local yOffset = -6
+	local rowHeight = 28
+
+	for _, name in ipairs(bannedNames) do
+		local row = CreateFrame("Frame", nil, ui.ScrollChild)
+		row:SetHeight(rowHeight)
+		row:SetPoint("TOPLEFT", ui.ScrollChild, "TOPLEFT", 6, yOffset)
+		row:SetPoint("TOPRIGHT", ui.ScrollChild, "TOPRIGHT", -6, yOffset)
+
+		local nameLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		nameLabel:SetPoint("LEFT", row, "LEFT", 8, 0)
+		nameLabel:SetPoint("RIGHT", row, "RIGHT", -70, 0)
+		nameLabel:SetJustifyH("LEFT")
+		nameLabel:SetText(name)
+
+		local removeButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+		removeButton:SetSize(60, 20)
+		removeButton:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+		removeButton:SetText("Unban")
+		removeButton.BannedName = name
+		removeButton:SetScript("OnClick", function(self)
+			if EC.UnbanPlayer then
+				EC.UnbanPlayer(self.BannedName)
+			end
+			RefreshBanlistUI()
+		end)
+
+		ui.Rows[#ui.Rows + 1] = row
+		yOffset = yOffset - rowHeight - 4
+	end
+
+	if #bannedNames == 0 then
+		local emptyLabel = CreateFrame("Frame", nil, ui.ScrollChild)
+		emptyLabel:SetHeight(rowHeight)
+		emptyLabel:SetPoint("TOPLEFT", ui.ScrollChild, "TOPLEFT", 6, yOffset)
+		emptyLabel:SetPoint("TOPRIGHT", ui.ScrollChild, "TOPRIGHT", -6, yOffset)
+		local emptyText = emptyLabel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+		emptyText:SetPoint("LEFT", emptyLabel, "LEFT", 8, 0)
+		emptyText:SetText("No banned players.")
+		ui.Rows[#ui.Rows + 1] = emptyLabel
+		yOffset = yOffset - rowHeight - 4
+	end
+
+	ui.ScrollChild:SetHeight(math.max(1, -yOffset + 10))
+	if ui.CountText then
+		ui.CountText:SetText(string.format("%d banned player%s", #bannedNames, #bannedNames == 1 and "" or "s"))
+	end
+end
+
+local function BuildBanlistPanel(panel)
+	local ui = {
+		Panel = panel,
+		Rows = {},
+	}
+	EC.Options.BanlistUI = ui
+
+	local intro = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	intro:SetPoint("TOPLEFT", 10, -44)
+	intro:SetPoint("TOPRIGHT", -10, -44)
+	intro:SetJustifyH("LEFT")
+	intro:SetJustifyV("TOP")
+	intro:SetText("Banned players are silently ignored — no invites, no whispers. Right-click any player name in-game and choose \"Ban from Enchanter\" to add them.")
+
+	local addLabel = CreateTextLabel(panel, "Ban player")
+	addLabel:SetPoint("TOPLEFT", intro, "BOTTOMLEFT", 0, -18)
+	addLabel:SetWidth(80)
+
+	local addBox = CreateFrame("EditBox", TOCNAME .. "BanlistAddBox", panel, "InputBoxInstructionsTemplate")
+	addBox:SetPoint("LEFT", addLabel, "RIGHT", 8, 0)
+	addBox:SetPoint("RIGHT", panel, "RIGHT", -80, 0)
+	addBox:SetHeight(20)
+	addBox:SetAutoFocus(false)
+	addBox:SetFontObject("ChatFontNormal")
+	if addBox.SetTextInsets then
+		addBox:SetTextInsets(6, 6, 0, 0)
+	end
+	if addBox.Instructions then
+		addBox.Instructions:SetFontObject("ChatFontNormal")
+		addBox.Instructions:SetText("player name...")
+	end
+	local function commitAdd()
+		local name = TrimText(addBox:GetText())
+		if name ~= "" and EC.BanPlayer then
+			EC.BanPlayer(name)
+			addBox:SetText("")
+			RefreshBanlistUI()
+		end
+		addBox:ClearFocus()
+	end
+	addBox:SetScript("OnEnterPressed", commitAdd)
+	addBox:SetScript("OnEscapePressed", function(self)
+		self:SetText("")
+		self:ClearFocus()
+	end)
+
+	local addButton = CreateFrame("Button", TOCNAME .. "BanlistAddButton", panel, "UIPanelButtonTemplate")
+	addButton:SetSize(52, 22)
+	addButton:SetPoint("LEFT", addBox, "RIGHT", 8, 0)
+	addButton:SetText("Ban")
+	addButton:SetScript("OnClick", commitAdd)
+
+	local countText = CreateTextLabel(panel, "")
+	countText:SetPoint("TOPLEFT", addLabel, "BOTTOMLEFT", 0, -16)
+	countText:SetWidth(260)
+	ui.CountText = countText
+
+	local listFrame = CreateBackdropFrame(panel, TOCNAME .. "BanlistFrame")
+	listFrame:SetPoint("TOPLEFT", countText, "BOTTOMLEFT", 0, -10)
+	listFrame:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -8, -160)
+	listFrame:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 8, 10)
+	listFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -8, 10)
+
+	local scrollFrame = CreateFrame("ScrollFrame", TOCNAME .. "BanlistScrollFrame", listFrame, "UIPanelScrollFrameTemplate")
+	scrollFrame:SetPoint("TOPLEFT", listFrame, "TOPLEFT", 6, -6)
+	scrollFrame:SetPoint("BOTTOMRIGHT", listFrame, "BOTTOMRIGHT", -28, 6)
+	ui.ScrollFrame = scrollFrame
+
+	local scrollChild = CreateFrame("Frame", TOCNAME .. "BanlistScrollChild", scrollFrame)
+	scrollChild:SetSize(1, 1)
+	scrollFrame:SetScrollChild(scrollChild)
+	ui.ScrollChild = scrollChild
+
+	panel:HookScript("OnShow", function()
+		RefreshBanlistUI()
+	end)
+
+	RefreshBanlistUI()
+end
+
 function EC.UpdateTags()
 	for recipeName in pairs(EC.DBChar.RecipeList or {}) do
 		local customText = GetRecipeSearchText(recipeName)
@@ -466,6 +615,7 @@ function EC.Default()
 	EC.DB.Custom.SearchPrefix = Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = Combine(EC.DefaultEnchanterTags)
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = {}
+	EC.DB.BanList = {}
 	EC.DefaultCustomTags()
 end
 
@@ -474,6 +624,7 @@ function EC.OptionsUpdate()
 	EC.DB.Custom.SearchPrefix = EC.DB.Custom.SearchPrefix or Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = EC.DB.Custom.GenericPrefix or Combine(EC.DefaultEnchanterTags)
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = EC.DB.Custom[RECIPE_BLACKLIST_KEY] or {}
+	EC.DB.BanList = EC.DB.BanList or {}
 
 	if EC.DB.WarnIncompleteOrder == nil then
 		EC.DB.WarnIncompleteOrder = true
@@ -652,6 +803,9 @@ function EC.OptionsInit()
 
 	local recipePanel = EC.OptionsBuilder.AddNewCategoryPanel("Recipe Customizations", false, false)
 	BuildRecipeCustomizationPanel(recipePanel)
+
+	local banlistPanel = EC.OptionsBuilder.AddNewCategoryPanel("Banlist", false, false)
+	BuildBanlistPanel(banlistPanel)
 
 	EC.OptionsUpdate()
 end

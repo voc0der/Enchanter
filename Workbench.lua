@@ -3238,6 +3238,38 @@ function Workbench.WhisperOrder(orderId)
 	return false
 end
 
+function Workbench.WhisperMissingMats(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not order or not order.Customer then
+		return false
+	end
+
+	local materials = Workbench.GetMaterialSnapshot(order)
+	local missing = {}
+
+	for _, material in ipairs(materials) do
+		local required = GetRequiredMaterialCount(material)
+		local recorded = GetRecordedMaterialCount(order, material, required)
+		if recorded < required then
+			local itemName = material.Name or "Unknown"
+			local stillNeeded = required - recorded
+			missing[#missing + 1] = stillNeeded .. "x " .. itemName
+		end
+	end
+
+	if #missing == 0 then
+		WorkbenchDebug("no missing mats for", order.Customer)
+		return false
+	end
+
+	local msg = "Still need: " .. table.concat(missing, ", ")
+	WorkbenchDebug("missing mats whisper for", order.Customer, msg)
+	if SendChatMessage then
+		SendChatMessage(msg, "WHISPER", nil, order.Customer)
+	end
+	return true
+end
+
 function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecipeCount)
 	local state = Workbench.EnsureState()
 	local recipeNames = CopyRecipeNames(recipeMap)
@@ -3768,6 +3800,29 @@ local function CreateOrderRow(parent, index)
 	row.PartyCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
 	row.PartyCheck:SetVertexColor(0.45, 0.82, 0.42)
 	row.PartyCheck:Hide()
+
+	row.MatsButton = CreateFrame("Button", nil, row)
+	row.MatsButton:SetSize(16, 16)
+	row.MatsButton:SetPoint("TOPRIGHT", row.PartyCheck, "TOPLEFT", -4, 0)
+	row.MatsButton:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
+	row.MatsButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+	row.MatsButton:SetScript("OnEnter", function(self)
+		if GameTooltip then
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:SetText("Whisper missing materials", 1, 1, 1)
+			GameTooltip:Show()
+		end
+	end)
+	row.MatsButton:SetScript("OnLeave", function()
+		if GameTooltip then
+			GameTooltip:Hide()
+		end
+	end)
+	row.MatsButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.WhisperMissingMats(self.OrderId)
+		end
+	end)
 
 	row.InviteButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
 	row.InviteButton:SetSize(42, 18)
@@ -4310,6 +4365,7 @@ function Workbench.Refresh()
 		row.RemoveButton.OrderId = order.Id
 		row.InviteButton.OrderId = order.Id
 		row.WhisperButton.OrderId = order.Id
+		row.MatsButton.OrderId = order.Id
 		row.NameText:SetText(order.Customer or "Unknown")
 		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 		row.SummaryText:SetText(OrderSummary(order))
@@ -4611,3 +4667,71 @@ function Workbench.SyncVisibility()
 		Workbench.Frame:Hide()
 	end
 end
+
+-- Ban from Enchanter: inject into player right-click menus via the Mixin-based UnitPopup system.
+-- We wrap GetEntries on the shared friendly-player submenu (inlined into PLAYER/PARTY/RAID menus)
+-- and separately on the FRIEND menu. The mixin is built after Blizzard_UnitPopup loads so that
+-- CreateFromMixins and UnitPopupButtonBaseMixin are already in scope.
+
+local function InjectEnchanterBanButton(menuObj, banMixin)
+	if not menuObj or not menuObj.GetEntries then
+		return
+	end
+	local origGetEntries = menuObj.GetEntries
+	menuObj.GetEntries = function(self)
+		local entries = origGetEntries(self)
+		if type(entries) == "table" then
+			entries[#entries + 1] = banMixin
+		end
+		return entries
+	end
+end
+
+local banButtonInjected = false
+local function TryInjectBanButton()
+	if banButtonInjected then
+		return
+	end
+	if not (UnitPopupButtonBaseMixin and CreateFromMixins) then
+		return
+	end
+	if not (UnitPopupMenuFriendlyPlayer and UnitPopupMenuFriendlyPlayer.GetEntries) then
+		return
+	end
+
+	local EnchanterBanButtonMixin = CreateFromMixins(UnitPopupButtonBaseMixin)
+
+	function EnchanterBanButtonMixin:GetText()
+		return "Ban from Enchanter"
+	end
+
+	function EnchanterBanButtonMixin:GetInteractDistance()
+		return 0
+	end
+
+	function EnchanterBanButtonMixin:CanShow(contextData)
+		return contextData and type(contextData.name) == "string" and contextData.name ~= ""
+	end
+
+	function EnchanterBanButtonMixin:OnClick(contextData)
+		local name = contextData and contextData.name
+		if name and name ~= "" and EC and EC.BanPlayer then
+			EC.BanPlayer(name)
+		end
+	end
+
+	InjectEnchanterBanButton(UnitPopupMenuFriendlyPlayer, EnchanterBanButtonMixin)
+	if UnitPopupMenuFriend and UnitPopupMenuFriend.GetEntries then
+		InjectEnchanterBanButton(UnitPopupMenuFriend, EnchanterBanButtonMixin)
+	end
+	banButtonInjected = true
+end
+
+local banButtonFrame = CreateFrame("Frame")
+banButtonFrame:RegisterEvent("ADDON_LOADED")
+banButtonFrame:SetScript("OnEvent", function(_, event, addonName)
+	if event == "ADDON_LOADED" and addonName == "Blizzard_UnitPopup" then
+		TryInjectBanButton()
+		banButtonFrame:UnregisterEvent("ADDON_LOADED")
+	end
+end)
