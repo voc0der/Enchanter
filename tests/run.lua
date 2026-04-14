@@ -328,6 +328,8 @@ local function setup_env(opts)
         function frame:StartSizing(point) self.started_sizing = point end
         function frame:StopMovingOrSizing() self.stopped_moving = true end
         function frame:RegisterForClicks(...) self.clicks = { ... } end
+        function frame:RegisterEvent(event) self.registered_events = self.registered_events or {}; self.registered_events[event] = true end
+        function frame:UnregisterEvent(event) if self.registered_events then self.registered_events[event] = nil end end
 
         state.frames[#state.frames + 1] = frame
         if name then
@@ -1399,6 +1401,344 @@ local function test_valid_request_matching_scenarios()
             },
             requested = 1,
         },
+        -- Cloak resistance permutations
+        {
+            name = "5 resist cloak matches Greater Resistance",
+            message = "lf 5 resist cloak",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "+5 resist cloak matches Greater Resistance",
+            message = "lf +5 resist cloak",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "5 resist to cloak matches Greater Resistance",
+            message = "lf enchanter 5 resist to cloak pst",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "+5 resistance to cloak matches Greater Resistance",
+            message = "wtb +5 resistance to cloak",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "5 resistance cloak matches Greater Resistance",
+            message = "lf 5 resistance cloak pst",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "5 all resist cloak matches Greater Resistance",
+            message = "lf 5 all resist to cloak",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "greater resistance to cloak matches Greater Resistance",
+            message = "lf greater resistance to cloak",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        {
+            name = "7 resis cloak matches Major Resistance",
+            message = "lf 7 resis cloak",
+            scanned = { "Enchant Cloak - Major Resistance" },
+            expected = { "Enchant Cloak - Major Resistance" },
+        },
+        {
+            name = "7 resist cloak matches Major Resistance",
+            message = "lf 7 resist cloak",
+            scanned = { "Enchant Cloak - Major Resistance" },
+            expected = { "Enchant Cloak - Major Resistance" },
+        },
+        {
+            name = "7 resistance cloak matches Major Resistance",
+            message = "lf 7 resistance cloak",
+            scanned = { "Enchant Cloak - Major Resistance" },
+            expected = { "Enchant Cloak - Major Resistance" },
+        },
+        -- Cloak agility permutations
+        {
+            name = "12 agi to cloak matches Greater Agility",
+            message = "lf 12 agi to cloak",
+            scanned = { "Enchant Cloak - Greater Agility" },
+            expected = { "Enchant Cloak - Greater Agility" },
+        },
+        {
+            name = "12 agi to back matches Greater Agility via back alias",
+            message = "wtb 12 agi to back pst",
+            scanned = { "Enchant Cloak - Greater Agility" },
+            expected = { "Enchant Cloak - Greater Agility" },
+        },
+        {
+            name = "agi to cloak matches Greater Agility",
+            message = "lf agi to cloak pst",
+            scanned = { "Enchant Cloak - Greater Agility" },
+            expected = { "Enchant Cloak - Greater Agility" },
+        },
+        -- Boots permutations
+        {
+            name = "7 agi to boots matches Enchant Boots - Greater Agility",
+            message = "lf 7 agi to boots",
+            scanned = { "Enchant Boots - Greater Agility" },
+            expected = { "Enchant Boots - Greater Agility" },
+        },
+        {
+            name = "+7 agi boots matches Enchant Boots - Greater Agility",
+            message = "lf +7 agi boots",
+            scanned = { "Enchant Boots - Greater Agility" },
+            expected = { "Enchant Boots - Greater Agility" },
+        },
+        {
+            name = "greater agility to boots matches Enchant Boots - Greater Agility",
+            message = "lf greater agility to boots",
+            scanned = { "Enchant Boots - Greater Agility" },
+            expected = { "Enchant Boots - Greater Agility" },
+        },
+        {
+            name = "7 stam to boots matches Enchant Boots - Greater Stamina",
+            message = "lf 7 stam to boots",
+            scanned = { "Enchant Boots - Greater Stamina" },
+            expected = { "Enchant Boots - Greater Stamina" },
+        },
+        {
+            name = "+7 stam boots matches Enchant Boots - Greater Stamina",
+            message = "lf +7 stam boots",
+            scanned = { "Enchant Boots - Greater Stamina" },
+            expected = { "Enchant Boots - Greater Stamina" },
+        },
+        -- Bracer permutations
+        {
+            name = "9 stam to bracers matches Superior Stamina",
+            message = "lf 9 stam to bracers",
+            scanned = { "Enchant Bracer - Superior Stamina" },
+            expected = { "Enchant Bracer - Superior Stamina" },
+        },
+        {
+            name = "+9 stam bracers matches Superior Stamina",
+            message = "lf +9 stam bracers",
+            scanned = { "Enchant Bracer - Superior Stamina" },
+            expected = { "Enchant Bracer - Superior Stamina" },
+        },
+        {
+            name = "9 stam wrist matches Superior Stamina",
+            message = "lf 9 stam to wrist",
+            scanned = { "Enchant Bracer - Superior Stamina" },
+            expected = { "Enchant Bracer - Superior Stamina" },
+        },
+        {
+            name = "9 str bracer matches Superior Strength",
+            message = "lf 9 str to bracer",
+            scanned = { "Enchant Bracer - Superior Strength" },
+            expected = { "Enchant Bracer - Superior Strength" },
+        },
+        {
+            name = "+9 str to wrist matches Superior Strength",
+            message = "lf +9 str to wrist",
+            scanned = { "Enchant Bracer - Superior Strength" },
+            expected = { "Enchant Bracer - Superior Strength" },
+        },
+        {
+            name = "7 int bracer matches Greater Intellect",
+            message = "lf 7 int bracer",
+            scanned = { "Enchant Bracer - Greater Intellect" },
+            expected = { "Enchant Bracer - Greater Intellect" },
+        },
+        {
+            name = "+7 int to wrist matches Greater Intellect",
+            message = "lf +7 int to wrist",
+            scanned = { "Enchant Bracer - Greater Intellect" },
+            expected = { "Enchant Bracer - Greater Intellect" },
+        },
+        -- Weapon permutations
+        {
+            name = "22 int to weapon matches Mighty Intellect",
+            message = "lf 22 int to weapon",
+            scanned = { "Enchant Weapon - Mighty Intellect" },
+            expected = { "Enchant Weapon - Mighty Intellect" },
+        },
+        {
+            name = "+22 int weapon matches Mighty Intellect",
+            message = "lf +22 int weapon",
+            scanned = { "Enchant Weapon - Mighty Intellect" },
+            expected = { "Enchant Weapon - Mighty Intellect" },
+        },
+        {
+            name = "22int weapon matches Mighty Intellect (compact)",
+            message = "lf 22int weapon",
+            scanned = { "Enchant Weapon - Mighty Intellect" },
+            expected = { "Enchant Weapon - Mighty Intellect" },
+        },
+        {
+            name = "22 intellect to weapon matches Mighty Intellect",
+            message = "lf 22 intellect to weapon",
+            scanned = { "Enchant Weapon - Mighty Intellect" },
+            expected = { "Enchant Weapon - Mighty Intellect" },
+        },
+        {
+            name = "15 str to weapon matches Strength",
+            message = "lf 15 str to weapon",
+            scanned = { "Enchant Weapon - Strength" },
+            expected = { "Enchant Weapon - Strength" },
+        },
+        {
+            name = "+15 str weapon matches Strength",
+            message = "lf +15 str weapon",
+            scanned = { "Enchant Weapon - Strength" },
+            expected = { "Enchant Weapon - Strength" },
+        },
+        -- Chest permutations
+        {
+            name = "6 stat chest matches Exceptional Stats",
+            message = "lf 6 stat to chest",
+            scanned = { "Enchant Chest - Exceptional Stats" },
+            expected = { "Enchant Chest - Exceptional Stats" },
+        },
+        {
+            name = "150 hp chest matches Exceptional Health",
+            message = "lf 150 hp chest",
+            scanned = { "Enchant Chest - Exceptional Health" },
+            expected = { "Enchant Chest - Exceptional Health" },
+        },
+        {
+            name = "15 resil chest matches Major Resilience",
+            message = "lf 15 resil to chest",
+            scanned = { "Enchant Chest - Major Resilience" },
+            expected = { "Enchant Chest - Major Resilience" },
+        },
+        -- Glove permutations
+        {
+            name = "15 agi gloves matches Superior Agility",
+            message = "lf 15 agi gloves",
+            scanned = { "Enchant Gloves - Superior Agility" },
+            expected = { "Enchant Gloves - Superior Agility" },
+        },
+        {
+            name = "+15 agi to gloves matches Superior Agility",
+            message = "lf +15 agi to gloves",
+            scanned = { "Enchant Gloves - Superior Agility" },
+            expected = { "Enchant Gloves - Superior Agility" },
+        },
+        {
+            name = "15 agi hands matches Superior Agility",
+            message = "lf 15 agi to hands",
+            scanned = { "Enchant Gloves - Superior Agility" },
+            expected = { "Enchant Gloves - Superior Agility" },
+        },
+        {
+            name = "26 ap gloves matches Assault",
+            message = "lf 26 ap gloves",
+            scanned = { "Enchant Gloves - Assault" },
+            expected = { "Enchant Gloves - Assault" },
+        },
+        {
+            name = "ap to gloves matches Assault",
+            message = "lf ap to gloves",
+            scanned = { "Enchant Gloves - Assault" },
+            expected = { "Enchant Gloves - Assault" },
+        },
+        -- Shield permutations
+        {
+            name = "18 stam to shield matches Major Stamina",
+            message = "lf 18 stam to shield",
+            scanned = { "Enchant Shield - Major Stamina" },
+            expected = { "Enchant Shield - Major Stamina" },
+        },
+        {
+            name = "+18 stam shield matches Major Stamina",
+            message = "lf +18 stam shield",
+            scanned = { "Enchant Shield - Major Stamina" },
+            expected = { "Enchant Shield - Major Stamina" },
+        },
+        {
+            name = "stam to shield matches Major Stamina",
+            message = "lf stam to shield",
+            scanned = { "Enchant Shield - Major Stamina" },
+            expected = { "Enchant Shield - Major Stamina" },
+        },
+        -- Plus-sign prefix permutations (common player shorthand)
+        {
+            name = "+40 sp to weapon matches Major Spellpower",
+            message = "lf +40 sp to weap",
+            scanned = { "Enchant Weapon - Major Spellpower" },
+            expected = { "Enchant Weapon - Major Spellpower" },
+        },
+        {
+            name = "40 sp weapon matches Major Spellpower",
+            message = "lf 40 sp weapon",
+            scanned = { "Enchant Weapon - Major Spellpower" },
+            expected = { "Enchant Weapon - Major Spellpower" },
+        },
+        {
+            name = "sp to weap matches Major Spellpower",
+            message = "lf sp to weap",
+            scanned = { "Enchant Weapon - Major Spellpower" },
+            expected = { "Enchant Weapon - Major Spellpower" },
+        },
+        -- Cape synonym for cloak
+        {
+            name = "5 resist cape matches Greater Resistance",
+            message = "lf 5 resist to cape",
+            scanned = { "Enchant Cloak - Greater Resistance" },
+            expected = { "Enchant Cloak - Greater Resistance" },
+        },
+        -- 2H weapon permutations
+        {
+            name = "35 agi 2h matches Major Agility",
+            message = "lf 35 agi 2h",
+            scanned = { "Enchant 2H Weapon - Major Agility" },
+            expected = { "Enchant 2H Weapon - Major Agility" },
+        },
+        {
+            name = "savagery 2h matches Savagery",
+            message = "lf savagery 2h",
+            scanned = { "Enchant 2H Weapon - Savagery" },
+            expected = { "Enchant 2H Weapon - Savagery" },
+        },
+        -- Feet synonym for boots
+        {
+            name = "boar speed to feet matches Boar Speed",
+            message = "lf boar to feet",
+            scanned = { "Enchant Boots - Boar's Speed" },
+            expected = { "Enchant Boots - Boar's Speed" },
+        },
+        {
+            name = "speed to feet matches Minor Speed",
+            message = "lf speed to feet",
+            scanned = { "Enchant Boots - Minor Speed" },
+            expected = { "Enchant Boots - Minor Speed" },
+        },
+        -- Healing bracer and wrist
+        {
+            name = "30 healing to bracer matches Superior Healing",
+            message = "lf 30 healing to bracer",
+            scanned = { "Enchant Bracer - Superior Healing" },
+            expected = { "Enchant Bracer - Superior Healing" },
+        },
+        {
+            name = "heal to wrist matches Superior Healing",
+            message = "lf heal to wrist",
+            scanned = { "Enchant Bracer - Superior Healing" },
+            expected = { "Enchant Bracer - Superior Healing" },
+        },
+        -- MP5 permutations
+        {
+            name = "mp5 to wrist matches Restore Mana Prime bracer",
+            message = "lf mp5 to wrist",
+            scanned = { "Enchant Bracer - Restore Mana Prime" },
+            expected = { "Enchant Bracer - Restore Mana Prime" },
+        },
+        {
+            name = "mp5 to chest matches Restore Mana Prime chest",
+            message = "lf mp5 to chest",
+            scanned = { "Enchant Chest - Restore Mana Prime" },
+            expected = { "Enchant Chest - Restore Mana Prime" },
+        },
     }
 
     for index, case in ipairs(cases) do
@@ -1497,6 +1837,80 @@ local function test_invalid_request_matching_scenarios()
             message = "lf stam to bracers",
             scanned = {
                 "Enchant Bracer - Superior Stamina",
+            },
+        },
+        -- Slot cross-contamination: cloak resistance should not match non-cloak requests
+        {
+            name = "5 resist weapon does not match cloak resistance",
+            message = "lf 5 resist weapon",
+            scanned = {
+                "Enchant Cloak - Greater Resistance",
+            },
+        },
+        {
+            name = "5 resist chest does not match cloak resistance",
+            message = "lf 5 resist to chest",
+            scanned = {
+                "Enchant Cloak - Greater Resistance",
+            },
+        },
+        -- Rank cross-contamination: a lower-rank enchant should not match a higher-rank request
+        {
+            name = "7 agi boots does not match Dexterity (12 agi to boots)",
+            message = "lf 7 agi to boots",
+            scanned = {
+                "Enchant Boots - Dexterity",
+            },
+        },
+        {
+            name = "generic int weapon does not match classic Mighty Intellect",
+            message = "lf int weapon",
+            scanned = {
+                "Enchant Weapon - Mighty Intellect",
+            },
+        },
+        {
+            name = "generic str weapon does not match classic Strength",
+            message = "lf str to weapon",
+            scanned = {
+                "Enchant Weapon - Strength",
+            },
+        },
+        {
+            name = "generic stam boots does not match classic Greater Stamina",
+            message = "lf stam to boots",
+            scanned = {
+                "Enchant Boots - Greater Stamina",
+            },
+        },
+        {
+            name = "generic agi bracer does not match classic Greater Strength",
+            message = "lf agi to bracer",
+            scanned = {
+                "Enchant Bracer - Greater Strength",
+            },
+        },
+        -- Weapon/glove spellpower ambiguity should be caught by blacklist
+        {
+            name = "major spellpower to weapon does not match glove Major Spellpower",
+            message = "lf major spellpower to weapon",
+            scanned = {
+                "Enchant Gloves - Major Spellpower",
+            },
+        },
+        -- Shield/chest resilience separation
+        {
+            name = "15 resil chest does not match shield resilience",
+            message = "lf 15 resil chest",
+            scanned = {
+                "Enchant Shield - Resilience",
+            },
+        },
+        {
+            name = "12 res shield does not match chest major resilience",
+            message = "lf 12 res shield",
+            scanned = {
+                "Enchant Chest - Major Resilience",
             },
         },
     }
@@ -4027,6 +4441,175 @@ local function test_workbench_manual_invite_and_whisper_actions()
     assert_true(string.find(state.whispers[2].message, "%[Enchant Weapon %- Mongoose%]") ~= nil, "manual whisper should include the matched recipe links")
 end
 
+local function test_workbench_missing_mats_whisper_action()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+            RecipeMats = {
+                ["Enchant Weapon - Mongoose"] = {
+                    { Name = "Primal Fire", Count = 4 },
+                    { Name = "Large Prismatic Shard", Count = 1 },
+                },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-MissingMats")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-MissingMats")
+    assert_not_nil(order, "order should exist before testing missing mats whisper")
+
+    local baseCount = #state.whispers
+    local sent = addon.Workbench.WhisperMissingMats(order.Id)
+
+    assert_true(sent, "WhisperMissingMats should return true when materials are missing")
+    assert_equal(#state.whispers, baseCount + 1, "WhisperMissingMats should send one whisper")
+    assert_equal(state.whispers[#state.whispers].target, "Buyer-MissingMats", "missing mats whisper should target the queued customer")
+    assert_true(string.find(state.whispers[#state.whispers].message, "Still need:", 1, true) ~= nil, "missing mats whisper should contain a 'Still need:' label")
+    assert_true(string.find(state.whispers[#state.whispers].message, "Primal Fire", 1, true) ~= nil, "missing mats whisper should list a missing material by name")
+end
+
+local function test_workbench_missing_mats_whisper_skips_when_all_mats_present()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+            RecipeMats = {
+                ["Enchant Weapon - Mongoose"] = {
+                    { Name = "Primal Fire", Count = 4 },
+                },
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-AllMats")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-AllMats")
+    assert_not_nil(order, "order should exist before testing missing mats no-send")
+
+    -- Record all materials as present
+    order.MaterialState = order.MaterialState or {}
+    local mats = addon.Workbench.GetMaterialSnapshot(order)
+    for _, mat in ipairs(mats) do
+        if mat.Key then
+            order.MaterialState[mat.Key] = true
+        end
+    end
+
+    local baseCount = #state.whispers
+    local sent = addon.Workbench.WhisperMissingMats(order.Id)
+
+    assert_true(not sent, "WhisperMissingMats should return false when all materials are present")
+    assert_equal(#state.whispers, baseCount, "WhisperMissingMats should not send when nothing is missing")
+end
+
+local function test_ban_player_silences_messages()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+
+    -- Ban a player then have them request something
+    addon.BanPlayer("SpammerA")
+    addon.ParseMessage("LF mongoose pst", "SpammerA")
+
+    assert_equal(#state.whispers, 0, "banned player should not trigger a whisper")
+    assert_equal(#state.invites, 0, "banned player should not trigger an invite")
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "banned player should not add a queue entry")
+end
+
+local function test_ban_player_is_case_insensitive()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.BanPlayer("PlayerX")
+
+    -- Message arrives with different capitalization
+    addon.ParseMessage("LF mongoose pst", "playerx")
+
+    assert_equal(#state.whispers, 0, "ban check should be case insensitive")
+    assert_equal(#state.invites, 0, "ban check should be case insensitive for invites")
+end
+
+local function test_unban_player_restores_matching()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.BanPlayer("FriendA")
+    addon.UnbanPlayer("FriendA")
+    addon.ParseMessage("LF mongoose pst", "FriendA")
+
+    assert_equal(#state.whispers, 1, "unbanned player should receive a whisper again")
+    assert_equal(#state.invites, 1, "unbanned player should receive an invite again")
+end
+
+local function test_is_banned_respects_ban_and_unban()
+    local addon = setup_env()
+
+    assert_true(not addon.IsBanned("Loner"), "new player should not be banned")
+    addon.BanPlayer("Loner")
+    assert_true(addon.IsBanned("Loner"), "player should be banned after BanPlayer")
+    addon.UnbanPlayer("Loner")
+    assert_true(not addon.IsBanned("Loner"), "player should not be banned after UnbanPlayer")
+end
+
 local function test_workbench_clear_button_empties_queue_and_resets_detail()
     local addon = setup_env({
         char_db = {
@@ -5084,3 +5667,9 @@ test_simulate_stop_invalidates_pending_tick()
 test_simulate_now_queues_extra_fake_order_without_starting_loop()
 test_simulate_survives_without_math_random_helpers()
 test_slash_commands_expose_simulate_entry()
+test_workbench_missing_mats_whisper_action()
+test_workbench_missing_mats_whisper_skips_when_all_mats_present()
+test_ban_player_silences_messages()
+test_ban_player_is_case_insensitive()
+test_unban_player_restores_matching()
+test_is_banned_respects_ban_and_unban()

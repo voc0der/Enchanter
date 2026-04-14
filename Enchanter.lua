@@ -1154,6 +1154,38 @@ local function MarkSimulatedCustomer(name)
 	end
 end
 
+local function GetBanList()
+	EC.DB = EC.DB or {}
+	EC.DB.BanList = EC.DB.BanList or {}
+	return EC.DB.BanList
+end
+
+function EC.IsBanned(name)
+	local key = NormalizeNameKey(name)
+	if key == "" then
+		return false
+	end
+	return GetBanList()[key] == true
+end
+
+function EC.BanPlayer(name)
+	local key = NormalizeNameKey(name)
+	if key == "" then
+		return false
+	end
+	GetBanList()[key] = true
+	return true
+end
+
+function EC.UnbanPlayer(name)
+	local key = NormalizeNameKey(name)
+	if key == "" then
+		return false
+	end
+	GetBanList()[key] = nil
+	return true
+end
+
 local function SeedRandom()
 	if randomSeeded then
 		return
@@ -2807,6 +2839,10 @@ end
 
 function EC.ParseMessage(msg, name)
 	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or string.len(msg) < 4 or EC.DBChar.Stop == true then
+		return
+	end
+
+	if EC.IsBanned(name) then
 		return
 	end
 
