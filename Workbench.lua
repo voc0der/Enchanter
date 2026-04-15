@@ -4681,6 +4681,9 @@ local function AddBanButton(owner, rootDescription, contextData)
 	rootDescription:CreateButton("Ban from Enchanter", function()
 		if EC and EC.BanPlayer then
 			EC.BanPlayer(name)
+			if EC.RefreshBanlistUI then
+				EC.RefreshBanlistUI()
+			end
 		end
 	end)
 end

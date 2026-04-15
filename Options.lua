@@ -185,6 +185,7 @@ end
 
 local RefreshRecipeCustomizationUI
 local RefreshBanlistUI
+EC.RefreshBanlistUI = function() if RefreshBanlistUI then RefreshBanlistUI() end end
 
 local function CreateCSVEditBox(parent, name, sampleText, getter, setter)
 	local editBox = CreateFrame("EditBox", name, parent, "InputBoxInstructionsTemplate")
@@ -433,6 +434,11 @@ RefreshBanlistUI = function()
 
 	EC.DB.BanList = EC.DB.BanList or {}
 
+	local scrollWidth = ui.ScrollFrame and ui.ScrollFrame:GetWidth() or 0
+	if scrollWidth > 0 then
+		ui.ScrollChild:SetWidth(scrollWidth)
+	end
+
 	for _, row in ipairs(ui.Rows or {}) do
 		row:Hide()
 	end
@@ -565,6 +571,13 @@ local function BuildBanlistPanel(panel)
 	scrollChild:SetSize(1, 1)
 	scrollFrame:SetScrollChild(scrollChild)
 	ui.ScrollChild = scrollChild
+
+	scrollFrame:HookScript("OnSizeChanged", function(self)
+		local w = self:GetWidth()
+		if w and w > 0 then
+			scrollChild:SetWidth(w)
+		end
+	end)
 
 	panel:HookScript("OnShow", function()
 		RefreshBanlistUI()

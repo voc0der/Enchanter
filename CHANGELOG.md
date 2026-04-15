@@ -1,3 +1,9 @@
+## [2.1.62] - 2026-04-15
+
+### Fixed
+- Banlist panel now shows player names: scroll child width was initialized to 1px and never updated, causing rows anchored to its right edge to render at zero width; width is now synced from the scroll frame on show and on resize
+- Banning via right-click menu now immediately updates the Banlist count and list; `RefreshBanlistUI` was local to `Options.lua` and unreachable from the right-click handler
+
 ## [2.1.61] - 2026-04-15
 
 ### Fixed
