@@ -4695,9 +4695,6 @@ local function TryInjectBanButton()
 	if not (UnitPopupButtonBaseMixin and CreateFromMixins) then
 		return
 	end
-	if not (UnitPopupMenuFriendlyPlayer and UnitPopupMenuFriendlyPlayer.GetEntries) then
-		return
-	end
 
 	local EnchanterBanButtonMixin = CreateFromMixins(UnitPopupButtonBaseMixin)
 
@@ -4720,9 +4717,16 @@ local function TryInjectBanButton()
 		end
 	end
 
-	InjectEnchanterBanButton(UnitPopupMenuFriendlyPlayer, EnchanterBanButtonMixin)
-	if UnitPopupMenuFriend and UnitPopupMenuFriend.GetEntries then
-		InjectEnchanterBanButton(UnitPopupMenuFriend, EnchanterBanButtonMixin)
+	-- Inject directly into the registered top-level menus rather than into
+	-- UnitPopupMenuFriendlyPlayer (an inline submenu), so the button appears
+	-- regardless of how AssembleMenuEntries expands inline menus.
+	for _, menu in ipairs({
+		UnitPopupMenuParty,
+		UnitPopupMenuRaidPlayer,
+		UnitPopupMenuPlayer,
+		UnitPopupMenuFriend,
+	}) do
+		InjectEnchanterBanButton(menu, EnchanterBanButtonMixin)
 	end
 
 	-- Blizzard bug: GetFullPlayerName's cross-realm branch concatenates server without a
