@@ -4668,91 +4668,41 @@ function Workbench.SyncVisibility()
 	end
 end
 
--- Ban from Enchanter: inject into player right-click menus via the Mixin-based UnitPopup system.
--- We wrap GetEntries on the shared friendly-player submenu (inlined into PLAYER/PARTY/RAID menus)
--- and separately on the FRIEND menu. The mixin is built after Blizzard_UnitPopup loads so that
--- CreateFromMixins and UnitPopupButtonBaseMixin are already in scope.
+-- Ban from Enchanter: append a button to player right-click menus via hooksecurefunc on
+-- UnitPopup_ShowMenu. This is the Classic UIDropDownMenu API and works on all Classic flavors.
 
-local function InjectEnchanterBanButton(menuObj, banMixin)
-	if not menuObj or not menuObj.GetEntries then
-		return
-	end
-	local origGetEntries = menuObj.GetEntries
-	menuObj.GetEntries = function(self)
-		local entries = origGetEntries(self)
-		if type(entries) == "table" then
-			entries[#entries + 1] = banMixin
-		end
-		return entries
-	end
-end
-
-local banButtonInjected = false
-local function TryInjectBanButton()
-	if banButtonInjected then
-		return
-	end
-	if not (UnitPopupButtonBaseMixin and CreateFromMixins) then
-		return
-	end
-
-	local EnchanterBanButtonMixin = CreateFromMixins(UnitPopupButtonBaseMixin)
-
-	function EnchanterBanButtonMixin:GetText()
-		return "Ban from Enchanter"
-	end
-
-	function EnchanterBanButtonMixin:GetInteractDistance()
-		return 0
-	end
-
-	function EnchanterBanButtonMixin:CanShow(contextData)
-		return contextData and type(contextData.name) == "string" and contextData.name ~= ""
-	end
-
-	function EnchanterBanButtonMixin:OnClick(contextData)
-		local name = contextData and contextData.name
-		if name and name ~= "" and EC and EC.BanPlayer then
-			EC.BanPlayer(name)
-		end
-	end
-
-	-- Inject directly into the registered top-level menus rather than into
-	-- UnitPopupMenuFriendlyPlayer (an inline submenu), so the button appears
-	-- regardless of how AssembleMenuEntries expands inline menus.
-	for _, menu in ipairs({
-		UnitPopupMenuParty,
-		UnitPopupMenuRaidPlayer,
-		UnitPopupMenuPlayer,
-		UnitPopupMenuFriend,
-	}) do
-		InjectEnchanterBanButton(menu, EnchanterBanButtonMixin)
-	end
-
-	-- Blizzard bug: GetFullPlayerName's cross-realm branch concatenates server without a
-	-- nil guard, so clicking "Remove from Party" on a cross-realm player with no server
-	-- in contextData raises "attempt to concatenate a nil value". Patch it here since we
-	-- are already running post-Blizzard_UnitPopup load.
-	if UnitPopupSharedUtil and UnitPopupSharedUtil.GetFullPlayerName then
-		local origGetFullPlayerName = UnitPopupSharedUtil.GetFullPlayerName
-		UnitPopupSharedUtil.GetFullPlayerName = function(contextData)
-			if contextData and contextData.unit and not contextData.server
-				and UnitRealmRelationship
-				and UnitRealmRelationship(contextData.unit) ~= LE_REALM_RELATION_SAME then
-				return contextData.name or ""
-			end
-			return origGetFullPlayerName(contextData)
-		end
-	end
-
-	banButtonInjected = true
-end
+local BAN_BUTTON_MENUS = { PARTY = true, RAID_PLAYER = true, PLAYER = true, FRIEND = true }
 
 local banButtonFrame = CreateFrame("Frame")
-banButtonFrame:RegisterEvent("ADDON_LOADED")
-banButtonFrame:SetScript("OnEvent", function(_, event, addonName)
-	if event == "ADDON_LOADED" and addonName == "Blizzard_UnitPopup" then
-		TryInjectBanButton()
-		banButtonFrame:UnregisterEvent("ADDON_LOADED")
+banButtonFrame:RegisterEvent("PLAYER_LOGIN")
+banButtonFrame:SetScript("OnEvent", function(_, event)
+	if event ~= "PLAYER_LOGIN" then
+		return
 	end
+	banButtonFrame:UnregisterEvent("PLAYER_LOGIN")
+
+	hooksecurefunc("UnitPopup_ShowMenu", function(dropdownMenu, which, unit, name)
+		if UIDROPDOWNMENU_MENU_LEVEL ~= 1 then
+			return
+		end
+		if not BAN_BUTTON_MENUS[which] then
+			return
+		end
+		local playerName = name
+		if not playerName or playerName == "" then
+			playerName = unit and (GetUnitName(unit, true) or UnitName(unit))
+		end
+		if not playerName or playerName == "" then
+			return
+		end
+		local info = UIDropDownMenu_CreateInfo()
+		info.text = "Ban from Enchanter"
+		info.notCheckable = true
+		info.func = function()
+			if EC and EC.BanPlayer then
+				EC.BanPlayer(playerName)
+			end
+		end
+		UIDropDownMenu_AddButton(info, UIDROPDOWNMENU_MENU_LEVEL)
+	end)
 end)

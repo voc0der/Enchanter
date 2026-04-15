@@ -1,3 +1,8 @@
+## [2.1.60] - 2026-04-15
+
+### Fixed
+- Ban from Enchanter right-click button now works on Classic: replaced the Retail-only mixin injection (`UnitPopupButtonBaseMixin`, `GetEntries` wrapping, `Blizzard_UnitPopup` load dependency) with a `hooksecurefunc("UnitPopup_ShowMenu")` hook using the Classic `UIDropDownMenu` API; button appears in PARTY, RAID_PLAYER, PLAYER, and FRIEND menus
+
 ## [2.1.59] - 2026-04-15
 
 ### Fixed
