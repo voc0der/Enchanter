@@ -608,6 +608,7 @@ function EC.Default()
 	EC.DB.GroupedQueueExpireSeconds = 0
 	EC.DB.DeclinedInviteRemovalSeconds = 0
 	EC.DB.MaxGroupedCustomers = 0
+	EC.DB.AutoReplaceEnchant = true
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
 	EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
@@ -626,6 +627,9 @@ function EC.OptionsUpdate()
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = EC.DB.Custom[RECIPE_BLACKLIST_KEY] or {}
 	EC.DB.BanList = EC.DB.BanList or {}
 
+	if EC.DB.AutoReplaceEnchant == nil then
+		EC.DB.AutoReplaceEnchant = true
+	end
 	if EC.DB.WarnIncompleteOrder == nil then
 		EC.DB.WarnIncompleteOrder = true
 	end
@@ -769,6 +773,9 @@ function EC.OptionsInit()
 	EC.OptionsBuilder.InLine()
 	AddSavedCheckBox(EC.DB, "WarnIncompleteOrder", true, "Warn if Incomplete Order")
 	AddSavedCheckBox(EC.DB, "InviteIncompleteOrder", true, "Invite Incomplete Order")
+	EC.OptionsBuilder.EndInLine()
+	EC.OptionsBuilder.InLine()
+	AddSavedCheckBox(EC.DB, "AutoReplaceEnchant", true, "Automatically replace enchants")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.InLine()
 	AddSavedCheckBox(EC.DB, "EmoteThankAfterCast", false, "Emote /thank after successful cast")
