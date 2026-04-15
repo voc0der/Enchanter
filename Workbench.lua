@@ -4695,9 +4695,6 @@ local function TryInjectBanButton()
 	if not (UnitPopupButtonBaseMixin and CreateFromMixins) then
 		return
 	end
-	if not (UnitPopupMenuFriendlyPlayer and UnitPopupMenuFriendlyPlayer.GetEntries) then
-		return
-	end
 
 	local EnchanterBanButtonMixin = CreateFromMixins(UnitPopupButtonBaseMixin)
 
@@ -4720,10 +4717,34 @@ local function TryInjectBanButton()
 		end
 	end
 
-	InjectEnchanterBanButton(UnitPopupMenuFriendlyPlayer, EnchanterBanButtonMixin)
-	if UnitPopupMenuFriend and UnitPopupMenuFriend.GetEntries then
-		InjectEnchanterBanButton(UnitPopupMenuFriend, EnchanterBanButtonMixin)
+	-- Inject directly into the registered top-level menus rather than into
+	-- UnitPopupMenuFriendlyPlayer (an inline submenu), so the button appears
+	-- regardless of how AssembleMenuEntries expands inline menus.
+	for _, menu in ipairs({
+		UnitPopupMenuParty,
+		UnitPopupMenuRaidPlayer,
+		UnitPopupMenuPlayer,
+		UnitPopupMenuFriend,
+	}) do
+		InjectEnchanterBanButton(menu, EnchanterBanButtonMixin)
 	end
+
+	-- Blizzard bug: GetFullPlayerName's cross-realm branch concatenates server without a
+	-- nil guard, so clicking "Remove from Party" on a cross-realm player with no server
+	-- in contextData raises "attempt to concatenate a nil value". Patch it here since we
+	-- are already running post-Blizzard_UnitPopup load.
+	if UnitPopupSharedUtil and UnitPopupSharedUtil.GetFullPlayerName then
+		local origGetFullPlayerName = UnitPopupSharedUtil.GetFullPlayerName
+		UnitPopupSharedUtil.GetFullPlayerName = function(contextData)
+			if contextData and contextData.unit and not contextData.server
+				and UnitRealmRelationship
+				and UnitRealmRelationship(contextData.unit) ~= LE_REALM_RELATION_SAME then
+				return contextData.name or ""
+			end
+			return origGetFullPlayerName(contextData)
+		end
+	end
+
 	banButtonInjected = true
 end
 
