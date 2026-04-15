@@ -1,3 +1,8 @@
+## [2.1.59] - 2026-04-15
+
+### Fixed
+- Patched a Blizzard bug in `GetFullPlayerName` where clicking "Remove from Party/Raid" on a cross-realm player with no server in the context data caused a nil-concatenation error; the patch is applied at `Blizzard_UnitPopup` load time alongside the ban button injection
+
 ## [2.1.58] - 2026-04-15
 
 ### Added
