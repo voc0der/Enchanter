@@ -1,3 +1,8 @@
+## [2.1.58] - 2026-04-15
+
+### Added
+- "Automatically replace enchants" option in `/e config` (enabled by default) — when checked, the "Do you want to overwrite X with Y?" confirmation dialog is auto-accepted so enchant replacements proceed without a click
+
 ## [2.1.57] - 2026-04-14
 
 ### Added
