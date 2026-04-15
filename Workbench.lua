@@ -4668,10 +4668,22 @@ function Workbench.SyncVisibility()
 	end
 end
 
--- Ban from Enchanter: append a button to player right-click menus via hooksecurefunc on
--- UnitPopup_ShowMenu. This is the Classic UIDropDownMenu API and works on all Classic flavors.
+-- Ban from Enchanter: inject into player right-click menus via Menu.ModifyMenu.
+-- TBC Anniversary UnitPopup builds menus with MenuUtil.CreateContextMenu and tags
+-- each rootDescription as "MENU_UNIT_PARTY", "MENU_UNIT_RAID_PLAYER", etc.
+-- Menu.ModifyMenu is the correct injection point; it runs before the menu is shown.
 
-local BAN_BUTTON_MENUS = { PARTY = true, RAID_PLAYER = true, PLAYER = true, FRIEND = true }
+local function AddBanButton(owner, rootDescription, contextData)
+	local name = contextData and contextData.name
+	if not name or name == "" then
+		return
+	end
+	rootDescription:CreateButton("Ban from Enchanter", function()
+		if EC and EC.BanPlayer then
+			EC.BanPlayer(name)
+		end
+	end)
+end
 
 local banButtonFrame = CreateFrame("Frame")
 banButtonFrame:RegisterEvent("PLAYER_LOGIN")
@@ -4680,29 +4692,15 @@ banButtonFrame:SetScript("OnEvent", function(_, event)
 		return
 	end
 	banButtonFrame:UnregisterEvent("PLAYER_LOGIN")
-
-	hooksecurefunc("UnitPopup_ShowMenu", function(dropdownMenu, which, unit, name)
-		if UIDROPDOWNMENU_MENU_LEVEL ~= 1 then
-			return
-		end
-		if not BAN_BUTTON_MENUS[which] then
-			return
-		end
-		local playerName = name
-		if not playerName or playerName == "" then
-			playerName = unit and (GetUnitName(unit, true) or UnitName(unit))
-		end
-		if not playerName or playerName == "" then
-			return
-		end
-		local info = UIDropDownMenu_CreateInfo()
-		info.text = "Ban from Enchanter"
-		info.notCheckable = true
-		info.func = function()
-			if EC and EC.BanPlayer then
-				EC.BanPlayer(playerName)
-			end
-		end
-		UIDropDownMenu_AddButton(info, UIDROPDOWNMENU_MENU_LEVEL)
-	end)
+	if type(Menu) ~= "table" or type(Menu.ModifyMenu) ~= "function" then
+		return
+	end
+	for _, tag in ipairs({
+		"MENU_UNIT_PARTY",
+		"MENU_UNIT_RAID_PLAYER",
+		"MENU_UNIT_PLAYER",
+		"MENU_UNIT_FRIEND",
+	}) do
+		pcall(Menu.ModifyMenu, tag, AddBanButton)
+	end
 end)

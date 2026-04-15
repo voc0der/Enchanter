@@ -1,3 +1,8 @@
+## [2.1.61] - 2026-04-15
+
+### Fixed
+- Ban from Enchanter right-click button now works: replaced incorrect `hooksecurefunc("UnitPopup_ShowMenu")` (that function does not exist in TBC Anniversary) with `Menu.ModifyMenu` on the `MENU_UNIT_PARTY`, `MENU_UNIT_RAID_PLAYER`, `MENU_UNIT_PLAYER`, and `MENU_UNIT_FRIEND` tags — the correct injection point for TBC Anniversary's `MenuUtil.CreateContextMenu`-based UnitPopup system
+
 ## [2.1.60] - 2026-04-15
 
 ### Fixed
