@@ -3044,20 +3044,6 @@ local function Event_UI_INFO_MESSAGE(arg1, arg2, arg3)
 	end
 end
 
-local function Event_REPLACE_ENCHANT()
-	if not (EC.DB and EC.DB.AutoReplaceEnchant) then
-		return
-	end
-	if C_Item and type(C_Item.ReplaceEnchant) == "function" then
-		C_Item.ReplaceEnchant()
-	elseif type(ReplaceEnchant) == "function" then
-		ReplaceEnchant()
-	end
-	if StaticPopup_Hide then
-		StaticPopup_Hide("REPLACE_ENCHANT")
-	end
-end
-
 local function Event_TRADE_REPLACE_ENCHANT()
 	if not (EC.DB and EC.DB.AutoReplaceEnchant) then
 		return
@@ -3082,7 +3068,6 @@ end
 
 function EC.OnLoad()
 	EC.Tool.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
-	EC.Tool.RegisterEvent("REPLACE_ENCHANT", Event_REPLACE_ENCHANT)
 	EC.Tool.RegisterEvent("TRADE_REPLACE_ENCHANT", Event_TRADE_REPLACE_ENCHANT)
 	EC.Tool.RegisterEvent("CHAT_MSG_CHANNEL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_SAY", Event_CHAT_MSG_CHANNEL)

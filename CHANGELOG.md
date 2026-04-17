@@ -1,3 +1,8 @@
+## [2.1.63] - 2026-04-17
+
+### Fixed
+- Rogue poison macros that use `/click StaticPopup1Button1` now work again: the 2.1.58 auto-replace feature registered for `REPLACE_ENCHANT`, which fires for any non-trade enchant replacement including rogue poison application; the handler was intercepting the event, calling `C_Item.ReplaceEnchant()`, and hiding the popup before the macro could click it; removed the `REPLACE_ENCHANT` handler since the trade-enchanting use case fires `TRADE_REPLACE_ENCHANT` exclusively
+
 ## [2.1.62] - 2026-04-15
 
 ### Fixed
