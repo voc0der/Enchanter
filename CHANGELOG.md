@@ -1,3 +1,8 @@
+## [2.1.64] - 2026-04-20
+
+### Changed
+- Queue row action buttons are now icon-only: whisper customer uses an envelope icon, whisper missing materials uses an alchemy flask icon, invite to group uses a person/guild icon; all three sit on the same bottom row with tooltips on hover
+
 ## [2.1.63] - 2026-04-17
 
 ### Fixed
