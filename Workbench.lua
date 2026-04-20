@@ -3801,10 +3801,56 @@ local function CreateOrderRow(parent, index)
 	row.PartyCheck:SetVertexColor(0.45, 0.82, 0.42)
 	row.PartyCheck:Hide()
 
+	row.InviteButton = CreateFrame("Button", nil, row)
+	row.InviteButton:SetSize(20, 20)
+	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 5)
+	row.InviteButton:SetNormalTexture("Interface\\Icons\\Achievement_GuildRep_01")
+	row.InviteButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+	row.InviteButton:SetScript("OnEnter", function(self)
+		if GameTooltip then
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:SetText("Invite to group", 1, 1, 1)
+			GameTooltip:Show()
+		end
+	end)
+	row.InviteButton:SetScript("OnLeave", function()
+		if GameTooltip then
+			GameTooltip:Hide()
+		end
+	end)
+	row.InviteButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.InviteOrder(self.OrderId)
+		end
+	end)
+
+	row.WhisperButton = CreateFrame("Button", nil, row)
+	row.WhisperButton:SetSize(20, 20)
+	row.WhisperButton:SetPoint("RIGHT", row.InviteButton, "LEFT", -4, 0)
+	row.WhisperButton:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
+	row.WhisperButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
+	row.WhisperButton:SetScript("OnEnter", function(self)
+		if GameTooltip then
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:SetText("Whisper customer", 1, 1, 1)
+			GameTooltip:Show()
+		end
+	end)
+	row.WhisperButton:SetScript("OnLeave", function()
+		if GameTooltip then
+			GameTooltip:Hide()
+		end
+	end)
+	row.WhisperButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.WhisperOrder(self.OrderId)
+		end
+	end)
+
 	row.MatsButton = CreateFrame("Button", nil, row)
-	row.MatsButton:SetSize(16, 16)
-	row.MatsButton:SetPoint("TOPRIGHT", row.PartyCheck, "TOPLEFT", -4, 0)
-	row.MatsButton:SetNormalTexture("Interface\\Icons\\INV_Letter_15")
+	row.MatsButton:SetSize(20, 20)
+	row.MatsButton:SetPoint("RIGHT", row.WhisperButton, "LEFT", -4, 0)
+	row.MatsButton:SetNormalTexture("Interface\\Icons\\Trade_Alchemy")
 	row.MatsButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
 	row.MatsButton:SetScript("OnEnter", function(self)
 		if GameTooltip then
@@ -3821,28 +3867,6 @@ local function CreateOrderRow(parent, index)
 	row.MatsButton:SetScript("OnClick", function(self)
 		if self.OrderId then
 			Workbench.WhisperMissingMats(self.OrderId)
-		end
-	end)
-
-	row.InviteButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-	row.InviteButton:SetSize(42, 18)
-	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 6)
-	row.InviteButton:SetText("Inv")
-	ApplyElvUISkin(row.InviteButton, "button")
-	row.InviteButton:SetScript("OnClick", function(self)
-		if self.OrderId then
-			Workbench.InviteOrder(self.OrderId)
-		end
-	end)
-
-	row.WhisperButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-	row.WhisperButton:SetSize(42, 18)
-	row.WhisperButton:SetPoint("RIGHT", row.InviteButton, "LEFT", -4, 0)
-	row.WhisperButton:SetText("Msg")
-	ApplyElvUISkin(row.WhisperButton, "button")
-	row.WhisperButton:SetScript("OnClick", function(self)
-		if self.OrderId then
-			Workbench.WhisperOrder(self.OrderId)
 		end
 	end)
 
