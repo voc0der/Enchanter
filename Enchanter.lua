@@ -904,6 +904,32 @@ local function NormalizePhrase(value)
 	return value:lower():gsub("[%W_]+", "")
 end
 
+local function IsWordBoundaryCharacter(character)
+	return type(character) == "string"
+		and character ~= ""
+		and (string.find(character, "%w") ~= nil or character == "_")
+end
+
+local function EscapeLuaPattern(value)
+	return (tostring(value or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function BuildLiteralWordBoundaryPattern(value)
+	value = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if value == "" then
+		return nil
+	end
+
+	local pattern = EscapeLuaPattern(value)
+	if IsWordBoundaryCharacter(string.sub(value, 1, 1)) then
+		pattern = "%f[%w_]" .. pattern
+	end
+	if IsWordBoundaryCharacter(string.sub(value, -1)) then
+		pattern = pattern .. "%f[^%w_]"
+	end
+	return pattern
+end
+
 local function TrimText(value)
 	if not value then
 		return ""
@@ -1620,7 +1646,11 @@ end
 local function GetConfiguredRecipeTags(recipeName)
 	local customText = EC.DB and EC.DB.Custom and EC.DB.Custom[recipeName]
 	if customText ~= nil and customText ~= "" then
-		return SplitStoredCSV(customText)
+		local customTags = SplitStoredCSV(customText)
+		if EC.EnsureExactRecipeNameTag then
+			return EC.EnsureExactRecipeNameTag(recipeName, customTags)
+		end
+		return customTags
 	end
 
 	if EC.RecipeTags and EC.RecipeTags["enGB"] then
@@ -1886,7 +1916,7 @@ local function RangesOverlap(startA, finishA, startB, finishB)
 end
 
 local function IsAlphaNumericCharacter(character)
-	return type(character) == "string" and character ~= "" and string.find(character, "%w") ~= nil
+	return IsWordBoundaryCharacter(character)
 end
 
 local function HasRecipeTagStartBoundary(parsedMessage, matchStart)
@@ -2314,13 +2344,19 @@ function EC.RefreshCompiledData()
 
 	for _, value in ipairs(EC.PrefixTags or {}) do
 		if value and value ~= "" then
-			table.insert(EC.PrefixTagsCompiled, "%f[%w_]" .. value .. "%f[^%w_]")
+			local pattern = BuildLiteralWordBoundaryPattern(value)
+			if pattern then
+				table.insert(EC.PrefixTagsCompiled, pattern)
+			end
 		end
 	end
 
 	for _, value in ipairs(EC.BlackList or {}) do
 		if value and value ~= "" then
-			table.insert(EC.BlacklistCompiled, "%f[%w_]" .. value .. "%f[^%w_]")
+			local pattern = BuildLiteralWordBoundaryPattern(value)
+			if pattern then
+				table.insert(EC.BlacklistCompiled, pattern)
+			end
 		end
 	end
 

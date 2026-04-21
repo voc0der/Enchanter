@@ -37,6 +37,24 @@ local function CopyNormalizedTags(values)
 	return out
 end
 
+function EC.EnsureExactRecipeNameTag(recipeName, values)
+	local out = CopyNormalizedTags(values)
+	local canonicalTag = TrimText(string.lower(tostring(recipeName or "")))
+
+	if canonicalTag == "" then
+		return out
+	end
+
+	for _, value in ipairs(out) do
+		if value == canonicalTag then
+			return out
+		end
+	end
+
+	out[#out + 1] = canonicalTag
+	return out
+end
+
 local function GetRecipeSlotKeyAndEffect(recipeName)
 	local patterns = {
 		{"^Enchant%s+2H Weapon%s+%-%s+(.+)$", "2h weapon"},
