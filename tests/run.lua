@@ -1739,6 +1739,33 @@ local function test_valid_request_matching_scenarios()
             scanned = { "Enchant Chest - Restore Mana Prime" },
             expected = { "Enchant Chest - Restore Mana Prime" },
         },
+        -- [Enchanting: ...] spell link format (Shift-click from profession window)
+        {
+            name = "enchanting spell link with lf prefix matches scanned recipe",
+            message = "lf enchanter [Enchanting: Enchant Shield - Major Stamina]",
+            scanned = { "Enchant Shield - Major Stamina" },
+            expected = { "Enchant Shield - Major Stamina" },
+        },
+        {
+            name = "enchanting spell link with wtb prefix matches scanned recipe",
+            message = "wtb [Enchanting: Enchant Weapon - Mongoose]",
+            scanned = { "Enchant Weapon - Mongoose" },
+            expected = { "Enchant Weapon - Mongoose" },
+        },
+        {
+            name = "adjacent enchanting spell links each match their own scanned recipe",
+            message = "lf [Enchanting: Enchant Weapon - Mongoose][Enchanting: Enchant Boots - Boar's Speed]",
+            scanned = { "Enchant Weapon - Mongoose", "Enchant Boots - Boar's Speed" },
+            expected = { "Enchant Weapon - Mongoose", "Enchant Boots - Boar's Speed" },
+            requested = 2,
+        },
+        {
+            name = "enchanting spell links separated by and each match their own scanned recipe",
+            message = "lf enchanter - [Enchanting: Enchant Bracer - Spellpower] and [Enchanting: Enchant Cloak - Subtlety]",
+            scanned = { "Enchant Bracer - Spellpower", "Enchant Cloak - Subtlety" },
+            expected = { "Enchant Bracer - Spellpower", "Enchant Cloak - Subtlety" },
+            requested = 2,
+        },
     }
 
     for index, case in ipairs(cases) do
@@ -1909,6 +1936,13 @@ local function test_invalid_request_matching_scenarios()
         {
             name = "12 res shield does not match chest major resilience",
             message = "lf 12 res shield",
+            scanned = {
+                "Enchant Chest - Major Resilience",
+            },
+        },
+        {
+            name = "formula item link should not match enchant service request",
+            message = "wtb [Formula: Enchant Chest - Major Resilience]",
             scanned = {
                 "Enchant Chest - Major Resilience",
             },

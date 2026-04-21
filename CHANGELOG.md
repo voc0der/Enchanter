@@ -1,3 +1,9 @@
+## [2.1.65] - 2026-04-21
+
+### Added
+- Test coverage for the `[Enchanting: SpellName]` profession link format (Shift-click from the enchanting window); single links, WTB-prefix links, adjacent multi-links, and " and "-separated multi-links now each have an entry in the main valid-scenario table so regressions are caught automatically
+- Test coverage confirming `[Formula: SpellName]` links continue to be ignored by the enchant-service matcher
+
 ## [2.1.64] - 2026-04-20
 
 ### Changed
