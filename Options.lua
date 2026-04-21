@@ -49,6 +49,13 @@ local function NormalizeCSVText(value)
 	return Combine(SplitCSV(value))
 end
 
+local function EnsureRecipeSearchTextIncludesExactName(recipeName, value)
+	if EC.EnsureExactRecipeNameTag then
+		return Combine(EC.EnsureExactRecipeNameTag(recipeName, SplitCSV(value)))
+	end
+	return NormalizeCSVText(value)
+end
+
 local function GetDefaultRecipeTags(recipeName)
 	local defaultLocaleTags = EC.DefaultRecipeTags and EC.DefaultRecipeTags["enGB"]
 	local generatedLocaleTags = EC.GeneratedRecipeTags and EC.GeneratedRecipeTags["enGB"]
@@ -77,7 +84,7 @@ end
 local function GetRecipeSearchText(recipeName)
 	local customText = EC.DB and EC.DB.Custom and EC.DB.Custom[recipeName]
 	if type(customText) == "string" and customText ~= "" then
-		return customText
+		return EnsureRecipeSearchTextIncludesExactName(recipeName, customText)
 	end
 	return Combine(GetDefaultRecipeTags(recipeName))
 end
@@ -86,6 +93,8 @@ local function SetRecipeSearchText(recipeName, value)
 	value = NormalizeCSVText(value)
 	if value == "" then
 		value = Combine(GetDefaultRecipeTags(recipeName))
+	else
+		value = EnsureRecipeSearchTextIncludesExactName(recipeName, value)
 	end
 	EC.DB.Custom[recipeName] = value
 end

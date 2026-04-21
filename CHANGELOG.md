@@ -1,3 +1,10 @@
+## [2.1.66] - 2026-04-21
+
+### Fixed
+- Kept the exact official recipe name in custom per-recipe search phrases so shift-clicked `[Enchanting: Enchant ...]` links still match even after users replace the default shorthand list
+- Treated global blacklist and search-prefix entries as literal phrases when compiling Lua patterns, so punctuation-heavy entries like `enchant ring -` no longer broaden into unintended matches
+- Added regression coverage for linked enchanting requests with a real-world global blacklist, custom recipe phrase overrides, and punctuation-bearing blacklist entries
+
 ## [2.1.65] - 2026-04-21
 
 ### Added

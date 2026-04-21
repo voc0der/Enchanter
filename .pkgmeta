@@ -13,6 +13,7 @@ ignore:
   - RELEASING.md
   - README.md
   - TBC_ANNIVERSARY_NOTES.md
+  - .claude
   - .github
   - assets
   - tests

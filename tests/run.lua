@@ -2281,6 +2281,99 @@ local function test_options_update_rebuilds_compiled_tags()
     assert_equal(addon.DBChar.RecipeList["Enchant Weapon - Mongoose"][2], "weapon mongoose", "custom recipe tags should replace stale tags")
 end
 
+local function test_custom_recipe_tags_keep_exact_link_matching()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                ["Enchant Shield - Major Stamina"] = "18 stam shield custom",
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Shield - Major Stamina"] = { "18 stam shield custom" },
+            },
+            RecipeLinks = {
+                ["Enchant Shield - Major Stamina"] = "[Enchant Shield - Major Stamina] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF enchanter [Enchanting: Enchant Shield - Major Stamina]", "Buyer-CustomLink")
+
+    assert_true(
+        list_contains(addon.DBChar.RecipeList["Enchant Shield - Major Stamina"], "enchant shield - major stamina"),
+        "custom recipe phrase lists should retain exact linked recipe matching"
+    )
+    assert_equal(#state.invites, 1, "exact profession link should still invite when custom tags omit the official name")
+    assert_equal(#state.whispers, 1, "exact profession link should still whisper when custom tags omit the official name")
+end
+
+local function test_global_blacklist_treats_punctuation_literally()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                BlackList = "enchant ring -",
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Ring Stats"] = { "enchant ring stats" },
+                ["Enchant Ring - Stats"] = { "enchant ring - stats" },
+            },
+            RecipeLinks = {
+                ["Enchant Ring Stats"] = "[Enchant Ring Stats] ",
+                ["Enchant Ring - Stats"] = "[Enchant Ring - Stats] ",
+            },
+        },
+    })
+
+    addon.OptionsUpdate()
+    addon.ParseMessage("LF [Enchanting: Enchant Ring Stats]", "Buyer-RingPlain")
+    addon.ParseMessage("LF [Enchanting: Enchant Ring - Stats]", "Buyer-RingDash")
+
+    assert_equal(#state.invites, 1, "blacklist punctuation should not behave like a Lua pattern operator")
+    assert_equal(#state.whispers, 1, "only the literal dashed ring phrase should be blacklisted")
+    assert_equal(state.whispers[1].target, "Buyer-RingPlain", "the non-dashed linked recipe should remain eligible")
+end
+
+local function test_linked_enchanting_messages_survive_user_global_blacklist()
+    local userBlacklist = "your mats,no clankers,shat,shatt,no clanker,tailor,lfw, lf work,Undercity,in uc,Silvermoon,free,thunder bluff, in TB,no auto invite,not accepting auto invite,enchant ring -,Mana Tombs"
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                BlackList = userBlacklist,
+            },
+        },
+    })
+
+    seed_scanned_recipes(addon, {
+        "Enchant Gloves - Healing Power",
+        "Enchant Shield - Major Stamina",
+        "Enchant Chest - Major Resilience",
+        "Enchant Bracer - Spellpower",
+        "Enchant Cloak - Subtlety",
+    })
+    addon.OptionsUpdate()
+
+    addon.ParseMessage("LF enchanter with [Enchanting: Enchant Gloves - Healing Power] n org mats tipping", "Buyer-Gloves")
+    addon.ParseMessage("LF enchanter [Enchanting: Enchant Shield - Major Stamina]", "Buyer-Shield")
+    addon.ParseMessage("LF [Enchanting: Enchant Chest - Major Resilience] PST", "Buyer-Chest")
+    addon.ParseMessage("LF Enchanter - [Enchanting: Enchant Bracer - Spellpower] and [Enchanting: Enchant Cloak - Subtlety]", "Buyer-MultiLink")
+    addon.ParseMessage("[Enchanting] LFW Have ALL TBC Enchants PST!!", "Seller-LFW")
+
+    assert_equal(#state.invites, 4, "screenshot-style linked requests should not be blocked by the user's global blacklist")
+    assert_equal(#state.whispers, 4, "screenshot-style linked requests should still be whispered")
+    assert_whisper_contains_recipe(state.whispers[4].message, "Enchant Bracer - Spellpower", "multi-link screenshot whisper")
+    assert_whisper_contains_recipe(state.whispers[4].message, "Enchant Cloak - Subtlety", "multi-link screenshot whisper")
+end
+
 local function test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
     local addon, state = setup_env({
         db = {
@@ -5593,6 +5686,9 @@ test_valid_request_matching_scenarios()
 test_invalid_request_matching_scenarios()
 test_requested_recipe_count_scenarios()
 test_options_update_rebuilds_compiled_tags()
+test_custom_recipe_tags_keep_exact_link_matching()
+test_global_blacklist_treats_punctuation_literally()
+test_linked_enchanting_messages_survive_user_global_blacklist()
 test_parse_message_skips_recipe_when_per_recipe_blacklist_matches()
 test_parse_message_keeps_recipe_when_blacklist_phrase_is_in_another_segment()
 test_parse_message_does_not_double_count_nested_request_tags()
