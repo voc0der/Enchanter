@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.66`
+Current version: `2.1.68`
 
 ## What It Does
 
@@ -31,7 +31,7 @@ Current version: `2.1.66`
 - Whisper the matching enchant links with a configurable delay and message prefix
 - Randomize recipe whisper prefixes by entering multiple `Message Prefix` choices separated with ` , ` in `/ec config`
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
-- Optionally reply to generic `LF enchanter` requests with a custom whisper
+- Optionally reply to generic `LF enchanter` requests with a custom whisper, then keep listening in whispers for recipe follow-ups that should become normal queued orders
 - Automatically pause chat matching if you go AFK while it is running
 - Optionally pause chat matching automatically once a chosen number of queued customers have joined your group
 - Optionally auto-remove queued customers who decline your party invite after a configurable timer

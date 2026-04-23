@@ -27,6 +27,7 @@ EC.EnchanterTagsNormalized = {}
 EC.PendingInvites = {}
 EC.SimulatedPlayers = {}
 EC.Simulation = EC.Simulation or {}
+EC.WhisperListenMode = EC.WhisperListenMode or {}
 
 local pendingInviteWindow = 10
 local simulationInterval = 180
@@ -1594,6 +1595,37 @@ local function NormalizeNameKey(name)
 	local cleaned = tostring(name):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
 	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
 	return cleaned:lower()
+end
+
+local function GetWhisperListenModeStore()
+	EC.WhisperListenMode = EC.WhisperListenMode or {}
+	return EC.WhisperListenMode
+end
+
+function EC.IsWhisperListenMode(name)
+	local key = NormalizeNameKey(name)
+	return key ~= "" and GetWhisperListenModeStore()[key] == true
+end
+
+function EC.SetWhisperListenMode(name, enabled)
+	local key = NormalizeNameKey(name)
+	local store
+
+	if key == "" then
+		return false
+	end
+
+	store = GetWhisperListenModeStore()
+	if enabled then
+		store[key] = true
+	else
+		store[key] = nil
+	end
+	return true
+end
+
+function EC.ClearWhisperListenMode(name)
+	return EC.SetWhisperListenMode(name, false)
 end
 
 local function GetComparableNameParts(name)
@@ -3489,8 +3521,28 @@ function EC.SendMsg(name)
 	EC.LfRequestedRecipeCounts[name] = nil
 end
 
-function EC.ParseMessage(msg, name)
-	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or string.len(msg) < 4 or EC.DBChar.Stop == true then
+local function MessageHasRequestPrefix(parsedMessage)
+	for _, pattern in ipairs(EC.PrefixTagsCompiled) do
+		if string.find(parsedMessage, pattern) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function IsGenericEnchanterRequest(parsedMessage)
+	local normalizedMessage = NormalizePhrase(parsedMessage)
+	return normalizedMessage ~= ""
+		and EC.EnchanterTagsNormalized
+		and EC.EnchanterTagsNormalized[normalizedMessage] == true
+end
+
+function EC.ParseMessage(msg, name, options)
+	local allowMissingPrefix = type(options) == "table" and options.AllowMissingPrefix == true
+	local hasRequestPrefix
+
+	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or (not allowMissingPrefix and string.len(msg) < 4) or EC.DBChar.Stop == true then
 		return
 	end
 
@@ -3499,16 +3551,8 @@ function EC.ParseMessage(msg, name)
 	end
 
 	local parsedMessage = msg:lower()
-	local isRequestValid = false
-
-	for _, pattern in ipairs(EC.PrefixTagsCompiled) do
-		if string.find(parsedMessage, pattern) then
-			isRequestValid = true
-			break
-		end
-	end
-
-	if not isRequestValid then
+	hasRequestPrefix = MessageHasRequestPrefix(parsedMessage)
+	if not hasRequestPrefix and not allowMissingPrefix then
 		return
 	end
 
@@ -3569,10 +3613,9 @@ function EC.ParseMessage(msg, name)
 		return
 	end
 
-	if EC.DB.WhisperLfRequests and EC.PlayerList[name] == nil then
-		local normalizedMessage = NormalizePhrase(parsedMessage)
-		if EC.EnchanterTagsNormalized and EC.EnchanterTagsNormalized[normalizedMessage] then
-			EC.PlayerList[name] = 1
+	if EC.DB.WhisperLfRequests and EC.PlayerList[name] == nil and not EC.IsWhisperListenMode(name) then
+		if IsGenericEnchanterRequest(parsedMessage) then
+			EC.SetWhisperListenMode(name, true)
 			local genericReply = EC.DB.LfWhisperMsg or EC.DefaultLfWhisperMsg
 			if IsSimulatedCustomer(name) then
 				EC.DebugPrint("suppressed generic whisper to " .. name .. ": " .. genericReply)
@@ -3697,6 +3740,13 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 	EC.ParseMessage(msg, name)
 end
 
+local function Event_CHAT_MSG_WHISPER(msg, name)
+	if not EC.Initalized or not EC.IsWhisperListenMode(name) then
+		return
+	end
+	EC.ParseMessage(msg, name, { AllowMissingPrefix = true })
+end
+
 local function Event_CHAT_MSG_SYSTEM(msg)
 	if msg == ERR_TRADE_COMPLETE and EC.Workbench and EC.Workbench.MarkTradeCompleted then
 		EC.Workbench.MarkTradeCompleted()
@@ -3766,6 +3816,7 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("CHAT_MSG_YELL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_GUILD", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_OFFICER", Event_CHAT_MSG_CHANNEL)
+	EC.Tool.RegisterEvent("CHAT_MSG_WHISPER", Event_CHAT_MSG_WHISPER)
 	EC.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
 	EC.Tool.RegisterEvent("UI_ERROR_MESSAGE", Event_UI_ERROR_MESSAGE)
 	EC.Tool.RegisterEvent("UI_INFO_MESSAGE", Event_UI_INFO_MESSAGE)

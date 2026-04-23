@@ -1,3 +1,9 @@
+## [2.1.68] - 2026-04-23
+
+### Fixed
+- Generic `LF enchanter` auto-replies now open a private whisper listen mode instead of dead-ending after the canned reply, so recipe names and aliases whispered back by that customer are turned into normal queued orders and later whisper follow-ups keep merging into the same workbench entry
+- Added regression coverage for the generic-request whisper handoff so future parser changes keep the private follow-up order flow working
+
 ## [2.1.66] - 2026-04-21
 
 ### Fixed
