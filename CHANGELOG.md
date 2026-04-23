@@ -1,3 +1,9 @@
+## [2.1.69] - 2026-04-23
+
+### Fixed
+- Mailbox disenchant orders now ignore non-disenchantable green or blue attachments such as ore, so the workbench only spools mailed gear that can actually be disenchanted
+- Added regression coverage for green-quality trade goods that advertise a non-equip inventory slot token, so mailbox filtering stays locked to disenchantable gear
+
 ## [2.1.68] - 2026-04-23
 
 ### Fixed

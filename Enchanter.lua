@@ -40,6 +40,17 @@ local RECIPE_FORMULA_PREFIX = "Formula: "
 local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox disenchant work started."
 local MAILBOX_DISENCHANT_RETURN_SUBJECT = "Your disenchant mats"
 local MAILBOX_DISENCHANT_RETURN_BODY = "Disenchanted the greens and blues you mailed over. Sending the mats back."
+local MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
+local MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
+local MAILBOX_DISENCHANT_BLOCKED_EQUIP_LOCS = {
+	INVTYPE_AMMO = true,
+	INVTYPE_BAG = true,
+	INVTYPE_BODY = true,
+	INVTYPE_NON_EQUIP = true,
+	INVTYPE_NON_EQUIP_IGNORE = true,
+	INVTYPE_QUIVER = true,
+	INVTYPE_TABARD = true,
+}
 local simulationNamePrefixes = {
 	"SimAldren",
 	"SimBrenna",
@@ -339,6 +350,55 @@ local function ExtractItemIdFromItemReference(itemReference)
 		instantItemId = ok and tonumber(instantItemId) or nil
 		if instantItemId and instantItemId > 0 then
 			return math.floor(instantItemId)
+		end
+	end
+
+	return nil
+end
+
+local function GetItemInfoInstantSnapshot(itemReference)
+	local ok
+	local instantItemId
+	local instantItemType
+	local instantItemSubType
+	local instantItemEquipLoc
+	local instantItemTexture
+	local instantClassID
+	local instantSubClassID
+
+	if itemReference == nil or itemReference == "" then
+		return nil
+	end
+
+	if type(GetItemInfoInstant) == "function" then
+		ok, instantItemId, instantItemType, instantItemSubType, instantItemEquipLoc, instantItemTexture, instantClassID, instantSubClassID = pcall(GetItemInfoInstant, itemReference)
+		instantItemId = ok and tonumber(instantItemId) or nil
+		if instantItemId and instantItemId > 0 then
+			return {
+				ItemId = math.floor(instantItemId),
+				Type = NormalizeTextValue(instantItemType),
+				SubType = NormalizeTextValue(instantItemSubType),
+				EquipLoc = NormalizeTextValue(instantItemEquipLoc),
+				Texture = instantItemTexture,
+				ClassID = tonumber(instantClassID),
+				SubClassID = tonumber(instantSubClassID),
+			}
+		end
+	end
+
+	if C_Item and type(C_Item.GetItemInfoInstant) == "function" then
+		ok, instantItemId, instantItemType, instantItemSubType, instantItemEquipLoc, instantItemTexture, instantClassID, instantSubClassID = pcall(C_Item.GetItemInfoInstant, itemReference)
+		instantItemId = ok and tonumber(instantItemId) or nil
+		if instantItemId and instantItemId > 0 then
+			return {
+				ItemId = math.floor(instantItemId),
+				Type = NormalizeTextValue(instantItemType),
+				SubType = NormalizeTextValue(instantItemSubType),
+				EquipLoc = NormalizeTextValue(instantItemEquipLoc),
+				Texture = instantItemTexture,
+				ClassID = tonumber(instantClassID),
+				SubClassID = tonumber(instantSubClassID),
+			}
 		end
 	end
 
@@ -722,9 +782,15 @@ end
 local function GetItemInfoSnapshot(itemReference, fallbackName, fallbackLink, fallbackQuality)
 	local itemName, itemLink, itemQuality, _, _, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture, _, classID, subClassID, bindType
 	local itemId = ExtractItemIdFromItemReference(itemReference or fallbackLink)
+	local instantInfo
 
 	if not itemId and tonumber(itemReference) and tonumber(itemReference) > 0 then
 		itemId = math.floor(tonumber(itemReference))
+	end
+
+	instantInfo = GetItemInfoInstantSnapshot(itemReference or itemId or fallbackLink)
+	if not itemId and instantInfo and instantInfo.ItemId then
+		itemId = instantInfo.ItemId
 	end
 
 	if GetItemInfo then
@@ -740,13 +806,13 @@ local function GetItemInfoSnapshot(itemReference, fallbackName, fallbackLink, fa
 		Link = NormalizeTextValue(itemLink) ~= "" and itemLink or fallbackLink,
 		ItemId = itemId,
 		Quality = math.max(0, math.floor(tonumber(itemQuality) or tonumber(fallbackQuality) or 0)),
-		Type = NormalizeTextValue(itemType),
-		SubType = NormalizeTextValue(itemSubType),
+		Type = NormalizeTextValue(itemType) ~= "" and NormalizeTextValue(itemType) or (instantInfo and instantInfo.Type or ""),
+		SubType = NormalizeTextValue(itemSubType) ~= "" and NormalizeTextValue(itemSubType) or (instantInfo and instantInfo.SubType or ""),
 		StackCount = math.max(1, math.floor(tonumber(itemStackCount) or 1)),
-		EquipLoc = NormalizeTextValue(itemEquipLoc),
-		Texture = itemTexture,
-		ClassID = tonumber(classID),
-		SubClassID = tonumber(subClassID),
+		EquipLoc = NormalizeTextValue(itemEquipLoc) ~= "" and NormalizeTextValue(itemEquipLoc) or (instantInfo and instantInfo.EquipLoc or ""),
+		Texture = itemTexture or (instantInfo and instantInfo.Texture or nil),
+		ClassID = tonumber(classID) or (instantInfo and tonumber(instantInfo.ClassID) or nil),
+		SubClassID = tonumber(subClassID) or (instantInfo and tonumber(instantInfo.SubClassID) or nil),
 		BindType = tonumber(bindType),
 	}
 end
@@ -777,6 +843,8 @@ end
 local function IsMailboxDisenchantCandidate(itemInfo)
 	local quality
 	local bindType
+	local classID
+	local equipLoc
 
 	if type(itemInfo) ~= "table" then
 		return false
@@ -795,7 +863,17 @@ local function IsMailboxDisenchantCandidate(itemInfo)
 		return false
 	end
 
-	if NormalizeTextValue(itemInfo.EquipLoc) == "" then
+	classID = tonumber(itemInfo.ClassID)
+	equipLoc = NormalizeTextValue(itemInfo.EquipLoc)
+	if MAILBOX_DISENCHANT_BLOCKED_EQUIP_LOCS[equipLoc] then
+		return false
+	end
+
+	if classID ~= nil then
+		if classID ~= MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON and classID ~= MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR then
+			return false
+		end
+	elseif equipLoc == "" then
 		return false
 	end
 
