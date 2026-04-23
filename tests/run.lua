@@ -441,6 +441,9 @@ local function setup_env(opts)
     end
     _G.CastSpellByName = function(name)
         state.last_cast = name
+        if type(opts.cast_spell_by_name) == "function" then
+            return opts.cast_spell_by_name(state, name)
+        end
     end
     _G.CraftFrame = set_shown_methods({
         selectedCraft = state.selected_craft,
@@ -3325,6 +3328,89 @@ local function test_mailbox_disenchant_tracking_records_results_and_prepares_ret
     assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "successfully sending return mail should retire the mailbox disenchant work order")
 end
 
+local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
+        equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
+        bind_type = 2,
+        count = 1,
+    }
+    local arcane_dust = {
+        item_id = 2001,
+        name = "Arcane Dust",
+        link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+        quality = 1,
+        item_type = "Trade Goods",
+        item_sub_type = "Enchanting",
+        class_id = 7,
+        subclass_id = 12,
+        count = 2,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1001] = mailed_green,
+            [2001] = arcane_dust,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+        cast_spell_by_name = function(test_state, name)
+            if name == "Disenchant" then
+                test_state.current_spell_name = name
+                test_state.spell_is_targeting = true
+                test_state.spell_can_target_item = true
+            end
+        end,
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    addon.Workbench.Show()
+    addon.Workbench.SelectOrder(order.Id)
+
+    local frame = addon.Workbench.Frame
+    local line = frame.Detail.RecipeLines[1]
+
+    assert_equal(line.CastButton.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
+    assert_true(line.CastButton.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
+    assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
+
+    line.CastButton.scripts["OnClick"](line.CastButton)
+
+    assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
+    assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")
+    assert_equal(state.bag_use_calls[1].slot, 1, "the mailbox shortcut should target the tracked bag slot")
+
+    set_bag_item(state, 0, 1, nil)
+    set_bag_item(state, 0, 2, arcane_dust)
+    state.event_handlers["BAG_UPDATE_DELAYED"]()
+
+    addon.Workbench.Refresh()
+    line = frame.Detail.RecipeLines[1]
+    assert_true(line.StatusCheck.shown, "completed mailbox disenchant rows should flip to a green check")
+    assert_true(line.StatusText.shown == false, "completed mailbox disenchant rows should hide their pending indicator")
+end
+
 local function test_workbench_debug_output_is_printed()
     local addon, state = setup_env({
         char_db = {
@@ -6172,6 +6258,7 @@ test_workbench_remove_clears_player_gate()
 test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
 test_mailbox_loot_ignores_non_disenchantable_trade_goods()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
+test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_title_includes_addon_version()

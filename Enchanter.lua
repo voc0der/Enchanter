@@ -40,6 +40,7 @@ local RECIPE_FORMULA_PREFIX = "Formula: "
 local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox disenchant work started."
 local MAILBOX_DISENCHANT_RETURN_SUBJECT = "Your disenchant mats"
 local MAILBOX_DISENCHANT_RETURN_BODY = "Disenchanted the greens and blues you mailed over. Sending the mats back."
+local DISENCHANT_SHORTCUT_RETRY_DELAYS = { 0.05, 0.15, 0.35 }
 local MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
 local MAILBOX_DISENCHANT_BLOCKED_EQUIP_LOCS = {
@@ -754,6 +755,8 @@ local function GetDisenchantSpellName()
 	return NormalizeTextValue(spellName) ~= "" and spellName or "Disenchant"
 end
 
+EC.GetDisenchantSpellName = GetDisenchantSpellName
+
 local function NormalizePlayerName(value)
 	value = NormalizeTextValue(value):lower()
 	return value:match("^([^%-]+)") or value
@@ -1132,6 +1135,18 @@ local function PickupContainerItemCompat(bagIndex, slotIndex)
 	return false
 end
 
+local function UseContainerItemCompat(bagIndex, slotIndex)
+	if C_Container and type(C_Container.UseContainerItem) == "function" then
+		C_Container.UseContainerItem(bagIndex, slotIndex)
+		return true
+	end
+	if type(UseContainerItem) == "function" then
+		UseContainerItem(bagIndex, slotIndex)
+		return true
+	end
+	return false
+end
+
 local function CountSendMailAttachments()
 	local attachmentLimit = math.max(1, math.floor(tonumber(_G and _G.ATTACHMENTS_MAX_SEND or 12) or 12))
 	local attachmentCount = 0
@@ -1345,6 +1360,60 @@ function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 		ResolveAfter = MailboxNow() + 1.5,
 	}
 	return true
+end
+
+function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
+	local function TryTargetTrackedItem()
+		if not IsDisenchantSpellTargeting() then
+			return false
+		end
+		EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+		return UseContainerItemCompat(bagIndex, slotIndex)
+	end
+
+	local function RetryTargetItem(attemptIndex)
+		if TryTargetTrackedItem() then
+			return
+		end
+
+		local nextDelay = DISENCHANT_SHORTCUT_RETRY_DELAYS[attemptIndex]
+		if nextDelay and C_Timer and C_Timer.After then
+			C_Timer.After(nextDelay, function()
+				RetryTargetItem(attemptIndex + 1)
+			end)
+			return
+		end
+
+		print("|cFFFF1C1CEnchanter|r Cast started, but the client did not expose a disenchant item target yet. Click the tracked item in your bag once to finish.")
+	end
+
+	bagIndex = tonumber(bagIndex)
+	slotIndex = tonumber(slotIndex)
+	if not orderId or not itemToken or bagIndex == nil or slotIndex == nil then
+		return false
+	end
+
+	if TryTargetTrackedItem() then
+		return true
+	end
+
+	if CastSpellByName then
+		CastSpellByName(GetDisenchantSpellName())
+	end
+
+	if TryTargetTrackedItem() then
+		return true
+	end
+
+	if C_Timer and C_Timer.After then
+		C_Timer.After(DISENCHANT_SHORTCUT_RETRY_DELAYS[1], function()
+			RetryTargetItem(2)
+		end)
+	else
+		print("|cFFFF1C1CEnchanter|r Click the tracked item in your bag after Disenchant starts targeting.")
+	end
+
+	return false
 end
 
 local function InstallMailboxDisenchantHooks()
@@ -3808,6 +3877,9 @@ local function Event_ITEM_DATA_RECEIVED(itemId, success)
 
 	if RefreshStoredRecipeMaterials(itemId) and EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
+	end
+	if EC.SyncDisenchantInventoryTracking then
+		EC.SyncDisenchantInventoryTracking()
 	end
 end
 

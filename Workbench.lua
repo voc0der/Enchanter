@@ -2029,6 +2029,10 @@ end
 function Workbench.SelectOrder(orderId)
 	SetSelectedOrder(orderId)
 	local order = Workbench.GetSelectedOrder()
+	if order and order.Kind == "disenchant" and EC and EC.SyncDisenchantInventoryTracking then
+		EC.SyncDisenchantInventoryTracking()
+		order = Workbench.GetSelectedOrder()
+	end
 	if order then
 		WorkbenchDebug("selected order for", order.Customer, "(" .. tostring(#(order.Recipes or {})) .. " enchants)")
 	end
@@ -2358,6 +2362,36 @@ function Workbench.PrepareReturnMail(orderId)
 
 	if EC and EC.PrepareDisenchantReturnMail then
 		return EC.PrepareDisenchantReturnMail(order.Id)
+	end
+
+	return false
+end
+
+function Workbench.CastDisenchantItem(orderId, itemToken)
+	local order = Workbench.GetOrderById(orderId)
+	local sourceItem
+
+	if not IsDisenchantOrder(order) then
+		return false
+	end
+
+	if EC and EC.SyncDisenchantInventoryTracking then
+		EC.SyncDisenchantInventoryTracking()
+		order = Workbench.GetOrderById(orderId)
+	end
+
+	sourceItem = FindSourceItemByToken(order, itemToken)
+	if not sourceItem or sourceItem.Status == "done" then
+		return false
+	end
+
+	if sourceItem.Bag == nil or sourceItem.Slot == nil then
+		print("|cFFFF1C1CEnchanter|r Couldn't find that tracked mailbox item in your bags yet. Try moving it once or reopening the mailbox to refresh tracking.")
+		return false
+	end
+
+	if EC and EC.CastTrackedDisenchantItem then
+		return EC.CastTrackedDisenchantItem(order.Id, sourceItem.Token, sourceItem.Bag, sourceItem.Slot)
 	end
 
 	return false
@@ -4323,7 +4357,9 @@ local function CreateRecipeLine(parent, index)
 	line.CastButton:SetText("Cast")
 	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
-		if self.RecipeName then
+		if self.ActionKind == "disenchant" and self.OrderId and self.ItemToken then
+			Workbench.CastDisenchantItem(self.OrderId, self.ItemToken)
+		elseif self.RecipeName then
 			Workbench.CastRecipe(self.RecipeName)
 		end
 	end)
@@ -4972,10 +5008,18 @@ function Workbench.Refresh()
 		frame.Detail.TipStatus:ClearAllPoints()
 		frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
 		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
+		local trackedBagItems = 0
+		for _, item in ipairs(order.SourceItems or {}) do
+			if item.Status ~= "done" and item.Bag ~= nil and item.Slot ~= nil then
+				trackedBagItems = trackedBagItems + 1
+			end
+		end
 		if totalItems > 0 and completedItems == totalItems and totalMaterialCount > 0 then
 			frame.Detail.TipStatus:SetText("All mailed items are done. Prep return mail when you're ready.")
 		elseif completedItems > 0 then
 			frame.Detail.TipStatus:SetText(string.format("%d/%d mailed items are finished and stacked into return mats.", completedItems, totalItems))
+		elseif trackedBagItems > 0 then
+			frame.Detail.TipStatus:SetText("Tracked bag items show DE. Click it to cast Disenchant on that item from the workbench.")
 		else
 			frame.Detail.TipStatus:SetText("Looted mailbox gear will keep stacking here until it's all disenchanted.")
 		end
@@ -4994,19 +5038,35 @@ function Workbench.Refresh()
 			local line = frame.Detail.RecipeLines[index]
 			local isDone = item.Status == "done"
 			local itemText = GetDisenchantItemDisplayText(item)
+			local isTrackedInBag = item.Bag ~= nil and item.Slot ~= nil
 
 			line.NameText:ClearAllPoints()
 			line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
-			line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
 			line.NameText:SetText((isDone and "|cFF74D06C" or "") .. itemText .. (isDone and "|r" or ""))
+			line.CastButton.ActionKind = nil
 			line.CastButton.RecipeName = nil
-			line.CastButton:Hide()
+			line.CastButton.OrderId = nil
+			line.CastButton.ItemToken = nil
 			if isDone then
+				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.CastButton:Hide()
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
-			else
+			elseif isTrackedInBag then
+				line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
+				line.CastButton.ActionKind = "disenchant"
+				line.CastButton.OrderId = order.Id
+				line.CastButton.ItemToken = item.Token
+				line.CastButton:SetText("DE")
+				line.CastButton:Show()
 				line.StatusCheck:Hide()
-				line.StatusText:SetText(item.Bag ~= nil and item.Slot ~= nil and "B" or "?")
+				line.StatusText:SetText("B")
+				line.StatusText:Show()
+			else
+				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.CastButton:Hide()
+				line.StatusCheck:Hide()
+				line.StatusText:SetText("?")
 				line.StatusText:Show()
 			end
 			line:ClearAllPoints()
@@ -5269,6 +5329,9 @@ function Workbench.Show()
 	ApplyFramePosition(frame)
 	frame:Show()
 	WorkbenchDebug("shown")
+	if Workbench.GetSelectedOrder() and Workbench.GetSelectedOrder().Kind == "disenchant" and EC and EC.SyncDisenchantInventoryTracking then
+		EC.SyncDisenchantInventoryTracking()
+	end
 	Workbench.Refresh()
 end
 

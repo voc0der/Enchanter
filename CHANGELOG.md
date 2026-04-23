@@ -1,3 +1,9 @@
+## [2.1.70] - 2026-04-23
+
+### Fixed
+- Mailbox disenchant rows now surface a direct `DE` shortcut once the item is tracked in your bags, following the Blizzard `CastSpellByName(...)` plus `C_Container.UseContainerItem(...)` targeting flow used by the TBC Anniversary client
+- Tracked mailbox disenchant rows now resync when you open or select them and flip to the built-in green check once the item is processed, so the workbench shows clearer progress instead of leaving rows stuck at `?`
+
 ## [2.1.69] - 2026-04-23
 
 ### Fixed
