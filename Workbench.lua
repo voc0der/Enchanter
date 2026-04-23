@@ -18,6 +18,7 @@ local LOCK_BUTTON_UNLOCKED_TEXTURE = "Interface\\Buttons\\UI-CheckBox-Check"
 local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
 local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
 local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
+local DISENCHANT_ORDER_ICON_TEXTURE = "Interface\\Icons\\INV_Enchant_Disenchant"
 local CONFIG_BUTTON_ICON_ATLAS = "OptionsIcon-Brown"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
@@ -782,6 +783,10 @@ local function EnsureRuntime()
 	return Workbench.Runtime
 end
 
+local function IsDisenchantOrder(order)
+	return order and order.Kind == "disenchant"
+end
+
 local function GetGroupedExpiryRuntime(orderId, createIfMissing)
 	local runtime = EnsureRuntime()
 	runtime.GroupedExpiry = runtime.GroupedExpiry or {}
@@ -834,12 +839,140 @@ end
 
 local OrderHasRecipe
 
+local function EnsureDisenchantItemFields(item)
+	item = item or {}
+	item.Token = math.max(1, math.floor(tonumber(item.Token) or 0))
+	item.Name = TrimText(item.Name)
+	item.Link = TrimText(item.Link)
+	item.ItemId = tonumber(item.ItemId) and math.floor(tonumber(item.ItemId)) or nil
+	item.Quality = math.max(0, math.floor(tonumber(item.Quality) or 0))
+	item.MailSubject = TrimText(item.MailSubject)
+	item.Status = item.Status == "done" and "done" or "queued"
+	item.Bag = tonumber(item.Bag)
+	item.Slot = tonumber(item.Slot)
+	item.CreatedAt = NormalizeTimestampText(item.CreatedAt)
+	item.UpdatedAt = NormalizeTimestampText(item.UpdatedAt or item.CreatedAt)
+	return item
+end
+
+local function NormalizeDisenchantMaterialEntry(material, fallbackKey)
+	if type(material) ~= "table" then
+		return nil
+	end
+
+	local normalized = {
+		Key = "",
+		Name = TrimText(material.Name),
+		Link = TrimText(material.Link),
+		ItemId = tonumber(material.ItemId) and math.floor(tonumber(material.ItemId)) or nil,
+		Count = NormalizeItemCount(material.Count),
+	}
+
+	normalized.Key = TrimText(material.Key or fallbackKey)
+	if normalized.Key == "" and normalized.ItemId then
+		normalized.Key = "item:" .. tostring(normalized.ItemId)
+	elseif normalized.Key == "" and normalized.Name ~= "" then
+		normalized.Key = normalized.Name
+	elseif normalized.Key == "" then
+		normalized.Key = normalized.Link
+	end
+	if normalized.Key == "" or normalized.Count <= 0 then
+		return nil
+	end
+
+	return normalized
+end
+
+local function FindSourceItemByToken(order, itemToken)
+	if not IsDisenchantOrder(order) or not itemToken then
+		return nil
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		if item.Token == itemToken then
+			return item
+		end
+	end
+
+	return nil
+end
+
+local function GetDisenchantProgress(order)
+	local completed = 0
+	local total = 0
+
+	if not IsDisenchantOrder(order) then
+		return completed, total
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		total = total + 1
+		if item.Status == "done" then
+			completed = completed + 1
+		end
+	end
+
+	return completed, total
+end
+
+local function GetDisenchantMaterialSnapshot(order)
+	local materials = {}
+
+	if not IsDisenchantOrder(order) then
+		return materials
+	end
+
+	for _, material in pairs(order.ReturnMaterials or {}) do
+		local normalized = NormalizeDisenchantMaterialEntry(material, material.Key)
+		if normalized then
+			materials[#materials + 1] = normalized
+		end
+	end
+
+	table.sort(materials, function(left, right)
+		local leftName = TrimText(left.Name) ~= "" and left.Name or left.Link or left.Key
+		local rightName = TrimText(right.Name) ~= "" and right.Name or right.Link or right.Key
+		if leftName == rightName then
+			return left.Key < right.Key
+		end
+		return leftName < rightName
+	end)
+
+	return materials
+end
+
+local function GetDisenchantItemDisplayText(item)
+	if not item then
+		return "Unknown item"
+	end
+
+	if item.Link and item.Link ~= "" then
+		return item.Link
+	end
+
+	if item.Name and item.Name ~= "" then
+		return item.Name
+	end
+
+	if item.ItemId then
+		return "item:" .. tostring(item.ItemId)
+	end
+
+	return "Unknown item"
+end
+
 local function EnsureOrderFields(order)
+	local nextSourceItemToken = 1
+	local normalizedReturnMaterials = {}
+
+	order.Kind = order.Kind == "disenchant" and "disenchant" or "enchant"
 	order.Recipes = order.Recipes or {}
 	order.MaterialCounts = order.MaterialCounts or {}
 	order.MaterialState = order.MaterialState or {}
 	order.VerifiedRecipes = order.VerifiedRecipes or {}
 	order.VerifiedRecipeCounts = order.VerifiedRecipeCounts or {}
+	order.SourceItems = order.SourceItems or {}
+	order.ReturnMaterials = order.ReturnMaterials or {}
 	table.sort(order.Recipes)
 	do
 		local requiredRecipeCounts = BuildRecipeCountMap(order.Recipes)
@@ -884,6 +1017,23 @@ local function EnsureOrderFields(order)
 	order.AlreadyGroupedAt = order.AlreadyGrouped and math.max(0, tonumber(order.AlreadyGroupedAt) or 0) or nil
 	order.InviteDeclined = order.InviteDeclined and true or order.InviteDeclinedAt ~= nil and true or nil
 	order.InviteDeclinedAt = order.InviteDeclined and math.max(0, tonumber(order.InviteDeclinedAt) or 0) or nil
+
+	for index, item in ipairs(order.SourceItems) do
+		order.SourceItems[index] = EnsureDisenchantItemFields(item)
+		if order.SourceItems[index].Token >= nextSourceItemToken then
+			nextSourceItemToken = order.SourceItems[index].Token + 1
+		end
+	end
+	order.NextSourceItemToken = math.max(nextSourceItemToken, math.floor(tonumber(order.NextSourceItemToken) or 1))
+
+	for materialKey, material in pairs(order.ReturnMaterials) do
+		local normalized = NormalizeDisenchantMaterialEntry(material, materialKey)
+		if normalized then
+			normalizedReturnMaterials[normalized.Key] = normalized
+		end
+	end
+	order.ReturnMaterials = normalizedReturnMaterials
+
 	order.CreatedAt = NormalizeTimestampText(order.CreatedAt)
 	order.UpdatedAt = NormalizeTimestampText(order.UpdatedAt or order.CreatedAt)
 	return order
@@ -1189,7 +1339,7 @@ local function SyncGroupedOrdersInternal(state)
 	local changed = false
 	for index = #state.Orders, 1, -1 do
 		local order = state.Orders[index]
-		if order.AlreadyGrouped then
+		if not IsDisenchantOrder(order) and order.AlreadyGrouped then
 			if IsCustomerInCurrentGroup(order.Customer) then
 				if ResetGroupedState(order) then
 					WorkbenchDebug("cleared grouped queue flag for", order.Customer, "(now in group)")
@@ -1220,7 +1370,7 @@ local function SyncDeclinedInviteOrders(state)
 
 	for index = #state.Orders, 1, -1 do
 		local order = state.Orders[index]
-		if order.InviteDeclined then
+		if not IsDisenchantOrder(order) and order.InviteDeclined then
 			if removalSeconds <= 0 then
 				if ResetInviteDeclinedState(order) then
 					changed = true
@@ -1697,6 +1847,20 @@ local function GetActiveTradeForOrder(order)
 end
 
 local function OrderSummary(order)
+	if IsDisenchantOrder(order) then
+		local itemCount = #(order.SourceItems or {})
+		if itemCount == 0 then
+			return "Waiting for mailbox items"
+		end
+		if itemCount == 1 then
+			return GetDisenchantItemDisplayText(order.SourceItems[1])
+		end
+		if itemCount == 2 then
+			return GetDisenchantItemDisplayText(order.SourceItems[1]) .. " + " .. GetDisenchantItemDisplayText(order.SourceItems[2])
+		end
+		return string.format("%s + %d more", GetDisenchantItemDisplayText(order.SourceItems[1]), itemCount - 1)
+	end
+
 	local recipeCount = #(order.Recipes or {})
 	if recipeCount == 0 then
 		return "Waiting for a recognized enchant"
@@ -1818,7 +1982,7 @@ local function UpdateGroupedCustomerSnapshot(state)
 
 	for _, order in ipairs(state.Orders or {}) do
 		local _, fullName = NormalizeCustomerName(order and order.Customer)
-		if fullName ~= "" and IsCustomerInCurrentGroup(order.Customer) then
+		if not IsDisenchantOrder(order) and fullName ~= "" and IsCustomerInCurrentGroup(order.Customer) then
 			currentSnapshot[fullName] = true
 			if previousSnapshot[fullName] ~= true then
 				joinedCount = joinedCount + 1
@@ -1982,11 +2146,218 @@ function Workbench.GetOrderByCustomer(customerName)
 	for _, order in ipairs(Workbench.EnsureState().Orders) do
 		local orderShort, orderFull = NormalizeCustomerName(order.Customer)
 		if targetFull == orderFull or targetFull == orderShort or targetShort == orderFull or targetShort == orderShort then
+			if not IsDisenchantOrder(order) then
+				return order
+			end
+		end
+	end
+
+	return nil
+end
+
+function Workbench.GetDisenchantOrderByCustomer(customerName)
+	local targetShort, targetFull = NormalizeCustomerName(customerName)
+	if targetShort == "" then
+		return nil
+	end
+
+	for _, order in ipairs(Workbench.EnsureState().Orders) do
+		local orderShort, orderFull = NormalizeCustomerName(order.Customer)
+		if IsDisenchantOrder(order)
+			and (targetFull == orderFull or targetFull == orderShort or targetShort == orderFull or targetShort == orderShort)
+		then
 			return order
 		end
 	end
 
 	return nil
+end
+
+function Workbench.GetDisenchantItems(order)
+	order = order or Workbench.GetSelectedOrder()
+	if not IsDisenchantOrder(order) then
+		return {}
+	end
+	return order.SourceItems or {}
+end
+
+function Workbench.GetDisenchantProgress(order)
+	order = order or Workbench.GetSelectedOrder()
+	return GetDisenchantProgress(order)
+end
+
+function Workbench.AddDisenchantMailItem(customer, itemData)
+	local state = Workbench.EnsureState()
+	local order
+	local isNewOrder = false
+	local sourceItem
+
+	if not customer or customer == "" or type(itemData) ~= "table" then
+		return nil
+	end
+
+	for _, existing in ipairs(state.Orders) do
+		if existing.Kind == "disenchant" and existing.Customer == customer then
+			order = EnsureOrderFields(existing)
+			break
+		end
+	end
+
+	if not order then
+		order = EnsureOrderFields({
+			Id = state.NextOrderId,
+			Customer = customer,
+			Kind = "disenchant",
+		})
+		state.NextOrderId = state.NextOrderId + 1
+		state.Orders[#state.Orders + 1] = order
+		isNewOrder = true
+	end
+
+	sourceItem = EnsureDisenchantItemFields({
+		Token = order.NextSourceItemToken,
+		Name = itemData.Name,
+		Link = itemData.Link,
+		ItemId = itemData.ItemId,
+		Quality = itemData.Quality,
+		MailSubject = itemData.MailSubject,
+		Status = "queued",
+		CreatedAt = TimestampText(),
+		UpdatedAt = TimestampText(),
+	})
+	order.NextSourceItemToken = sourceItem.Token + 1
+	order.SourceItems[#order.SourceItems + 1] = sourceItem
+	order.Message = TrimText(itemData.MailSubject or itemData.Message or order.Message)
+	order.UpdatedAt = TimestampText()
+
+	if not state.SelectedOrderId then
+		state.SelectedOrderId = order.Id
+	end
+
+	if isNewOrder then
+		WorkbenchDebug("queued mailbox disenchant order for", customer, "(" .. tostring(#order.SourceItems) .. " items)")
+		if not IsPartyJoinSoundModeEnabled() and PlayQueueAlertSound() then
+			WorkbenchDebug("played queue alert for", customer)
+		end
+	else
+		WorkbenchDebug("updated mailbox disenchant order for", customer, "(" .. tostring(#order.SourceItems) .. " items)")
+	end
+
+	Workbench.Refresh()
+	return order, sourceItem
+end
+
+function Workbench.SetDisenchantItemLocation(orderId, itemToken, bag, slot)
+	local order = Workbench.GetOrderById(orderId)
+	local sourceItem
+
+	if not IsDisenchantOrder(order) then
+		return false
+	end
+
+	sourceItem = FindSourceItemByToken(order, itemToken)
+	if not sourceItem then
+		return false
+	end
+
+	bag = tonumber(bag)
+	slot = tonumber(slot)
+	if sourceItem.Bag == bag and sourceItem.Slot == slot then
+		return false
+	end
+
+	sourceItem.Bag = bag
+	sourceItem.Slot = slot
+	sourceItem.UpdatedAt = TimestampText()
+	order.UpdatedAt = TimestampText()
+	return true
+end
+
+function Workbench.RecordDisenchantMaterials(orderId, materialMap)
+	local order = Workbench.GetOrderById(orderId)
+	local changed = 0
+
+	if not IsDisenchantOrder(order) or type(materialMap) ~= "table" then
+		return 0
+	end
+
+	order.ReturnMaterials = order.ReturnMaterials or {}
+	for materialKey, materialData in pairs(materialMap) do
+		local normalized = NormalizeDisenchantMaterialEntry(materialData, materialKey)
+		if normalized then
+			local existing = order.ReturnMaterials[normalized.Key]
+			if existing then
+				existing.Count = NormalizeItemCount(existing.Count) + normalized.Count
+				if normalized.Name ~= "" then
+					existing.Name = normalized.Name
+				end
+				if normalized.Link ~= "" then
+					existing.Link = normalized.Link
+				end
+				if normalized.ItemId then
+					existing.ItemId = normalized.ItemId
+				end
+			else
+				order.ReturnMaterials[normalized.Key] = normalized
+			end
+			changed = changed + normalized.Count
+		end
+	end
+
+	if changed > 0 then
+		order.UpdatedAt = TimestampText()
+		WorkbenchDebug("tracked mailbox disenchant materials for", order.Customer, "(" .. tostring(changed) .. " total)")
+		Workbench.Refresh()
+	end
+
+	return changed
+end
+
+function Workbench.MarkDisenchantItemProcessed(orderId, itemToken, materialMap)
+	local order = Workbench.GetOrderById(orderId)
+	local sourceItem
+	local changed = false
+
+	if not IsDisenchantOrder(order) then
+		return false
+	end
+
+	sourceItem = FindSourceItemByToken(order, itemToken)
+	if not sourceItem then
+		return false
+	end
+
+	if sourceItem.Status ~= "done" then
+		sourceItem.Status = "done"
+		sourceItem.Bag = nil
+		sourceItem.Slot = nil
+		sourceItem.UpdatedAt = TimestampText()
+		changed = true
+	end
+
+	if Workbench.RecordDisenchantMaterials(orderId, materialMap) > 0 then
+		changed = true
+	end
+
+	if changed then
+		order.UpdatedAt = TimestampText()
+		Workbench.Refresh()
+	end
+
+	return changed
+end
+
+function Workbench.PrepareReturnMail(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not IsDisenchantOrder(order) then
+		return false
+	end
+
+	if EC and EC.PrepareDisenchantReturnMail then
+		return EC.PrepareDisenchantReturnMail(order.Id)
+	end
+
+	return false
 end
 
 function Workbench.SyncGroupedOrders()
@@ -2558,11 +2929,20 @@ local function GetDisplayedRecipeVerificationProgress(order)
 end
 
 function Workbench.GetMaterialSnapshot(order)
+	order = order or Workbench.GetSelectedOrder()
+
+	if not order then
+		return {}, {}
+	end
+
+	if IsDisenchantOrder(order) then
+		return GetDisenchantMaterialSnapshot(order), {}
+	end
+
 	local materials = {}
 	local byKey = {}
 	local missingRecipes = {}
 	local recipeMats = EC.DBChar and EC.DBChar.RecipeMats or {}
-	order = order or Workbench.GetSelectedOrder()
 
 	if not order then
 		return materials, missingRecipes
@@ -2619,6 +2999,10 @@ function Workbench.GetMaterialProgress(order)
 		return 0, 0
 	end
 
+	if IsDisenchantOrder(order) then
+		return GetDisenchantProgress(order)
+	end
+
 	for _, material in ipairs(materials) do
 		if GetRecordedMaterialCount(order, material, GetRequiredMaterialCount(material)) >= GetRequiredMaterialCount(material) then
 			checked = checked + 1
@@ -2635,6 +3019,10 @@ function Workbench.GetRecipeVerificationProgress(order)
 	order = order or Workbench.GetSelectedOrder()
 	if not order then
 		return 0, 0
+	end
+
+	if IsDisenchantOrder(order) then
+		return GetDisenchantProgress(order)
 	end
 
 	total = #(order.Recipes or {})
@@ -2755,7 +3143,7 @@ function Workbench.GetGroupedCustomerCount()
 
 	for _, order in ipairs(Workbench.EnsureState().Orders) do
 		local _, fullName = NormalizeCustomerName(order and order.Customer)
-		if fullName ~= "" and not seen[fullName] and IsCustomerInCurrentGroup(order.Customer) then
+		if not IsDisenchantOrder(order) and fullName ~= "" and not seen[fullName] and IsCustomerInCurrentGroup(order.Customer) then
 			seen[fullName] = true
 			count = count + 1
 		end
@@ -3146,6 +3534,14 @@ function Workbench.CompleteOrder(orderId)
 		return false
 	end
 
+	if IsDisenchantOrder(order) then
+		local completedItems, totalItems = GetDisenchantProgress(order)
+		state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
+		WorkbenchDebug("completed mailbox disenchant order for", order.Customer, "(" .. tostring(completedItems) .. "/" .. tostring(totalItems) .. " items)")
+		Workbench.RemoveOrder(orderId)
+		return true
+	end
+
 	isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
 	if recipeTotal == 0 or not isVerified then
 		WorkbenchDebug("refused to complete unverified order for", order.Customer)
@@ -3210,7 +3606,7 @@ end
 
 function Workbench.InviteOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
-	if not order then
+	if not order or IsDisenchantOrder(order) then
 		return false
 	end
 
@@ -3225,7 +3621,15 @@ end
 
 function Workbench.WhisperOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
-	if not order or not order.Customer or #(order.Recipes or {}) == 0 then
+	if not order or not order.Customer then
+		return false
+	end
+
+	if IsDisenchantOrder(order) then
+		return Workbench.PrepareReturnMail(orderId)
+	end
+
+	if #(order.Recipes or {}) == 0 then
 		return false
 	end
 
@@ -3240,7 +3644,7 @@ end
 
 function Workbench.WhisperMissingMats(orderId)
 	local order = Workbench.GetOrderById(orderId)
-	if not order or not order.Customer then
+	if not order or not order.Customer or IsDisenchantOrder(order) then
 		return false
 	end
 
@@ -3281,7 +3685,7 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecip
 	end
 
 	for _, existing in ipairs(state.Orders) do
-		if existing.Customer == customer then
+		if existing.Kind ~= "disenchant" and existing.Customer == customer then
 			order = EnsureOrderFields(existing)
 			break
 		end
@@ -3291,6 +3695,7 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecip
 		order = EnsureOrderFields({
 			Id = state.NextOrderId,
 			Customer = customer,
+			Kind = "enchant",
 		})
 		state.NextOrderId = state.NextOrderId + 1
 		state.Orders[#state.Orders + 1] = order
@@ -3768,8 +4173,13 @@ local function CreateOrderRow(parent, index)
 	row:SetPoint("RIGHT", parent, "RIGHT", -10, 0)
 	ApplyBackdrop(row, 0.16, 0.11, 0.08, 0.95, 0.58, 0.41, 0.22, 1)
 
+	row.TypeIcon = row:CreateTexture(nil, "ARTWORK")
+	row.TypeIcon:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -10)
+	row.TypeIcon:SetSize(16, 16)
+	row.TypeIcon:Hide()
+
 	row.NameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	row.NameText:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
+	row.NameText:SetPoint("TOPLEFT", row.TypeIcon, "TOPRIGHT", 6, 2)
 	row.NameText:SetPoint("RIGHT", row, "RIGHT", -126, 0)
 	row.NameText:SetJustifyH("LEFT")
 
@@ -3809,7 +4219,7 @@ local function CreateOrderRow(parent, index)
 	row.InviteButton:SetScript("OnEnter", function(self)
 		if GameTooltip then
 			GameTooltip:SetOwner(self, "ANCHOR_TOP")
-			GameTooltip:SetText("Invite to group", 1, 1, 1)
+			GameTooltip:SetText(self.TooltipText or "Invite to group", 1, 1, 1)
 			GameTooltip:Show()
 		end
 	end)
@@ -3832,7 +4242,7 @@ local function CreateOrderRow(parent, index)
 	row.WhisperButton:SetScript("OnEnter", function(self)
 		if GameTooltip then
 			GameTooltip:SetOwner(self, "ANCHOR_TOP")
-			GameTooltip:SetText("Whisper customer", 1, 1, 1)
+			GameTooltip:SetText(self.TooltipText or "Whisper customer", 1, 1, 1)
 			GameTooltip:Show()
 		end
 	end)
@@ -3855,7 +4265,7 @@ local function CreateOrderRow(parent, index)
 	row.MatsButton:SetScript("OnEnter", function(self)
 		if GameTooltip then
 			GameTooltip:SetOwner(self, "ANCHOR_TOP")
-			GameTooltip:SetText("Whisper missing materials", 1, 1, 1)
+			GameTooltip:SetText(self.TooltipText or "Whisper missing materials", 1, 1, 1)
 			GameTooltip:Show()
 		end
 	end)
@@ -3912,6 +4322,7 @@ local function CreateRecipeLine(parent, index)
 		end
 	end)
 	line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
+	line.CastButton:Show()
 
 	return line
 end
@@ -4233,6 +4644,17 @@ function Workbench.CreateFrame()
 	end)
 	frame.Detail.CompleteButton:Hide()
 
+	frame.Detail.ReturnMailButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
+	frame.Detail.ReturnMailButton:SetSize(88, 20)
+	frame.Detail.ReturnMailButton:SetText("Mail Return")
+	ApplyElvUISkin(frame.Detail.ReturnMailButton, "button")
+	frame.Detail.ReturnMailButton:SetScript("OnClick", function(self)
+		if self.OrderId then
+			Workbench.PrepareReturnMail(self.OrderId)
+		end
+	end)
+	frame.Detail.ReturnMailButton:Hide()
+
 	frame.Detail.RecipesHeader = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.Detail.RecipesHeader:SetText("Enchants")
 
@@ -4279,7 +4701,7 @@ function Workbench.CreateFrame()
 	frame.Detail.Empty:SetPoint("TOPLEFT", frame.Detail.Meta, "BOTTOMLEFT", 0, -12)
 	frame.Detail.Empty:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.Empty:SetJustifyH("LEFT")
-	frame.Detail.Empty:SetText("Select an order to see enchants, raw chat text, and automatic material tracking.")
+	frame.Detail.Empty:SetText("Select an order to see enchant requests or mailbox disenchant jobs and their tracked details.")
 
 	frame.ResizeHandle = CreateFrame("Button", nil, frame)
 	frame.ResizeHandle:SetSize(16, 16)
@@ -4371,9 +4793,18 @@ function Workbench.Refresh()
 		local checked, total = Workbench.GetMaterialProgress(order)
 		local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 		local isInCurrentGroup = IsCustomerInCurrentGroup(order.Customer)
-		local isGroupedQueueHold = order.AlreadyGrouped and not isInCurrentGroup
+		local isDisenchant = IsDisenchantOrder(order)
+		local isGroupedQueueHold = not isDisenchant and order.AlreadyGrouped and not isInCurrentGroup
 		local readyText
-		if recipeTotal > 0 and verifiedCount == recipeTotal then
+		if isDisenchant then
+			if total > 0 and checked == total then
+				readyText = "|cFF74D06CReady to mail|r"
+			elseif total > 0 then
+				readyText = string.format("%d/%d disenchanted", checked, total)
+			else
+				readyText = "Waiting for mailbox items"
+			end
+		elseif recipeTotal > 0 and verifiedCount == recipeTotal then
 			readyText = "|cFF74D06CVerified|r"
 		elseif recipeTotal > 0 then
 			readyText = string.format("%d/%d verified", verifiedCount, recipeTotal)
@@ -4388,17 +4819,39 @@ function Workbench.Refresh()
 		row.OrderId = order.Id
 		row.RemoveButton.OrderId = order.Id
 		row.InviteButton.OrderId = order.Id
+		row.InviteButton.TooltipText = "Invite to group"
 		row.WhisperButton.OrderId = order.Id
+		row.WhisperButton.TooltipText = isDisenchant and "Prepare return mail" or "Whisper customer"
 		row.MatsButton.OrderId = order.Id
+		row.MatsButton.TooltipText = "Whisper missing materials"
 		row.NameText:SetText(order.Customer or "Unknown")
 		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 		row.SummaryText:SetText(OrderSummary(order))
-		SetRegionShown(row.PartyCheck, isInCurrentGroup)
+		SetRegionShown(row.PartyCheck, not isDisenchant and isInCurrentGroup)
+		if isDisenchant then
+			row.TypeIcon:SetTexture(DISENCHANT_ORDER_ICON_TEXTURE)
+			row.TypeIcon:SetVertexColor(0.94, 0.78, 0.2, 1)
+			row.TypeIcon:Show()
+			row.InviteButton:Hide()
+			row.MatsButton:Hide()
+			row.WhisperButton:Show()
+		else
+			row.TypeIcon:Hide()
+			row.InviteButton:Show()
+			row.MatsButton:Show()
+			row.WhisperButton:Show()
+		end
 		row:Show()
 
 		local bgR, bgG, bgB, bgA
 		local borderR, borderG, borderB, borderA
-		if recipeTotal > 0 and verifiedCount == recipeTotal and state.SelectedOrderId == order.Id then
+		if isDisenchant and checked > 0 and checked == total and state.SelectedOrderId == order.Id then
+			bgR, bgG, bgB, bgA = 0.12, 0.2, 0.12, 0.98
+			borderR, borderG, borderB, borderA = 0.34, 0.78, 0.34, 1
+		elseif isDisenchant and checked > 0 and checked == total then
+			bgR, bgG, bgB, bgA = 0.09, 0.16, 0.09, 0.95
+			borderR, borderG, borderB, borderA = 0.28, 0.62, 0.28, 1
+		elseif recipeTotal > 0 and verifiedCount == recipeTotal and state.SelectedOrderId == order.Id then
 			bgR, bgG, bgB, bgA = 0.12, 0.2, 0.12, 0.98
 			borderR, borderG, borderB, borderA = 0.34, 0.78, 0.34, 1
 		elseif recipeTotal > 0 and verifiedCount == recipeTotal then
@@ -4443,6 +4896,7 @@ function Workbench.Refresh()
 		frame.Detail.ActionRow:Hide()
 		frame.Detail.TipStatus:Hide()
 		frame.Detail.CompleteButton:Hide()
+		frame.Detail.ReturnMailButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
 		frame.Detail.AllMatsButton:Hide()
@@ -4464,11 +4918,160 @@ function Workbench.Refresh()
 
 	frame.Detail.Empty:Hide()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
-	SetRegionShown(frame.Detail.GroupCheck, IsCustomerInCurrentGroup(order.Customer))
-	SetRegionShown(frame.Detail.GroupText, IsCustomerInCurrentGroup(order.Customer))
+
+	local isDisenchant = IsDisenchantOrder(order)
+	SetRegionShown(frame.Detail.GroupCheck, not isDisenchant and IsCustomerInCurrentGroup(order.Customer))
+	SetRegionShown(frame.Detail.GroupText, not isDisenchant and IsCustomerInCurrentGroup(order.Customer))
+
+	local detailContentWidth = GetDetailContentWidth(frame)
+	local recipeLineCount = 0
+	local materialLineCount = 0
+
+	if isDisenchant then
+		local completedItems, totalItems = GetDisenchantProgress(order)
+		local materials = Workbench.GetMaterialSnapshot(order)
+		local totalMaterialCount = 0
+
+		for _, material in ipairs(materials) do
+			totalMaterialCount = totalMaterialCount + NormalizeItemCount(material.Count)
+		end
+
+		frame.Detail.Meta:SetText(string.format(
+			"Queued %s  •  Updated %s  •  %d/%d disenchanted  •  %d mats tracked",
+			order.CreatedAt or "--:--",
+			order.UpdatedAt or "--:--",
+			completedItems,
+			totalItems,
+			totalMaterialCount
+		))
+		frame.Detail.Message:SetText("Mailbox job: " .. (order.Message ~= "" and order.Message or "Queued from mailed BoE greens and blues."))
+		frame.Detail.TradeHint:Hide()
+
+		frame.Detail.ActionRow:ClearAllPoints()
+		frame.Detail.ActionRow:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -12)
+		frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+		frame.Detail.ActionRow:Show()
+
+		frame.Detail.ReturnMailButton.OrderId = order.Id
+		frame.Detail.ReturnMailButton:ClearAllPoints()
+		frame.Detail.ReturnMailButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+		frame.Detail.ReturnMailButton:Show()
+
+		frame.Detail.CompleteButton.OrderId = order.Id
+		frame.Detail.CompleteButton:SetText("Done")
+		frame.Detail.CompleteButton:ClearAllPoints()
+		frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ReturnMailButton, "LEFT", -6, 0)
+		frame.Detail.CompleteButton:Show()
+
+		frame.Detail.TipStatus:ClearAllPoints()
+		frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
+		if totalItems > 0 and completedItems == totalItems and totalMaterialCount > 0 then
+			frame.Detail.TipStatus:SetText("All mailed items are done. Prep return mail when you're ready.")
+		elseif completedItems > 0 then
+			frame.Detail.TipStatus:SetText(string.format("%d/%d mailed items are finished and stacked into return mats.", completedItems, totalItems))
+		else
+			frame.Detail.TipStatus:SetText("Looted mailbox gear will keep stacking here until it's all disenchanted.")
+		end
+		frame.Detail.TipStatus:Show()
+
+		frame.Detail.RecipesHeader:SetText("Items")
+		frame.Detail.RecipesHeader:ClearAllPoints()
+		frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.ActionRow, "BOTTOMLEFT", 0, -12)
+		frame.Detail.RecipesHeader:Show()
+
+		for index, item in ipairs(order.SourceItems or {}) do
+			if not frame.Detail.RecipeLines[index] then
+				frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail.Content, index)
+			end
+
+			local line = frame.Detail.RecipeLines[index]
+			local isDone = item.Status == "done"
+			local itemText = GetDisenchantItemDisplayText(item)
+
+			line.NameText:ClearAllPoints()
+			line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
+			line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+			line.NameText:SetText((isDone and "|cFF74D06C" or "") .. itemText .. (isDone and "|r" or ""))
+			line.CastButton.RecipeName = nil
+			line.CastButton:Hide()
+			if isDone then
+				line.StatusCheck:Show()
+				line.StatusText:Hide()
+			else
+				line.StatusCheck:Hide()
+				line.StatusText:SetText(item.Bag ~= nil and item.Slot ~= nil and "B" or "?")
+				line.StatusText:Show()
+			end
+			line:ClearAllPoints()
+			if index == 1 then
+				line:SetPoint("TOPLEFT", frame.Detail.RecipesHeader, "BOTTOMLEFT", 0, -6)
+			else
+				line:SetPoint("TOPLEFT", frame.Detail.RecipeLines[index - 1], "BOTTOMLEFT", 0, -4)
+			end
+			line:SetWidth(detailContentWidth)
+			line:Show()
+		end
+		recipeLineCount = #(order.SourceItems or {})
+		for index = recipeLineCount + 1, #frame.Detail.RecipeLines do
+			frame.Detail.RecipeLines[index]:Hide()
+		end
+
+		frame.Detail.MatsHeader:SetText("Results")
+		frame.Detail.MatsHeader:ClearAllPoints()
+		frame.Detail.MatsHeader:SetPoint(
+			"TOPLEFT",
+			recipeLineCount > 0 and frame.Detail.RecipeLines[recipeLineCount] or frame.Detail.RecipesHeader,
+			"BOTTOMLEFT",
+			0,
+			-14
+		)
+		frame.Detail.MatsHeader:Show()
+
+		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.UseTradeButton:Hide()
+		frame.Detail.ClearMatsButton:Hide()
+		frame.Detail.ReadyText:ClearAllPoints()
+		frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
+		frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+		if totalItems > 0 and completedItems == totalItems and totalMaterialCount > 0 then
+			frame.Detail.ReadyText:SetText("|cFF74D06CEverything mailed in has been disenchanted. Use Mail Return to prefill the send-mail window and attach the tracked mats.|r")
+		elseif completedItems > 0 then
+			frame.Detail.ReadyText:SetText("|cFFFFD26AResults are being tracked as the mailed gear gets disenchanted. More mailbox items from this sender will keep spooling into the same order.|r")
+		else
+			frame.Detail.ReadyText:SetText("|cFFFFD26ALoot BoE greens or blues from the mailbox and they will keep stacking here for this sender. Disenchant the tracked items and the return mats will fill in automatically.|r")
+		end
+		frame.Detail.ReadyText:Show()
+
+		for index, material in ipairs(materials) do
+			if not frame.Detail.MaterialLines[index] then
+				frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail.Content, index)
+			end
+
+			local line = frame.Detail.MaterialLines[index]
+			line.StatusCheck:Show()
+			line.StatusText:Hide()
+			line.Text:SetText(string.format("%dx %s", NormalizeItemCount(material.Count), GetMaterialDisplayText(material)))
+			line:ClearAllPoints()
+			if index == 1 then
+				line:SetPoint("TOPLEFT", frame.Detail.ReadyText, "BOTTOMLEFT", 0, -4)
+			else
+				line:SetPoint("TOPLEFT", frame.Detail.MaterialLines[index - 1], "BOTTOMLEFT", 0, -2)
+			end
+			line:SetWidth(detailContentWidth)
+			line:Show()
+		end
+		materialLineCount = #materials
+		for index = materialLineCount + 1, #frame.Detail.MaterialLines do
+			frame.Detail.MaterialLines[index]:Hide()
+		end
+
+		UpdateDetailContentHeight(frame, recipeLineCount, materialLineCount)
+		return
+	end
 
 	local activeTrade = GetActiveTradeForOrder(order)
-	local checked, total, offeredState, manualChecked, offeredChecked, offeredMaterialCounts = GetDisplayedMaterialProgress(order)
+	local checked, total, _, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
 	local verifiedCount
 	local recipeTotal
 
@@ -4497,6 +5100,8 @@ function Workbench.Refresh()
 	frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
 	frame.Detail.ActionRow:Show()
 
+	frame.Detail.ReturnMailButton:Hide()
+	frame.Detail.CompleteButton:SetText("Complete")
 	frame.Detail.CompleteButton:Hide()
 
 	frame.Detail.TipStatus:ClearAllPoints()
@@ -4505,12 +5110,11 @@ function Workbench.Refresh()
 	frame.Detail.TipStatus:Show()
 	frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 
+	frame.Detail.RecipesHeader:SetText("Enchants")
 	frame.Detail.RecipesHeader:ClearAllPoints()
 	frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.ActionRow, "BOTTOMLEFT", 0, -12)
 	frame.Detail.RecipesHeader:Show()
 
-	local recipeAnchor = frame.Detail.RecipesHeader
-	local detailContentWidth = GetDetailContentWidth(frame)
 	local displayedRecipeOccurrences = {}
 	for index, recipeName in ipairs(order.Recipes or {}) do
 		if not frame.Detail.RecipeLines[index] then
@@ -4520,8 +5124,13 @@ function Workbench.Refresh()
 		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
 		displayedRecipeOccurrences[recipeName] = (displayedRecipeOccurrences[recipeName] or 0) + 1
 		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName, displayedRecipeOccurrences[recipeName])
+		line.NameText:ClearAllPoints()
+		line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
+		line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
 		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
 		line.CastButton.RecipeName = recipeName
+		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
+		line.CastButton:Show()
 		if isVerified then
 			line.StatusCheck:Show()
 			line.StatusText:Hide()
@@ -4530,25 +5139,24 @@ function Workbench.Refresh()
 			line.StatusText:SetText("?")
 			line.StatusText:Show()
 		end
-		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line:ClearAllPoints()
 		if index == 1 then
-			line:SetPoint("TOPLEFT", recipeAnchor, "BOTTOMLEFT", 0, -6)
+			line:SetPoint("TOPLEFT", frame.Detail.RecipesHeader, "BOTTOMLEFT", 0, -6)
 		else
 			line:SetPoint("TOPLEFT", frame.Detail.RecipeLines[index - 1], "BOTTOMLEFT", 0, -4)
 		end
 		line:SetWidth(detailContentWidth)
 		line:Show()
 	end
-
-	for index = #(order.Recipes or {}) + 1, #frame.Detail.RecipeLines do
+	recipeLineCount = #(order.Recipes or {})
+	for index = recipeLineCount + 1, #frame.Detail.RecipeLines do
 		frame.Detail.RecipeLines[index]:Hide()
 	end
 
 	local materials, missingRecipes = Workbench.GetMaterialSnapshot(order)
-	local matsAnchor = #(order.Recipes or {}) > 0 and frame.Detail.RecipeLines[#order.Recipes] or frame.Detail.RecipesHeader
+	frame.Detail.MatsHeader:SetText("Materials")
 	frame.Detail.MatsHeader:ClearAllPoints()
-	frame.Detail.MatsHeader:SetPoint("TOPLEFT", matsAnchor, "BOTTOMLEFT", 0, -14)
+	frame.Detail.MatsHeader:SetPoint("TOPLEFT", recipeLineCount > 0 and frame.Detail.RecipeLines[recipeLineCount] or frame.Detail.RecipesHeader, "BOTTOMLEFT", 0, -14)
 	frame.Detail.MatsHeader:Show()
 
 	frame.Detail.AllMatsButton:Hide()
@@ -4601,7 +5209,6 @@ function Workbench.Refresh()
 	end
 	frame.Detail.ReadyText:Show()
 
-	local materialAnchor = frame.Detail.ReadyText
 	for index, material in ipairs(materials) do
 		if not frame.Detail.MaterialLines[index] then
 			frame.Detail.MaterialLines[index] = CreateMaterialLine(frame.Detail.Content, index)
@@ -4626,15 +5233,15 @@ function Workbench.Refresh()
 		line.Text:SetText(materialText)
 		line:ClearAllPoints()
 		if index == 1 then
-			line:SetPoint("TOPLEFT", materialAnchor, "BOTTOMLEFT", 0, -4)
+			line:SetPoint("TOPLEFT", frame.Detail.ReadyText, "BOTTOMLEFT", 0, -4)
 		else
 			line:SetPoint("TOPLEFT", frame.Detail.MaterialLines[index - 1], "BOTTOMLEFT", 0, -2)
 		end
 		line:SetWidth(detailContentWidth)
 		line:Show()
 	end
-
-	for index = #materials + 1, #frame.Detail.MaterialLines do
+	materialLineCount = #materials
+	for index = materialLineCount + 1, #frame.Detail.MaterialLines do
 		frame.Detail.MaterialLines[index]:Hide()
 	end
 
@@ -4642,7 +5249,7 @@ function Workbench.Refresh()
 		frame.Detail.ReadyText:SetText(frame.Detail.ReadyText:GetText() .. "  |cFFFF9F5AMissing mats: " .. table.concat(missingRecipes, ", ") .. "|r")
 	end
 
-	UpdateDetailContentHeight(frame, #(order.Recipes or {}), #materials)
+	UpdateDetailContentHeight(frame, recipeLineCount, materialLineCount)
 end
 
 function Workbench.Show()

@@ -88,11 +88,18 @@ local function setup_env(opts)
 
     local state = {
         auctionator_calls = {},
+        bag_pickups = {},
+        bag_use_calls = {},
+        bags = copy_table(opts.bags or {}),
         invites = {},
         item_cache = {},
+        inbox = copy_table(opts.inbox or {}),
         prints = {},
         played_sounds = {},
         played_sound_calls = {},
+        secure_hooks = {},
+        send_mail_attachments = copy_table(opts.send_mail_attachments or {}),
+        send_mail_tab = tonumber(opts.send_mail_tab) or 1,
         emotes = {},
         requested_item_data = {},
         crafts = copy_table(opts.crafts or {}),
@@ -113,6 +120,7 @@ local function setup_env(opts)
         whispers = {},
         frames = {},
         current_time = tonumber(opts.current_time) or 0,
+        current_spell_name = opts.current_spell_name,
         current_mouseover_name = opts.current_mouseover_name or nil,
         current_npc_name = opts.current_npc_name or nil,
         current_party_members = copy_table(opts.current_party_members or {}),
@@ -917,6 +925,9 @@ local function setup_env(opts)
         if spell == 7411 then
             return opts.enchanting_spell_name or "Enchanting"
         end
+        if spell == 13262 then
+            return opts.disenchant_spell_name or "Disenchant"
+        end
         if type(spell) == "string" then
             return spell
         end
@@ -936,7 +947,7 @@ local function setup_env(opts)
             item_link = string.format("|cffffffff|Hitem:%d::::::::|h[%s]|h|r", item_id, item.name)
         end
 
-        return item.name, item_link
+        return item.name, item_link, item.quality, item.item_level or 0, item.min_level or 0, item.item_type, item.item_sub_type, item.stack_count or 1, item.equip_loc or "", item.texture, item.sell_price or 0, item.class_id, item.subclass_id, item.bind_type
     end
     _G.GetItemInfoInstant = function(item_reference)
         return normalize_item_id(item_reference)
@@ -953,6 +964,174 @@ local function setup_env(opts)
                 return normalize_item_id(item_reference)
             end,
         }
+    end
+    _G.IsCurrentSpell = function(spell)
+        if type(opts.is_current_spell) == "function" then
+            return opts.is_current_spell(spell)
+        end
+        if state.current_spell_name == nil then
+            return false
+        end
+        return tostring(spell) == tostring(state.current_spell_name)
+            or (tonumber(spell) == 13262 and state.current_spell_name == (opts.disenchant_spell_name or "Disenchant"))
+    end
+    _G.SpellIsTargeting = function()
+        return (state.spell_is_targeting or opts.spell_is_targeting) and true or false
+    end
+    _G.SpellCanTargetItem = function()
+        return (state.spell_can_target_item or opts.spell_can_target_item) and true or false
+    end
+    _G.NUM_BAG_SLOTS = tonumber(opts.num_bag_slots) or 4
+    local function get_bag_slot(bag, slot)
+        local bag_items = state.bags[tonumber(bag) or 0] or {}
+        return bag_items[tonumber(slot) or 0]
+    end
+    local function ensure_send_mail_attachment_slot(index)
+        state.send_mail_attachments[index] = state.send_mail_attachments[index] or nil
+        return state.send_mail_attachments[index]
+    end
+    _G.C_Container = {
+        GetContainerNumSlots = function(bag)
+            local bag_items = state.bags[tonumber(bag) or 0] or {}
+            local max_slot = 0
+            for slot in pairs(bag_items) do
+                if slot > max_slot then
+                    max_slot = slot
+                end
+            end
+            return max_slot
+        end,
+        GetContainerItemInfo = function(bag, slot)
+            local item = get_bag_slot(bag, slot)
+            if not item then
+                return nil
+            end
+            return {
+                stackCount = item.count or 1,
+                itemID = item.item_id or normalize_item_id(item.link),
+                quality = item.quality,
+                hyperlink = item.link,
+            }
+        end,
+        GetContainerItemLink = function(bag, slot)
+            local item = get_bag_slot(bag, slot)
+            return item and item.link or nil
+        end,
+        UseContainerItem = function(bag, slot)
+            state.bag_use_calls[#state.bag_use_calls + 1] = {
+                bag = bag,
+                slot = slot,
+            }
+        end,
+        PickupContainerItem = function(bag, slot)
+            local item = get_bag_slot(bag, slot)
+            state.bag_pickups[#state.bag_pickups + 1] = {
+                bag = bag,
+                slot = slot,
+            }
+            state.cursor_item = item and copy_table(item) or nil
+        end,
+    }
+    _G.GetInboxHeaderInfo = function(index)
+        local mail = state.inbox[tonumber(index) or 0]
+        if not mail then
+            return nil
+        end
+        local first_attachment = mail.attachments and mail.attachments[1] or nil
+        return mail.package_icon, mail.stationery_icon, mail.sender, mail.subject, mail.money or 0, mail.cod or 0, mail.days_left or 0, #(mail.attachments or {}), mail.was_read, nil, nil, nil, mail.is_gm, first_attachment and first_attachment.count or nil, first_attachment and first_attachment.item_id or nil
+    end
+    _G.GetInboxItem = function(index, attachment_index)
+        local mail = state.inbox[tonumber(index) or 0]
+        local attachment = mail and mail.attachments and mail.attachments[tonumber(attachment_index) or 0] or nil
+        if not attachment then
+            return nil
+        end
+        return attachment.name, attachment.item_id, attachment.texture, attachment.count or 1, attachment.quality, attachment.can_use
+    end
+    _G.GetInboxItemLink = function(index, attachment_index)
+        local mail = state.inbox[tonumber(index) or 0]
+        local attachment = mail and mail.attachments and mail.attachments[tonumber(attachment_index) or 0] or nil
+        return attachment and attachment.link or nil
+    end
+    _G.TakeInboxItem = function(index, attachment_index)
+        state.last_take_inbox_item = {
+            index = index,
+            attachment_index = attachment_index,
+        }
+    end
+    _G.HasSendMailItem = function(index)
+        return ensure_send_mail_attachment_slot(index) ~= nil
+    end
+    _G.GetSendMailItem = function(index)
+        local attachment = ensure_send_mail_attachment_slot(index)
+        if not attachment then
+            return nil
+        end
+        return attachment.name, attachment.item_id, attachment.texture, attachment.count or 1, attachment.quality
+    end
+    _G.ClickSendMailItemButton = function(index)
+        local attachment_limit = tonumber(_G.ATTACHMENTS_MAX_SEND) or 12
+        local target_index = tonumber(index)
+        if state.cursor_item == nil then
+            return
+        end
+        if target_index == nil or target_index <= 0 then
+            for attachment_index = 1, attachment_limit do
+                if state.send_mail_attachments[attachment_index] == nil then
+                    target_index = attachment_index
+                    break
+                end
+            end
+        end
+        if target_index and target_index > 0 and target_index <= attachment_limit then
+            state.send_mail_attachments[target_index] = copy_table(state.cursor_item)
+            state.cursor_item = nil
+        end
+    end
+    _G.ATTACHMENTS_MAX_SEND = tonumber(opts.attachments_max_send) or 12
+    _G.SendMailNameEditBox = new_frame("EditBox", "SendMailNameEditBox", nil, nil)
+    _G.SendMailSubjectEditBox = new_frame("EditBox", "SendMailSubjectEditBox", nil, nil)
+    _G.MailEditBox = new_frame("EditBox", "MailEditBox", nil, nil)
+    function _G.MailEditBox:GetInputText()
+        return self.text or ""
+    end
+    _G.SendMailFrame_Update = function()
+        state.send_mail_frame_updated = true
+    end
+    _G.SendMailFrame_CanSend = function()
+        state.send_mail_can_send_checked = true
+    end
+    _G.MailFrameTab_OnClick = function(_, tab_id)
+        state.send_mail_tab = tonumber(tab_id) or state.send_mail_tab
+    end
+    _G.SendMail = function(recipient, subject, body)
+        state.last_send_mail = {
+            recipient = recipient,
+            subject = subject,
+            body = body,
+            attachments = copy_table(state.send_mail_attachments),
+        }
+    end
+    _G.hooksecurefunc = function(target, method, hook)
+        if type(target) == "table" and type(method) == "string" and type(hook) == "function" then
+            local original = target[method]
+            state.secure_hooks[#state.secure_hooks + 1] = { target = target, method = method }
+            target[method] = function(...)
+                local results = { original(...) }
+                hook(...)
+                return table.unpack(results)
+            end
+            return
+        end
+        if type(target) == "string" and type(method) == "function" then
+            local original = _G[target]
+            state.secure_hooks[#state.secure_hooks + 1] = { target = target }
+            _G[target] = function(...)
+                local results = { original(...) }
+                method(...)
+                return table.unpack(results)
+            end
+        end
     end
     _G.TIME_TWENTYFOURHOURS = "%02d:%02d"
     _G.TIME_TWELVEHOURAM = "%d:%02d AM"
@@ -1100,6 +1279,15 @@ local function list_contains(list, expected)
         end
     end
     return false
+end
+
+local function set_bag_item(state, bag, slot, item)
+    state.bags[bag] = state.bags[bag] or {}
+    if item == nil then
+        state.bags[bag][slot] = nil
+    else
+        state.bags[bag][slot] = copy_table(item)
+    end
 end
 
 local function assert_recipe_bucket_matches(order, expected_recipes, context)
@@ -2862,6 +3050,157 @@ local function test_workbench_remove_clears_player_gate()
 
     assert_nil(addon.PlayerList["Buyer-Clear"], "removing a workbench order should clear the anti-spam player gate")
     assert_equal(#addon.Workbench.EnsureState().Orders, 0, "removed orders should leave the queue")
+end
+
+local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        equip_loc = "INVTYPE_WEAPON",
+        bind_type = 2,
+        count = 1,
+    }
+    local mailed_blue = {
+        item_id = 1002,
+        name = "Mailed Blue Wand",
+        link = "|cff0070dd|Hitem:1002::::::::|h[Mailed Blue Wand]|h|r",
+        quality = 3,
+        equip_loc = "INVTYPE_HOLDABLE",
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1001] = mailed_green,
+            [1002] = mailed_blue,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de these",
+                attachments = { mailed_green },
+            },
+            [2] = {
+                sender = "Bob",
+                subject = "blue for de",
+                attachments = { mailed_blue },
+            },
+            [3] = {
+                sender = "Alice",
+                subject = "one more",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+                [2] = mailed_blue,
+                [3] = mailed_green,
+            },
+        },
+    })
+
+    addon.SetChatScanningEnabled(true)
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+    addon.HandlePotentialMailboxLoot(2, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+    addon.HandlePotentialMailboxLoot(3, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local alice_order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    local bob_order = addon.Workbench.GetDisenchantOrderByCustomer("Bob")
+
+    assert_not_nil(alice_order, "mailbox loot from Alice should create a disenchant work order")
+    assert_not_nil(bob_order, "mailbox loot from Bob should create a second disenchant work order")
+    assert_equal(alice_order.Kind, "disenchant", "mailbox work orders should be marked as disenchant orders")
+    assert_equal(#alice_order.SourceItems, 2, "repeat mailbox loot from the same sender should spool into the same work order")
+    assert_equal(#bob_order.SourceItems, 1, "a different sender should get a separate mailbox work order")
+    assert_true(addon.DBChar.Stop == true, "mailbox disenchant work should pause chat scanning once it starts")
+end
+
+local function test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        equip_loc = "INVTYPE_WEAPON",
+        bind_type = 2,
+        count = 1,
+    }
+    local arcane_dust = {
+        item_id = 2001,
+        name = "Arcane Dust",
+        link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+        quality = 1,
+        item_type = "Trade Goods",
+        item_sub_type = "Enchanting",
+        count = 2,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1001] = mailed_green,
+            [2001] = arcane_dust,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "mailbox loot should create a disenchant order before tracking bag results")
+    assert_equal(order.SourceItems[1].Bag, 0, "tracked mailbox items should remember their current bag location")
+    assert_equal(order.SourceItems[1].Slot, 1, "tracked mailbox items should remember their current bag slot")
+
+    state.current_spell_name = "Disenchant"
+    state.spell_is_targeting = true
+    addon.HandlePotentialDisenchantTarget(0, 1)
+    state.spell_is_targeting = false
+
+    set_bag_item(state, 0, 1, nil)
+    set_bag_item(state, 0, 2, arcane_dust)
+    state.event_handlers["BAG_UPDATE_DELAYED"]()
+
+    order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    assert_equal(order.SourceItems[1].Status, "done", "disenchanting a tracked mailbox item should mark that source item as completed")
+    assert_equal(#materials, 1, "disenchanting a tracked mailbox item should add the resulting mats to the order")
+    assert_equal(materials[1].Key, "item:2001", "result mats should be keyed by item id for reliable return-mail tracking")
+    assert_equal(materials[1].Count, 2, "result mats should preserve the full disenchant yield count")
+
+    addon.Workbench.PrepareReturnMail(order.Id)
+
+    assert_equal(SendMailNameEditBox.text, "Alice", "preparing return mail should fill the original sender as the recipient")
+    assert_equal(SendMailSubjectEditBox.text, "Your disenchant mats", "preparing return mail should fill the default return-mail subject")
+    assert_true(string.find(MailEditBox.text, "Disenchanted the greens and blues", 1, true) ~= nil, "preparing return mail should prefill the return-mail body")
+    assert_equal(state.send_mail_tab, 2, "preparing return mail should switch the mailbox UI to the send tab")
+    assert_equal(#state.bag_pickups, 1, "preparing return mail should try to attach tracked mats from your bags")
+    assert_not_nil(state.send_mail_attachments[1], "preparing return mail should place attached mats into the send-mail attachment slots")
+
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "successfully sending return mail should retire the mailbox disenchant work order")
 end
 
 local function test_workbench_debug_output_is_printed()
@@ -5706,6 +6045,8 @@ test_generic_lf_enchanter_whisper()
 test_workbench_tracks_and_merges_orders()
 test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
+test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
+test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_title_includes_addon_version()
