@@ -950,7 +950,12 @@ local function setup_env(opts)
         return item.name, item_link, item.quality, item.item_level or 0, item.min_level or 0, item.item_type, item.item_sub_type, item.stack_count or 1, item.equip_loc or "", item.texture, item.sell_price or 0, item.class_id, item.subclass_id, item.bind_type
     end
     _G.GetItemInfoInstant = function(item_reference)
-        return normalize_item_id(item_reference)
+        local item_id = normalize_item_id(item_reference)
+        local item = item_id and state.item_cache[item_id] or nil
+        if not item then
+            return item_id
+        end
+        return item_id, item.item_type, item.item_sub_type, item.equip_loc or "", item.texture, item.class_id, item.subclass_id
     end
     if opts.omit_c_item then
         _G.C_Item = nil
@@ -961,7 +966,12 @@ local function setup_env(opts)
                 state.requested_item_data[#state.requested_item_data + 1] = item_id
             end,
             GetItemInfoInstant = function(item_reference)
-                return normalize_item_id(item_reference)
+                local item_id = normalize_item_id(item_reference)
+                local item = item_id and state.item_cache[item_id] or nil
+                if not item then
+                    return item_id
+                end
+                return item_id, item.item_type, item.item_sub_type, item.equip_loc or "", item.texture, item.class_id, item.subclass_id
             end,
         }
     end
@@ -3123,7 +3133,11 @@ local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat
         name = "Mailed Green Blade",
         link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
         quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
         equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
         bind_type = 2,
         count = 1,
     }
@@ -3132,7 +3146,11 @@ local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat
         name = "Mailed Blue Wand",
         link = "|cff0070dd|Hitem:1002::::::::|h[Mailed Blue Wand]|h|r",
         quality = 3,
+        item_type = "Armor",
+        item_sub_type = "Miscellaneous",
         equip_loc = "INVTYPE_HOLDABLE",
+        class_id = 4,
+        subclass_id = 0,
         bind_type = 2,
         count = 1,
     }
@@ -3189,13 +3207,50 @@ local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat
     assert_true(addon.DBChar.Stop == true, "mailbox disenchant work should pause chat scanning once it starts")
 end
 
+local function test_mailbox_loot_ignores_non_disenchantable_trade_goods()
+    local gold_ore = {
+        item_id = 1003,
+        name = "Gold Ore",
+        link = "|cff1eff00|Hitem:1003::::::::|h[Gold Ore]|h|r",
+        quality = 2,
+        item_type = "Trade Goods",
+        item_sub_type = "Metal & Stone",
+        equip_loc = "INVTYPE_NON_EQUIP_IGNORE",
+        class_id = 7,
+        subclass_id = 7,
+        count = 20,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1003] = gold_ore,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "Mithril Ore (20)",
+                attachments = { gold_ore },
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "non-disenchantable trade goods should not enter the pending mailbox loot queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "non-disenchantable trade goods should not create mailbox disenchant work")
+end
+
 local function test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
     local mailed_green = {
         item_id = 1001,
         name = "Mailed Green Blade",
         link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
         quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
         equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
         bind_type = 2,
         count = 1,
     }
@@ -3206,6 +3261,8 @@ local function test_mailbox_disenchant_tracking_records_results_and_prepares_ret
         quality = 1,
         item_type = "Trade Goods",
         item_sub_type = "Enchanting",
+        class_id = 7,
+        subclass_id = 12,
         count = 2,
     }
     local addon, state = setup_env({
@@ -6113,6 +6170,7 @@ test_workbench_tracks_and_merges_orders()
 test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
 test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
+test_mailbox_loot_ignores_non_disenchantable_trade_goods()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
