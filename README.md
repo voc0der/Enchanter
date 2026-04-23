@@ -72,6 +72,7 @@ Current version: `2.1.69`
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
+- Mailbox disenchant rows show `DE` once Enchanter has found the mailed item in your bags; click it to fire Disenchant directly from the workbench, and the row flips to a green check automatically when the item resolves into return mats.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
