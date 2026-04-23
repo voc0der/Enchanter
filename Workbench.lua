@@ -1185,6 +1185,9 @@ local function RemoveOrderByIndex(state, index, reasonPrefix)
 	ClearDeclinedInviteExpiryRuntime(removedOrder.Id)
 	EC.PlayerList[removedOrder.Customer] = nil
 	EC.LfRecipeList[removedOrder.Customer] = nil
+	if EC.ClearWhisperListenMode then
+		EC.ClearWhisperListenMode(removedOrder.Customer)
+	end
 	WorkbenchDebug(reasonPrefix or "removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
 	return removedOrder
 end
@@ -3587,6 +3590,9 @@ function Workbench.ClearOrders()
 	for _, order in ipairs(state.Orders) do
 		EC.PlayerList[order.Customer] = nil
 		EC.LfRecipeList[order.Customer] = nil
+		if EC.ClearWhisperListenMode then
+			EC.ClearWhisperListenMode(order.Customer)
+		end
 	end
 
 	state.Orders = {}

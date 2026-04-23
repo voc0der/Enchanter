@@ -2954,6 +2954,71 @@ local function test_generic_lf_enchanter_whisper()
     assert_equal(state.timer_delays[1], 3, "generic whisper should honor whisper delay")
 end
 
+local function test_generic_lf_enchanter_follow_up_whisper_creates_order()
+    local addon, state = setup_env({
+        db = {
+            WhisperLfRequests = true,
+            LfWhisperMsg = "What you looking for?",
+        },
+    })
+
+    addon.OnLoad()
+    seed_scanned_recipes(addon, {
+        "Enchant Weapon - Mongoose",
+        "Enchant Boots - Boar's Speed",
+    })
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF Enchanter", "Buyer-Whisper")
+
+    assert_not_nil(state.event_handlers["CHAT_MSG_WHISPER"], "whisper follow-up should register a chat whisper handler")
+    assert_equal(#state.invites, 0, "generic lf enchanter should not invite before the follow-up whisper names a recipe")
+    assert_equal(#state.whispers, 1, "generic lf enchanter should still send the configured prompt first")
+
+    state.event_handlers["CHAT_MSG_WHISPER"]("mongoose and boar", "Buyer-Whisper")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Whisper")
+
+    assert_not_nil(order, "follow-up whispers should open a workbench order")
+    assert_equal(#order.Recipes, 2, "follow-up whispers should allow multiple recipe aliases in one private reply")
+    assert_true(list_contains(order.Recipes, "Enchant Weapon - Mongoose"), "follow-up whispers should match mongoose aliases")
+    assert_true(list_contains(order.Recipes, "Enchant Boots - Boar's Speed"), "follow-up whispers should match boar aliases")
+    assert_equal(#state.invites, 1, "the first matched follow-up whisper should still auto-invite like a public request")
+    assert_equal(state.invites[1], "Buyer-Whisper", "the first matched follow-up whisper should invite the whispering customer")
+    assert_equal(#state.whispers, 2, "the first matched follow-up whisper should still send the recipe confirmation whisper")
+    assert_whisper_contains_recipe(state.whispers[2].message, "Enchant Weapon - Mongoose", "follow-up recipe whisper")
+    assert_whisper_contains_recipe(state.whispers[2].message, "Enchant Boots - Boar's Speed", "follow-up recipe whisper")
+    assert_equal(addon.PlayerList["Buyer-Whisper"], 1, "the first matched follow-up whisper should trip the anti-spam gate")
+end
+
+local function test_generic_lf_enchanter_follow_up_whispers_update_existing_order()
+    local addon, state = setup_env({
+        db = {
+            WhisperLfRequests = true,
+            LfWhisperMsg = "What you looking for?",
+        },
+    })
+
+    addon.OnLoad()
+    seed_scanned_recipes(addon, {
+        "Enchant Weapon - Mongoose",
+        "Enchant Boots - Boar's Speed",
+    })
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF Enchanter", "Buyer-Thread")
+
+    state.event_handlers["CHAT_MSG_WHISPER"]("mongoose", "Buyer-Thread")
+    state.event_handlers["CHAT_MSG_WHISPER"]("boar", "Buyer-Thread")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Thread")
+
+    assert_not_nil(order, "the private follow-up thread should keep a workbench order open")
+    assert_equal(#order.Recipes, 2, "later recipe-only whispers should keep extending the same queued order")
+    assert_true(list_contains(order.Recipes, "Enchant Weapon - Mongoose"), "the original private follow-up recipe should stay on the order")
+    assert_true(list_contains(order.Recipes, "Enchant Boots - Boar's Speed"), "later private follow-up recipes should merge into the same order")
+    assert_equal(#state.invites, 1, "later follow-up whispers should not send extra invites once the customer is flagged")
+    assert_equal(#state.whispers, 2, "later follow-up whispers should not send extra recipe whispers once the customer is flagged")
+end
+
 local function test_workbench_tracks_and_merges_orders()
     local addon = setup_env({
         char_db = {
@@ -6042,6 +6107,8 @@ test_parse_message_warns_for_incomplete_order()
 test_parse_message_skips_incomplete_warning_when_disabled()
 test_incomplete_order_can_be_left_unflagged_until_corrected()
 test_generic_lf_enchanter_whisper()
+test_generic_lf_enchanter_follow_up_whisper_creates_order()
+test_generic_lf_enchanter_follow_up_whispers_update_existing_order()
 test_workbench_tracks_and_merges_orders()
 test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
