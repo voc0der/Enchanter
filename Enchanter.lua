@@ -38,9 +38,11 @@ local ENCHANTING_SPELL_ID = 7411
 local ENCHANTING_SKILL_LINE_ID = 333
 local DISENCHANT_SPELL_ID = 13262
 local RECIPE_FORMULA_PREFIX = "Formula: "
-local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox disenchant work started."
+local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox work started."
 local MAILBOX_DISENCHANT_RETURN_SUBJECT = "Your disenchant mats"
 local MAILBOX_DISENCHANT_RETURN_BODY = "Disenchanted the greens and blues you mailed over. Sending the mats back."
+local MAILBOX_LOCKBOX_RETURN_SUBJECT = "Your unlocked lockboxes"
+local MAILBOX_LOCKBOX_RETURN_BODY = "Unlocked the lockboxes you mailed over. Sending them back."
 local DISENCHANT_SHORTCUT_RETRY_DELAYS = { 0.05, 0.15, 0.35 }
 local MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
@@ -903,16 +905,68 @@ local function IsMailboxDisenchantCandidate(itemInfo)
 	return true
 end
 
+local function IsMailboxLockboxCandidate(itemInfo)
+	local itemName
+
+	if type(itemInfo) ~= "table" then
+		return false
+	end
+
+	if not IsOtherPlayerName(itemInfo.Sender) then
+		return false
+	end
+
+	if IsAuctionHouseSender(itemInfo.Sender) then
+		return false
+	end
+
+	if math.max(0, math.floor(tonumber(itemInfo.CODAmount) or 0)) > 0 then
+		return false
+	end
+
+	itemName = NormalizeTextValue(itemInfo.Name)
+	if itemName == "" then
+		itemName = ExtractLinkedItemName(itemInfo.Link) or ""
+	end
+
+	return itemName:lower():find("lockbox", 1, true) ~= nil
+end
+
+local function GetMailboxLootJobKind(itemInfo)
+	if IsMailboxLockboxCandidate(itemInfo) then
+		return "lockbox"
+	end
+	if IsMailboxDisenchantCandidate(itemInfo) then
+		return "disenchant"
+	end
+	return nil
+end
+
 local function GetPendingMailboxLootKey(itemInfo)
+	local itemPart
+
 	if type(itemInfo) ~= "table" then
 		return ""
 	end
 
+	if NormalizeTextValue(itemInfo.LootKey) ~= "" then
+		return NormalizeTextValue(itemInfo.LootKey)
+	end
+
+	itemPart = tostring(itemInfo.ItemId or "")
+	if itemPart == "" then
+		itemPart = NormalizeTextValue(itemInfo.Link)
+	end
+	if itemPart == "" then
+		itemPart = NormalizeTextValue(itemInfo.Name)
+	end
+
 	return table.concat({
+		NormalizeTextValue(itemInfo.MailboxJobKind),
+		NormalizeTextValue(itemInfo.Sender),
 		tostring(itemInfo.MailIndex or ""),
 		tostring(itemInfo.AttachmentIndex or ""),
-		tostring(itemInfo.ItemId or ""),
-		NormalizeTextValue(itemInfo.Link),
+		itemPart,
 	}, ":")
 end
 
@@ -1004,6 +1058,9 @@ local function GetBagItemSnapshot(bagIndex, slotIndex)
 	itemInfo.Bag = bagIndex
 	itemInfo.Slot = slotIndex
 	itemInfo.Key = GetMailboxBagCountKey(itemInfo)
+	if containerInfo.isLocked ~= nil then
+		itemInfo.IsLocked = containerInfo.isLocked and true or false
+	end
 
 	if itemInfo.Key == "" then
 		return nil
@@ -1052,6 +1109,64 @@ local function FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	return nil, nil
 end
 
+local function FindTrackedDisenchantItemByToken(orderId, itemToken)
+	local order = EC.Workbench and EC.Workbench.GetOrderById and EC.Workbench.GetOrderById(orderId) or nil
+
+	if not order or order.Kind ~= "disenchant" then
+		return nil, nil
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		if item.Status ~= "done" and item.Token == itemToken then
+			return order, item
+		end
+	end
+
+	return nil, nil
+end
+
+local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
+	local snapshot
+	local runtime
+
+	if not order or not sourceItem then
+		return false
+	end
+
+	bagIndex = tonumber(bagIndex)
+	slotIndex = tonumber(slotIndex)
+	if bagIndex == nil or slotIndex == nil then
+		return false
+	end
+
+	snapshot = CaptureBagSnapshot()
+	runtime = GetMailboxDisenchantRuntime()
+	runtime.PendingDisenchant = {
+		OrderId = order.Id,
+		ItemToken = sourceItem.Token,
+		Bag = bagIndex,
+		Slot = slotIndex,
+		ItemKey = GetMailboxBagCountKey(sourceItem),
+		BeforeCounts = snapshot.Counts,
+		ResolveAfter = MailboxNow() + 1.5,
+	}
+	if C_Timer and C_Timer.After then
+		C_Timer.After(1.6, function()
+			local pendingAction = GetMailboxDisenchantRuntime().PendingDisenchant
+			if pendingAction
+				and pendingAction.OrderId == order.Id
+				and pendingAction.ItemToken == sourceItem.Token
+				and tonumber(pendingAction.Bag) == bagIndex
+				and tonumber(pendingAction.Slot) == slotIndex
+				and EC.SyncDisenchantInventoryTracking
+			then
+				EC.SyncDisenchantInventoryTracking()
+			end
+		end)
+	end
+	return true
+end
+
 local function SyncDisenchantBagAssignments(snapshot)
 	local runtime = GetMailboxDisenchantRuntime()
 	local pendingAction = runtime.PendingDisenchant
@@ -1096,6 +1211,73 @@ local function SyncDisenchantBagAssignments(snapshot)
 						if not usedSlots[slotKey] and slotInfo.Key == itemKey then
 							usedSlots[slotKey] = true
 							if EC.Workbench.SetDisenchantItemLocation(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot) then
+								changed = true
+							end
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return changed
+end
+
+local function SyncLockboxBagAssignments(snapshot)
+	local usedSlots = {}
+	local changed = false
+
+	if not (EC.Workbench and EC.Workbench.EnsureState and EC.Workbench.SetLockboxItemLocation and EC.Workbench.MarkLockboxItemUnlocked) then
+		return false
+	end
+
+	for _, order in ipairs(EC.Workbench.EnsureState().Orders or {}) do
+		if order.Kind == "lockbox" then
+			for _, item in ipairs(order.SourceItems or {}) do
+				local bagKey = tostring(item.Bag or "") .. ":" .. tostring(item.Slot or "")
+				local slotInfo = snapshot.Slots[bagKey]
+				local itemKey = GetMailboxBagCountKey(item)
+
+				if item.Status == "done" then
+					if slotInfo and slotInfo.Key == itemKey then
+						usedSlots[bagKey] = true
+						if EC.Workbench.SetLockboxItemLocation(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot, slotInfo.IsLocked) then
+							changed = true
+						end
+					end
+				elseif slotInfo and slotInfo.Key == itemKey then
+					usedSlots[bagKey] = true
+					if slotInfo.IsLocked == false then
+						if EC.Workbench.MarkLockboxItemUnlocked(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot) then
+							changed = true
+						end
+					elseif EC.Workbench.SetLockboxItemLocation(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot, slotInfo.IsLocked) then
+						changed = true
+					end
+				elseif item.Bag ~= nil or item.Slot ~= nil then
+					if EC.Workbench.SetLockboxItemLocation(order.Id, item.Token, nil, nil, nil) then
+						changed = true
+					end
+				end
+			end
+		end
+	end
+
+	for _, order in ipairs(EC.Workbench.EnsureState().Orders or {}) do
+		if order.Kind == "lockbox" then
+			for _, item in ipairs(order.SourceItems or {}) do
+				local itemKey = GetMailboxBagCountKey(item)
+				if item.Status ~= "done" and (item.Bag == nil or item.Slot == nil) and itemKey ~= "" then
+					for _, slotInfo in ipairs(snapshot.OrderedSlots) do
+						local slotKey = tostring(slotInfo.Bag) .. ":" .. tostring(slotInfo.Slot)
+						if not usedSlots[slotKey] and slotInfo.Key == itemKey then
+							usedSlots[slotKey] = true
+							if slotInfo.IsLocked == false then
+								if EC.Workbench.MarkLockboxItemUnlocked(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot) then
+									changed = true
+								end
+							elseif EC.Workbench.SetLockboxItemLocation(order.Id, item.Token, slotInfo.Bag, slotInfo.Slot, slotInfo.IsLocked) then
 								changed = true
 							end
 							break
@@ -1171,6 +1353,9 @@ local function ResolvePendingDisenchantAction(snapshot)
 	slotKey = tostring(pendingAction.Bag) .. ":" .. tostring(pendingAction.Slot)
 	slotInfo = snapshot.Slots[slotKey]
 	if slotInfo and slotInfo.Key == pendingAction.ItemKey then
+		if MailboxNow() >= (tonumber(pendingAction.ResolveAfter) or 0) then
+			runtime.PendingDisenchant = nil
+		end
 		return false
 	end
 
@@ -1192,6 +1377,9 @@ function EC.SyncDisenchantInventoryTracking()
 	local changed = false
 
 	if SyncDisenchantBagAssignments(snapshot) then
+		changed = true
+	end
+	if SyncLockboxBagAssignments(snapshot) then
 		changed = true
 	end
 	if ResolvePendingDisenchantAction(snapshot) then
@@ -1341,17 +1529,117 @@ function EC.PrepareDisenchantReturnMail(orderId)
 	return true
 end
 
+local function AttachTrackedReturnLockboxes(order)
+	local snapshot
+	local attachedStacks = 0
+	local remainingUnlocked = 0
+	local attachmentLimit = math.max(1, math.floor(tonumber(_G and _G.ATTACHMENTS_MAX_SEND or 12) or 12))
+	local usedSlots = {}
+
+	if not order or order.Kind ~= "lockbox" then
+		return 0, 0, "invalid"
+	end
+
+	if CountSendMailAttachments() > 0 then
+		return 0, 0, "existing_attachments"
+	end
+
+	snapshot = CaptureBagSnapshot()
+	for _, item in ipairs(order.SourceItems or {}) do
+		local slotKey = tostring(item.Bag or "") .. ":" .. tostring(item.Slot or "")
+		local slotInfo = snapshot.Slots[slotKey]
+		local itemKey = GetMailboxBagCountKey(item)
+
+		if item.Status == "done" then
+			if slotInfo and slotInfo.Key == itemKey and slotInfo.IsLocked == false then
+				remainingUnlocked = remainingUnlocked + 1
+				if attachedStacks < attachmentLimit and not usedSlots[slotKey] and PickupContainerItemCompat(slotInfo.Bag, slotInfo.Slot) and type(ClickSendMailItemButton) == "function" then
+					ClickSendMailItemButton()
+					usedSlots[slotKey] = true
+					attachedStacks = attachedStacks + 1
+					remainingUnlocked = remainingUnlocked - 1
+				end
+			end
+		end
+	end
+
+	return attachedStacks, remainingUnlocked, nil
+end
+
+function EC.PrepareLockboxReturnMail(orderId)
+	local order = EC.Workbench and EC.Workbench.GetOrderById and EC.Workbench.GetOrderById(orderId) or nil
+	local attachedStacks
+	local remainingUnlocked
+	local attachReason
+	local runtime = GetMailboxDisenchantRuntime()
+
+	if not order or order.Kind ~= "lockbox" then
+		return false
+	end
+
+	if not (SendMailNameEditBox and SendMailSubjectEditBox and MailEditBox) then
+		print("|cFFFF1C1CEnchanter|r Open a mailbox first to prep the return mail.")
+		return false
+	end
+
+	if type(MailFrameTab_OnClick) == "function" then
+		pcall(MailFrameTab_OnClick, nil, 2)
+	end
+
+	if SendMailNameEditBox.SetText then
+		SendMailNameEditBox:SetText(order.Customer or "")
+	end
+	if SendMailSubjectEditBox.SetText then
+		SendMailSubjectEditBox:SetText(MAILBOX_LOCKBOX_RETURN_SUBJECT)
+	end
+	if MailEditBox.SetText then
+		MailEditBox:SetText(MAILBOX_LOCKBOX_RETURN_BODY)
+	elseif MailEditBox.SetInputText then
+		MailEditBox:SetInputText(MAILBOX_LOCKBOX_RETURN_BODY)
+	end
+
+	attachedStacks, remainingUnlocked, attachReason = AttachTrackedReturnLockboxes(order)
+	if type(SendMailFrame_Update) == "function" then
+		pcall(SendMailFrame_Update)
+	end
+	if type(SendMailFrame_CanSend) == "function" then
+		pcall(SendMailFrame_CanSend)
+	end
+
+	runtime.PendingReturnMailOrderId = orderId
+	if attachReason == "existing_attachments" then
+		print("|cFFFF1C1CEnchanter|r Prepared return mail for " .. tostring(order.Customer) .. ". Existing attachments were left alone, so only the recipient and message were filled in.")
+	elseif attachedStacks > 0 and remainingUnlocked > 0 then
+		print("|cFFFF1C1CEnchanter|r Prepared return mail for " .. tostring(order.Customer) .. " and attached " .. tostring(attachedStacks) .. " unlocked lockbox(es). " .. tostring(remainingUnlocked) .. " unlocked lockbox(es) still need manual handling.")
+	elseif attachedStacks > 0 then
+		print("|cFFFF1C1CEnchanter|r Prepared return mail for " .. tostring(order.Customer) .. " and attached " .. tostring(attachedStacks) .. " unlocked lockbox(es).")
+	else
+		print("|cFFFF1C1CEnchanter|r Prepared return mail for " .. tostring(order.Customer) .. ". No unlocked lockboxes were auto-attached yet.")
+	end
+	return true
+end
+
 function EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
 	local itemInfo = GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
 	local runtime = GetMailboxDisenchantRuntime()
+	local lootKey
+	local jobKind
 
 	if not EC.Initalized then
 		return false
 	end
 
-	if not IsMailboxDisenchantCandidate(itemInfo) then
+	jobKind = GetMailboxLootJobKind(itemInfo)
+	if not jobKind then
 		return false
 	end
+	itemInfo.MailboxJobKind = jobKind
+
+	lootKey = GetPendingMailboxLootKey(itemInfo)
+	if lootKey == "" then
+		return false
+	end
+	itemInfo.LootKey = lootKey
 
 	if IsPendingMailboxLootQueued(runtime, itemInfo) then
 		return false
@@ -1370,11 +1658,15 @@ function EC.HandlePendingMailboxLootSuccess()
 		return false
 	end
 
-	if not (EC.Workbench and EC.Workbench.AddDisenchantMailItem) then
+	if not (EC.Workbench and EC.Workbench.AddDisenchantMailItem and EC.Workbench.AddLockboxMailItem) then
 		return false
 	end
 
-	order = EC.Workbench.AddDisenchantMailItem(itemInfo.Sender, itemInfo)
+	if itemInfo.MailboxJobKind == "lockbox" then
+		order = EC.Workbench.AddLockboxMailItem(itemInfo.Sender, itemInfo)
+	else
+		order = EC.Workbench.AddDisenchantMailItem(itemInfo.Sender, itemInfo)
+	end
 	if order and EC.IsChatScanningEnabled and EC.IsChatScanningEnabled() then
 		EC.SetChatScanningEnabled(false, MAILBOX_DISENCHANT_PAUSE_MESSAGE)
 	end
@@ -1427,8 +1719,6 @@ end
 function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 	local order
 	local sourceItem
-	local snapshot
-	local runtime = GetMailboxDisenchantRuntime()
 
 	if not IsDisenchantSpellTargeting() then
 		return false
@@ -1439,17 +1729,19 @@ function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 		return false
 	end
 
-	snapshot = CaptureBagSnapshot()
-	runtime.PendingDisenchant = {
-		OrderId = order.Id,
-		ItemToken = sourceItem.Token,
-		Bag = bagIndex,
-		Slot = slotIndex,
-		ItemKey = GetMailboxBagCountKey(sourceItem),
-		BeforeCounts = snapshot.Counts,
-		ResolveAfter = MailboxNow() + 1.5,
-	}
-	return true
+	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
+end
+
+function EC.PrimeTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
+	local order
+	local sourceItem
+
+	order, sourceItem = FindTrackedDisenchantItemByToken(orderId, itemToken)
+	if not order or not sourceItem then
+		return false
+	end
+
+	return PrimePendingDisenchant(order, sourceItem, bagIndex or sourceItem.Bag, slotIndex or sourceItem.Slot)
 end
 
 function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
@@ -1457,7 +1749,7 @@ function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
 		if not IsDisenchantSpellTargeting() then
 			return false
 		end
-		EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+		EC.PrimeTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
 		return UseContainerItemCompat(bagIndex, slotIndex)
 	end
 
@@ -4090,6 +4382,15 @@ local function Event_BAG_UPDATE_DELAYED()
 	end
 end
 
+local function Event_ITEM_UNLOCKED()
+	if not IsAddonActive() then
+		return
+	end
+	if EC.SyncDisenchantInventoryTracking then
+		EC.SyncDisenchantInventoryTracking()
+	end
+end
+
 local function Event_UI_CONTEXT_REFRESH()
 	if not IsAddonActive() then
 		return
@@ -4231,6 +4532,7 @@ RegisterActiveEvents = function()
 	EC.Tool.RegisterEvent("MAIL_SUCCESS", Event_MAIL_SUCCESS)
 	EC.Tool.RegisterEvent("MAIL_FAILED", Event_MAIL_FAILED)
 	EC.Tool.RegisterEvent("BAG_UPDATE_DELAYED", Event_BAG_UPDATE_DELAYED)
+	EC.Tool.RegisterEvent("ITEM_UNLOCKED", Event_ITEM_UNLOCKED)
 	EC.Tool.RegisterEvent("CHAT_MSG_CHANNEL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_SAY", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_YELL", Event_CHAT_MSG_CHANNEL)

@@ -19,6 +19,7 @@ local SOUND_BUTTON_ICON_TEXTURE = "Interface\\Common\\VoiceChat-Speaker"
 local SOUND_BUTTON_ON_TEXTURE = "Interface\\Common\\VoiceChat-On"
 local SOUND_BUTTON_MUTED_TEXTURE = "Interface\\Common\\VoiceChat-Muted"
 local DISENCHANT_ORDER_ICON_TEXTURE = "Interface\\Icons\\INV_Enchant_Disenchant"
+local LOCKBOX_ORDER_ICON_TEXTURE = "Interface\\Icons\\INV_Misc_Lockbox_01"
 local CONFIG_BUTTON_ICON_ATLAS = "OptionsIcon-Brown"
 local ORDER_ALERT_SOUND_FALLBACKS = {
 	{ key = "IG_MAINMENU_OPTION_CHECKBOX_ON", id = 856, legacy = "igMainMenuOptionCheckBoxOn" },
@@ -787,6 +788,14 @@ local function IsDisenchantOrder(order)
 	return order and order.Kind == "disenchant"
 end
 
+local function IsLockboxOrder(order)
+	return order and order.Kind == "lockbox"
+end
+
+local function IsMailboxItemOrder(order)
+	return IsDisenchantOrder(order) or IsLockboxOrder(order)
+end
+
 local function GetGroupedExpiryRuntime(orderId, createIfMissing)
 	local runtime = EnsureRuntime()
 	runtime.GroupedExpiry = runtime.GroupedExpiry or {}
@@ -844,12 +853,16 @@ local function EnsureDisenchantItemFields(item)
 	item.Token = math.max(1, math.floor(tonumber(item.Token) or 0))
 	item.Name = TrimText(item.Name)
 	item.Link = TrimText(item.Link)
+	item.LootKey = TrimText(item.LootKey)
 	item.ItemId = tonumber(item.ItemId) and math.floor(tonumber(item.ItemId)) or nil
 	item.Quality = math.max(0, math.floor(tonumber(item.Quality) or 0))
 	item.MailSubject = TrimText(item.MailSubject)
 	item.Status = item.Status == "done" and "done" or "queued"
 	item.Bag = tonumber(item.Bag)
 	item.Slot = tonumber(item.Slot)
+	if item.IsLocked ~= nil then
+		item.IsLocked = item.IsLocked and true or false
+	end
 	item.CreatedAt = NormalizeTimestampText(item.CreatedAt)
 	item.UpdatedAt = NormalizeTimestampText(item.UpdatedAt or item.CreatedAt)
 	return item
@@ -884,7 +897,7 @@ local function NormalizeDisenchantMaterialEntry(material, fallbackKey)
 end
 
 local function FindSourceItemByToken(order, itemToken)
-	if not IsDisenchantOrder(order) or not itemToken then
+	if not IsMailboxItemOrder(order) or not itemToken then
 		return nil
 	end
 
@@ -897,11 +910,93 @@ local function FindSourceItemByToken(order, itemToken)
 	return nil
 end
 
+local function FindSourceItemByLootKey(order, lootKey)
+	lootKey = TrimText(lootKey)
+	if not IsMailboxItemOrder(order) or lootKey == "" then
+		return nil
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		if TrimText(item.LootKey) == lootKey then
+			return item
+		end
+	end
+
+	return nil
+end
+
+local function GetLegacyDisenchantDuplicateKey(item)
+	local itemIdentity
+
+	if not item or TrimText(item.LootKey) ~= "" then
+		return ""
+	end
+
+	itemIdentity = item.ItemId and ("item:" .. tostring(item.ItemId)) or TrimText(item.Link)
+	if itemIdentity == "" then
+		itemIdentity = TrimText(item.Name)
+	end
+	if itemIdentity == "" then
+		return ""
+	end
+
+	return table.concat({
+		itemIdentity,
+		TrimText(item.MailSubject),
+		TrimText(item.CreatedAt),
+	}, "\031")
+end
+
+local function PruneLegacyUntrackedDuplicateSourceItems(order)
+	local anchoredKeys = {}
+	local changed = false
+
+	if not IsDisenchantOrder(order) then
+		return false
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		local duplicateKey = GetLegacyDisenchantDuplicateKey(item)
+		if duplicateKey ~= "" and (item.Status == "done" or item.Bag ~= nil or item.Slot ~= nil) then
+			anchoredKeys[duplicateKey] = true
+		end
+	end
+
+	for index = #(order.SourceItems or {}), 1, -1 do
+		local item = order.SourceItems[index]
+		local duplicateKey = GetLegacyDisenchantDuplicateKey(item)
+		if duplicateKey ~= "" and anchoredKeys[duplicateKey] and item.Status ~= "done" and item.Bag == nil and item.Slot == nil then
+			table.remove(order.SourceItems, index)
+			changed = true
+		end
+	end
+
+	return changed
+end
+
 local function GetDisenchantProgress(order)
 	local completed = 0
 	local total = 0
 
 	if not IsDisenchantOrder(order) then
+		return completed, total
+	end
+
+	for _, item in ipairs(order.SourceItems or {}) do
+		total = total + 1
+		if item.Status == "done" then
+			completed = completed + 1
+		end
+	end
+
+	return completed, total
+end
+
+local function GetLockboxProgress(order)
+	local completed = 0
+	local total = 0
+
+	if not IsLockboxOrder(order) then
 		return completed, total
 	end
 
@@ -961,11 +1056,67 @@ local function GetDisenchantItemDisplayText(item)
 	return "Unknown item"
 end
 
+local function CanUpdateSecureAttributes()
+	return not (type(InCombatLockdown) == "function" and InCombatLockdown())
+end
+
+local function SetSecureButtonAttribute(button, key, value)
+	if button and button.SetAttribute and CanUpdateSecureAttributes() then
+		button:SetAttribute(key, value)
+	end
+end
+
+local function ClearDisenchantButton(button)
+	if not button then
+		return
+	end
+
+	button.ActionKind = nil
+	button.OrderId = nil
+	button.ItemToken = nil
+	button.Bag = nil
+	button.Slot = nil
+	SetSecureButtonAttribute(button, "type", nil)
+	SetSecureButtonAttribute(button, "spell", nil)
+	SetSecureButtonAttribute(button, "target-bag", nil)
+	SetSecureButtonAttribute(button, "target-slot", nil)
+	if button.Hide then
+		button:Hide()
+	end
+end
+
+local function ConfigureDisenchantButton(button, orderId, item)
+	if not button or not item then
+		return
+	end
+
+	button.ActionKind = "disenchant"
+	button.OrderId = orderId
+	button.ItemToken = item.Token
+	button.Bag = item.Bag
+	button.Slot = item.Slot
+	if button.SetText then
+		button:SetText("DE")
+	end
+	SetSecureButtonAttribute(button, "type", "spell")
+	SetSecureButtonAttribute(button, "spell", (EC and EC.GetDisenchantSpellName and EC.GetDisenchantSpellName()) or "Disenchant")
+	SetSecureButtonAttribute(button, "target-bag", tonumber(item.Bag))
+	SetSecureButtonAttribute(button, "target-slot", tonumber(item.Slot))
+	if button.RegisterForClicks then
+		button:RegisterForClicks("AnyUp")
+	end
+	if button.Show then
+		button:Show()
+	end
+end
+
 local function EnsureOrderFields(order)
 	local nextSourceItemToken = 1
 	local normalizedReturnMaterials = {}
 
-	order.Kind = order.Kind == "disenchant" and "disenchant" or "enchant"
+	if order.Kind ~= "disenchant" and order.Kind ~= "lockbox" then
+		order.Kind = "enchant"
+	end
 	order.Recipes = order.Recipes or {}
 	order.MaterialCounts = order.MaterialCounts or {}
 	order.MaterialState = order.MaterialState or {}
@@ -1023,6 +1174,9 @@ local function EnsureOrderFields(order)
 		if order.SourceItems[index].Token >= nextSourceItemToken then
 			nextSourceItemToken = order.SourceItems[index].Token + 1
 		end
+	end
+	if PruneLegacyUntrackedDuplicateSourceItems(order) then
+		order.UpdatedAt = TimestampText()
 	end
 	order.NextSourceItemToken = math.max(nextSourceItemToken, math.floor(tonumber(order.NextSourceItemToken) or 1))
 
@@ -1342,7 +1496,7 @@ local function SyncGroupedOrdersInternal(state)
 	local changed = false
 	for index = #state.Orders, 1, -1 do
 		local order = state.Orders[index]
-		if not IsDisenchantOrder(order) and order.AlreadyGrouped then
+		if not IsMailboxItemOrder(order) and order.AlreadyGrouped then
 			if IsCustomerInCurrentGroup(order.Customer) then
 				if ResetGroupedState(order) then
 					WorkbenchDebug("cleared grouped queue flag for", order.Customer, "(now in group)")
@@ -1373,7 +1527,7 @@ local function SyncDeclinedInviteOrders(state)
 
 	for index = #state.Orders, 1, -1 do
 		local order = state.Orders[index]
-		if not IsDisenchantOrder(order) and order.InviteDeclined then
+		if not IsMailboxItemOrder(order) and order.InviteDeclined then
 			if removalSeconds <= 0 then
 				if ResetInviteDeclinedState(order) then
 					changed = true
@@ -1863,6 +2017,16 @@ local function OrderSummary(order)
 		end
 		return string.format("%s + %d more", GetDisenchantItemDisplayText(order.SourceItems[1]), itemCount - 1)
 	end
+	if IsLockboxOrder(order) then
+		local completed, total = GetLockboxProgress(order)
+		if total == 0 then
+			return "Waiting for mailbox lockboxes"
+		end
+		if completed == total then
+			return string.format("%d lockbox%s unlocked", total, total == 1 and "" or "es")
+		end
+		return string.format("%d lockbox%s to unlock", total - completed, (total - completed) == 1 and "" or "es")
+	end
 
 	local recipeCount = #(order.Recipes or {})
 	if recipeCount == 0 then
@@ -1985,7 +2149,7 @@ local function UpdateGroupedCustomerSnapshot(state)
 
 	for _, order in ipairs(state.Orders or {}) do
 		local _, fullName = NormalizeCustomerName(order and order.Customer)
-		if not IsDisenchantOrder(order) and fullName ~= "" and IsCustomerInCurrentGroup(order.Customer) then
+		if not IsMailboxItemOrder(order) and fullName ~= "" and IsCustomerInCurrentGroup(order.Customer) then
 			currentSnapshot[fullName] = true
 			if previousSnapshot[fullName] ~= true then
 				joinedCount = joinedCount + 1
@@ -2029,7 +2193,7 @@ end
 function Workbench.SelectOrder(orderId)
 	SetSelectedOrder(orderId)
 	local order = Workbench.GetSelectedOrder()
-	if order and order.Kind == "disenchant" and EC and EC.SyncDisenchantInventoryTracking then
+	if order and IsMailboxItemOrder(order) and EC and EC.SyncDisenchantInventoryTracking then
 		EC.SyncDisenchantInventoryTracking()
 		order = Workbench.GetSelectedOrder()
 	end
@@ -2153,7 +2317,7 @@ function Workbench.GetOrderByCustomer(customerName)
 	for _, order in ipairs(Workbench.EnsureState().Orders) do
 		local orderShort, orderFull = NormalizeCustomerName(order.Customer)
 		if targetFull == orderFull or targetFull == orderShort or targetShort == orderFull or targetShort == orderShort then
-			if not IsDisenchantOrder(order) then
+			if not IsMailboxItemOrder(order) then
 				return order
 			end
 		end
@@ -2180,6 +2344,24 @@ function Workbench.GetDisenchantOrderByCustomer(customerName)
 	return nil
 end
 
+function Workbench.GetLockboxOrderByCustomer(customerName)
+	local targetShort, targetFull = NormalizeCustomerName(customerName)
+	if targetShort == "" then
+		return nil
+	end
+
+	for _, order in ipairs(Workbench.EnsureState().Orders) do
+		local orderShort, orderFull = NormalizeCustomerName(order.Customer)
+		if IsLockboxOrder(order)
+			and (targetFull == orderFull or targetFull == orderShort or targetShort == orderFull or targetShort == orderShort)
+		then
+			return order
+		end
+	end
+
+	return nil
+end
+
 function Workbench.GetDisenchantItems(order)
 	order = order or Workbench.GetSelectedOrder()
 	if not IsDisenchantOrder(order) then
@@ -2193,11 +2375,17 @@ function Workbench.GetDisenchantProgress(order)
 	return GetDisenchantProgress(order)
 end
 
+function Workbench.GetLockboxProgress(order)
+	order = order or Workbench.GetSelectedOrder()
+	return GetLockboxProgress(order)
+end
+
 function Workbench.AddDisenchantMailItem(customer, itemData)
 	local state = Workbench.EnsureState()
 	local order
 	local isNewOrder = false
 	local sourceItem
+	local lootKey
 
 	if not customer or customer == "" or type(itemData) ~= "table" then
 		return nil
@@ -2221,10 +2409,19 @@ function Workbench.AddDisenchantMailItem(customer, itemData)
 		isNewOrder = true
 	end
 
+	lootKey = TrimText(itemData.LootKey)
+	sourceItem = FindSourceItemByLootKey(order, lootKey)
+	if sourceItem then
+		order.UpdatedAt = TimestampText()
+		Workbench.Refresh()
+		return order, sourceItem
+	end
+
 	sourceItem = EnsureDisenchantItemFields({
 		Token = order.NextSourceItemToken,
 		Name = itemData.Name,
 		Link = itemData.Link,
+		LootKey = lootKey,
 		ItemId = itemData.ItemId,
 		Quality = itemData.Quality,
 		MailSubject = itemData.MailSubject,
@@ -2254,6 +2451,78 @@ function Workbench.AddDisenchantMailItem(customer, itemData)
 	return order, sourceItem
 end
 
+function Workbench.AddLockboxMailItem(customer, itemData)
+	local state = Workbench.EnsureState()
+	local order
+	local isNewOrder = false
+	local sourceItem
+	local lootKey
+
+	if not customer or customer == "" or type(itemData) ~= "table" then
+		return nil
+	end
+
+	for _, existing in ipairs(state.Orders) do
+		if existing.Kind == "lockbox" and existing.Customer == customer then
+			order = EnsureOrderFields(existing)
+			break
+		end
+	end
+
+	if not order then
+		order = EnsureOrderFields({
+			Id = state.NextOrderId,
+			Customer = customer,
+			Kind = "lockbox",
+		})
+		state.NextOrderId = state.NextOrderId + 1
+		state.Orders[#state.Orders + 1] = order
+		isNewOrder = true
+	end
+
+	lootKey = TrimText(itemData.LootKey)
+	sourceItem = FindSourceItemByLootKey(order, lootKey)
+	if sourceItem then
+		order.UpdatedAt = TimestampText()
+		Workbench.Refresh()
+		return order, sourceItem
+	end
+
+	sourceItem = EnsureDisenchantItemFields({
+		Token = order.NextSourceItemToken,
+		Name = itemData.Name,
+		Link = itemData.Link,
+		LootKey = lootKey,
+		ItemId = itemData.ItemId,
+		Quality = itemData.Quality,
+		MailSubject = itemData.MailSubject,
+		Status = "queued",
+		CreatedAt = TimestampText(),
+		UpdatedAt = TimestampText(),
+		IsLocked = itemData.IsLocked,
+	})
+	order.NextSourceItemToken = sourceItem.Token + 1
+	order.SourceItems[#order.SourceItems + 1] = sourceItem
+	order.Message = TrimText(itemData.MailSubject or itemData.Message or order.Message)
+	order.UpdatedAt = TimestampText()
+
+	if not state.SelectedOrderId then
+		state.SelectedOrderId = order.Id
+	end
+
+	if isNewOrder then
+		WorkbenchDebug("queued mailbox lockbox order for", customer, "(" .. tostring(#order.SourceItems) .. " items)")
+		if not IsPartyJoinSoundModeEnabled() and PlayQueueAlertSound() then
+			WorkbenchDebug("played queue alert for", customer)
+		end
+	else
+		WorkbenchDebug("updated mailbox lockbox order for", customer, "(" .. tostring(#order.SourceItems) .. " items)")
+	end
+
+	Workbench.Refresh()
+	return order, sourceItem
+end
+
 function Workbench.SetDisenchantItemLocation(orderId, itemToken, bag, slot)
 	local order = Workbench.GetOrderById(orderId)
 	local sourceItem
@@ -2275,6 +2544,34 @@ function Workbench.SetDisenchantItemLocation(orderId, itemToken, bag, slot)
 
 	sourceItem.Bag = bag
 	sourceItem.Slot = slot
+	sourceItem.UpdatedAt = TimestampText()
+	order.UpdatedAt = TimestampText()
+	return true
+end
+
+function Workbench.SetLockboxItemLocation(orderId, itemToken, bag, slot, isLocked)
+	local order = Workbench.GetOrderById(orderId)
+	local sourceItem
+	local normalizedLocked = isLocked ~= nil and (isLocked and true or false) or nil
+
+	if not IsLockboxOrder(order) then
+		return false
+	end
+
+	sourceItem = FindSourceItemByToken(order, itemToken)
+	if not sourceItem then
+		return false
+	end
+
+	bag = tonumber(bag)
+	slot = tonumber(slot)
+	if sourceItem.Bag == bag and sourceItem.Slot == slot and sourceItem.IsLocked == normalizedLocked then
+		return false
+	end
+
+	sourceItem.Bag = bag
+	sourceItem.Slot = slot
+	sourceItem.IsLocked = normalizedLocked
 	sourceItem.UpdatedAt = TimestampText()
 	order.UpdatedAt = TimestampText()
 	return true
@@ -2354,13 +2651,62 @@ function Workbench.MarkDisenchantItemProcessed(orderId, itemToken, materialMap)
 	return changed
 end
 
-function Workbench.PrepareReturnMail(orderId)
+function Workbench.MarkLockboxItemUnlocked(orderId, itemToken, bag, slot)
 	local order = Workbench.GetOrderById(orderId)
-	if not IsDisenchantOrder(order) then
+	local sourceItem
+	local changed = false
+
+	if not IsLockboxOrder(order) then
 		return false
 	end
 
-	if EC and EC.PrepareDisenchantReturnMail then
+	sourceItem = FindSourceItemByToken(order, itemToken)
+	if not sourceItem then
+		return false
+	end
+
+	bag = tonumber(bag)
+	slot = tonumber(slot)
+	if sourceItem.Status ~= "done" then
+		sourceItem.Status = "done"
+		changed = true
+	end
+	if sourceItem.Bag ~= bag or sourceItem.Slot ~= slot or sourceItem.IsLocked ~= false then
+		sourceItem.Bag = bag
+		sourceItem.Slot = slot
+		sourceItem.IsLocked = false
+		changed = true
+	end
+
+	if changed then
+		sourceItem.UpdatedAt = TimestampText()
+		order.UpdatedAt = TimestampText()
+		Workbench.Refresh()
+	end
+
+	return changed
+end
+
+function Workbench.PrepareLockboxReturnMail(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if not IsLockboxOrder(order) then
+		return false
+	end
+
+	if EC and EC.PrepareLockboxReturnMail then
+		return EC.PrepareLockboxReturnMail(order.Id)
+	end
+
+	return false
+end
+
+function Workbench.PrepareReturnMail(orderId)
+	local order = Workbench.GetOrderById(orderId)
+	if IsLockboxOrder(order) then
+		return Workbench.PrepareLockboxReturnMail(orderId)
+	end
+
+	if IsDisenchantOrder(order) and EC and EC.PrepareDisenchantReturnMail then
 		return EC.PrepareDisenchantReturnMail(order.Id)
 	end
 
@@ -2975,6 +3321,9 @@ function Workbench.GetMaterialSnapshot(order)
 	if IsDisenchantOrder(order) then
 		return GetDisenchantMaterialSnapshot(order), {}
 	end
+	if IsLockboxOrder(order) then
+		return {}, {}
+	end
 
 	local materials = {}
 	local byKey = {}
@@ -3039,6 +3388,9 @@ function Workbench.GetMaterialProgress(order)
 	if IsDisenchantOrder(order) then
 		return GetDisenchantProgress(order)
 	end
+	if IsLockboxOrder(order) then
+		return GetLockboxProgress(order)
+	end
 
 	for _, material in ipairs(materials) do
 		if GetRecordedMaterialCount(order, material, GetRequiredMaterialCount(material)) >= GetRequiredMaterialCount(material) then
@@ -3060,6 +3412,9 @@ function Workbench.GetRecipeVerificationProgress(order)
 
 	if IsDisenchantOrder(order) then
 		return GetDisenchantProgress(order)
+	end
+	if IsLockboxOrder(order) then
+		return GetLockboxProgress(order)
 	end
 
 	total = #(order.Recipes or {})
@@ -3180,7 +3535,7 @@ function Workbench.GetGroupedCustomerCount()
 
 	for _, order in ipairs(Workbench.EnsureState().Orders) do
 		local _, fullName = NormalizeCustomerName(order and order.Customer)
-		if not IsDisenchantOrder(order) and fullName ~= "" and not seen[fullName] and IsCustomerInCurrentGroup(order.Customer) then
+		if not IsMailboxItemOrder(order) and fullName ~= "" and not seen[fullName] and IsCustomerInCurrentGroup(order.Customer) then
 			seen[fullName] = true
 			count = count + 1
 		end
@@ -3579,6 +3934,14 @@ function Workbench.CompleteOrder(orderId)
 		return true
 	end
 
+	if IsLockboxOrder(order) then
+		local completedItems, totalItems = GetLockboxProgress(order)
+		state.CompletedOrders = (tonumber(state.CompletedOrders) or 0) + 1
+		WorkbenchDebug("completed mailbox lockbox order for", order.Customer, "(" .. tostring(completedItems) .. "/" .. tostring(totalItems) .. " unlocked)")
+		Workbench.RemoveOrder(orderId)
+		return true
+	end
+
 	isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
 	if recipeTotal == 0 or not isVerified then
 		WorkbenchDebug("refused to complete unverified order for", order.Customer)
@@ -3646,7 +4009,7 @@ end
 
 function Workbench.InviteOrder(orderId)
 	local order = Workbench.GetOrderById(orderId)
-	if not order or IsDisenchantOrder(order) then
+	if not order or IsMailboxItemOrder(order) then
 		return false
 	end
 
@@ -3665,7 +4028,7 @@ function Workbench.WhisperOrder(orderId)
 		return false
 	end
 
-	if IsDisenchantOrder(order) then
+	if IsMailboxItemOrder(order) then
 		return Workbench.PrepareReturnMail(orderId)
 	end
 
@@ -3684,7 +4047,7 @@ end
 
 function Workbench.WhisperMissingMats(orderId)
 	local order = Workbench.GetOrderById(orderId)
-	if not order or not order.Customer or IsDisenchantOrder(order) then
+	if not order or not order.Customer or IsMailboxItemOrder(order) then
 		return false
 	end
 
@@ -4363,6 +4726,18 @@ local function CreateRecipeLine(parent, index)
 			Workbench.CastRecipe(self.RecipeName)
 		end
 	end)
+
+	line.DisenchantButton = CreateFrame("Button", nil, line, "SecureActionButtonTemplate,UIPanelButtonTemplate")
+	line.DisenchantButton:SetSize(56, 20)
+	line.DisenchantButton:SetPoint("RIGHT", line.StatusCheck, "LEFT", -6, 0)
+	line.DisenchantButton:SetText("DE")
+	ApplyElvUISkin(line.DisenchantButton, "button")
+	line.DisenchantButton:SetScript("PreClick", function(self)
+		if self.OrderId and self.ItemToken and EC and EC.PrimeTrackedDisenchantItem then
+			EC.PrimeTrackedDisenchantItem(self.OrderId, self.ItemToken, self.Bag, self.Slot)
+		end
+	end)
+	line.DisenchantButton:Hide()
 	line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
 	line.CastButton:Show()
 
@@ -4836,7 +5211,9 @@ function Workbench.Refresh()
 		local verifiedCount, recipeTotal = Workbench.GetRecipeVerificationProgress(order)
 		local isInCurrentGroup = IsCustomerInCurrentGroup(order.Customer)
 		local isDisenchant = IsDisenchantOrder(order)
-		local isGroupedQueueHold = not isDisenchant and order.AlreadyGrouped and not isInCurrentGroup
+		local isLockbox = IsLockboxOrder(order)
+		local isMailboxOrder = isDisenchant or isLockbox
+		local isGroupedQueueHold = not isMailboxOrder and order.AlreadyGrouped and not isInCurrentGroup
 		local readyText
 		if isDisenchant then
 			if total > 0 and checked == total then
@@ -4845,6 +5222,14 @@ function Workbench.Refresh()
 				readyText = string.format("%d/%d disenchanted", checked, total)
 			else
 				readyText = "Waiting for mailbox items"
+			end
+		elseif isLockbox then
+			if total > 0 and checked == total then
+				readyText = "|cFF74D06CReady to mail|r"
+			elseif total > 0 then
+				readyText = string.format("%d/%d unlocked", checked, total)
+			else
+				readyText = "Waiting for lockboxes"
 			end
 		elseif recipeTotal > 0 and verifiedCount == recipeTotal then
 			readyText = "|cFF74D06CVerified|r"
@@ -4863,16 +5248,23 @@ function Workbench.Refresh()
 		row.InviteButton.OrderId = order.Id
 		row.InviteButton.TooltipText = "Invite to group"
 		row.WhisperButton.OrderId = order.Id
-		row.WhisperButton.TooltipText = isDisenchant and "Prepare return mail" or "Whisper customer"
+		row.WhisperButton.TooltipText = isMailboxOrder and "Prepare return mail" or "Whisper customer"
 		row.MatsButton.OrderId = order.Id
 		row.MatsButton.TooltipText = "Whisper missing materials"
 		row.NameText:SetText(order.Customer or "Unknown")
 		row.MetaText:SetText(string.format("Queued %s  •  Updated %s  •  %s", order.CreatedAt or "--:--", order.UpdatedAt or "--:--", readyText))
 		row.SummaryText:SetText(OrderSummary(order))
-		SetRegionShown(row.PartyCheck, not isDisenchant and isInCurrentGroup)
+		SetRegionShown(row.PartyCheck, not isMailboxOrder and isInCurrentGroup)
 		if isDisenchant then
 			row.TypeIcon:SetTexture(DISENCHANT_ORDER_ICON_TEXTURE)
 			row.TypeIcon:SetVertexColor(0.94, 0.78, 0.2, 1)
+			row.TypeIcon:Show()
+			row.InviteButton:Hide()
+			row.MatsButton:Hide()
+			row.WhisperButton:Show()
+		elseif isLockbox then
+			row.TypeIcon:SetTexture(LOCKBOX_ORDER_ICON_TEXTURE)
+			row.TypeIcon:SetVertexColor(0.8, 0.9, 1, 1)
 			row.TypeIcon:Show()
 			row.InviteButton:Hide()
 			row.MatsButton:Hide()
@@ -4887,10 +5279,10 @@ function Workbench.Refresh()
 
 		local bgR, bgG, bgB, bgA
 		local borderR, borderG, borderB, borderA
-		if isDisenchant and checked > 0 and checked == total and state.SelectedOrderId == order.Id then
+		if isMailboxOrder and checked > 0 and checked == total and state.SelectedOrderId == order.Id then
 			bgR, bgG, bgB, bgA = 0.12, 0.2, 0.12, 0.98
 			borderR, borderG, borderB, borderA = 0.34, 0.78, 0.34, 1
-		elseif isDisenchant and checked > 0 and checked == total then
+		elseif isMailboxOrder and checked > 0 and checked == total then
 			bgR, bgG, bgB, bgA = 0.09, 0.16, 0.09, 0.95
 			borderR, borderG, borderB, borderA = 0.28, 0.62, 0.28, 1
 		elseif recipeTotal > 0 and verifiedCount == recipeTotal and state.SelectedOrderId == order.Id then
@@ -4962,12 +5354,147 @@ function Workbench.Refresh()
 	frame.Detail.Title:SetText(order.Customer or "Unknown")
 
 	local isDisenchant = IsDisenchantOrder(order)
-	SetRegionShown(frame.Detail.GroupCheck, not isDisenchant and IsCustomerInCurrentGroup(order.Customer))
-	SetRegionShown(frame.Detail.GroupText, not isDisenchant and IsCustomerInCurrentGroup(order.Customer))
+	local isLockbox = IsLockboxOrder(order)
+	local isMailboxOrder = isDisenchant or isLockbox
+	SetRegionShown(frame.Detail.GroupCheck, not isMailboxOrder and IsCustomerInCurrentGroup(order.Customer))
+	SetRegionShown(frame.Detail.GroupText, not isMailboxOrder and IsCustomerInCurrentGroup(order.Customer))
 
 	local detailContentWidth = GetDetailContentWidth(frame)
 	local recipeLineCount = 0
 	local materialLineCount = 0
+
+	if isLockbox then
+		local completedItems, totalItems = GetLockboxProgress(order)
+		local trackedBagItems = 0
+
+		frame.Detail.Meta:SetText(string.format(
+			"Queued %s  •  Updated %s  •  %d/%d unlocked",
+			order.CreatedAt or "--:--",
+			order.UpdatedAt or "--:--",
+			completedItems,
+			totalItems
+		))
+		frame.Detail.Message:SetText("Mailbox lockbox job: " .. (order.Message ~= "" and order.Message or "Queued from mailed lockboxes."))
+		frame.Detail.TradeHint:Hide()
+
+		frame.Detail.ActionRow:ClearAllPoints()
+		frame.Detail.ActionRow:SetPoint("TOPLEFT", frame.Detail.Message, "BOTTOMLEFT", 0, -12)
+		frame.Detail.ActionRow:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+		frame.Detail.ActionRow:Show()
+
+		frame.Detail.ReturnMailButton.OrderId = order.Id
+		frame.Detail.ReturnMailButton:ClearAllPoints()
+		frame.Detail.ReturnMailButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+		frame.Detail.ReturnMailButton:Show()
+
+		frame.Detail.CompleteButton.OrderId = order.Id
+		frame.Detail.CompleteButton:SetText("Done")
+		frame.Detail.CompleteButton:ClearAllPoints()
+		frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ReturnMailButton, "LEFT", -6, 0)
+		frame.Detail.CompleteButton:Show()
+
+		frame.Detail.TipStatus:ClearAllPoints()
+		frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.CompleteButton, "LEFT", -8, 0)
+		for _, item in ipairs(order.SourceItems or {}) do
+			if item.Status ~= "done" and item.Bag ~= nil and item.Slot ~= nil then
+				trackedBagItems = trackedBagItems + 1
+			end
+		end
+		if totalItems > 0 and completedItems == totalItems then
+			frame.Detail.TipStatus:SetText("All lockboxes are unlocked. Prep return mail when you're ready.")
+		elseif completedItems > 0 then
+			frame.Detail.TipStatus:SetText(string.format("%d/%d lockboxes are unlocked.", completedItems, totalItems))
+		elseif trackedBagItems > 0 then
+			frame.Detail.TipStatus:SetText("Tracked bag lockboxes flip to a green check after they are unlocked.")
+		else
+			frame.Detail.TipStatus:SetText("Looted lockboxes will stack here until they are unlocked.")
+		end
+		frame.Detail.TipStatus:Show()
+
+		frame.Detail.RecipesHeader:SetText("Lockboxes")
+		frame.Detail.RecipesHeader:ClearAllPoints()
+		frame.Detail.RecipesHeader:SetPoint("TOPLEFT", frame.Detail.ActionRow, "BOTTOMLEFT", 0, -12)
+		frame.Detail.RecipesHeader:Show()
+
+		for index, item in ipairs(order.SourceItems or {}) do
+			if not frame.Detail.RecipeLines[index] then
+				frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail.Content, index)
+			end
+
+			local line = frame.Detail.RecipeLines[index]
+			local isDone = item.Status == "done"
+			local itemText = GetDisenchantItemDisplayText(item)
+			local isTrackedInBag = item.Bag ~= nil and item.Slot ~= nil
+
+			line.NameText:ClearAllPoints()
+			line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
+			line.NameText:SetText((isDone and "|cFF74D06C" or "") .. itemText .. (isDone and "|r" or ""))
+			line.CastButton.ActionKind = nil
+			line.CastButton.RecipeName = nil
+			line.CastButton.OrderId = nil
+			line.CastButton.ItemToken = nil
+			line.CastButton:Hide()
+			ClearDisenchantButton(line.DisenchantButton)
+			if isDone then
+				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.StatusCheck:Show()
+				line.StatusText:Hide()
+			elseif isTrackedInBag then
+				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.StatusCheck:Hide()
+				line.StatusText:SetText("B")
+				line.StatusText:Show()
+			else
+				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.StatusCheck:Hide()
+				line.StatusText:SetText("?")
+				line.StatusText:Show()
+			end
+			line:ClearAllPoints()
+			if index == 1 then
+				line:SetPoint("TOPLEFT", frame.Detail.RecipesHeader, "BOTTOMLEFT", 0, -6)
+			else
+				line:SetPoint("TOPLEFT", frame.Detail.RecipeLines[index - 1], "BOTTOMLEFT", 0, -4)
+			end
+			line:SetWidth(detailContentWidth)
+			line:Show()
+		end
+		recipeLineCount = #(order.SourceItems or {})
+		for index = recipeLineCount + 1, #frame.Detail.RecipeLines do
+			frame.Detail.RecipeLines[index]:Hide()
+		end
+
+		frame.Detail.MatsHeader:SetText("Return")
+		frame.Detail.MatsHeader:ClearAllPoints()
+		frame.Detail.MatsHeader:SetPoint(
+			"TOPLEFT",
+			recipeLineCount > 0 and frame.Detail.RecipeLines[recipeLineCount] or frame.Detail.RecipesHeader,
+			"BOTTOMLEFT",
+			0,
+			-14
+		)
+		frame.Detail.MatsHeader:Show()
+		frame.Detail.AllMatsButton:Hide()
+		frame.Detail.UseTradeButton:Hide()
+		frame.Detail.ClearMatsButton:Hide()
+		frame.Detail.ReadyText:ClearAllPoints()
+		frame.Detail.ReadyText:SetPoint("TOPLEFT", frame.Detail.MatsHeader, "BOTTOMLEFT", 0, -4)
+		frame.Detail.ReadyText:SetPoint("RIGHT", frame.Detail.Content, "RIGHT", 0, 0)
+		if totalItems > 0 and completedItems == totalItems then
+			frame.Detail.ReadyText:SetText("|cFF74D06CUse Mail Return to prefill the send-mail window and attach unlocked lockboxes.|r")
+		else
+			frame.Detail.ReadyText:SetText("|cFFFFD26AUnlock the tracked lockboxes in your bags; Enchanter will mark each one complete when the bag slot reports it is unlocked.|r")
+		end
+		frame.Detail.ReadyText:Show()
+
+		for index, line in ipairs(frame.Detail.MaterialLines) do
+			line:Hide()
+		end
+
+		UpdateDetailContentHeight(frame, recipeLineCount, 0)
+		return
+	end
 
 	if isDisenchant then
 		local completedItems, totalItems = GetDisenchantProgress(order)
@@ -5047,18 +5574,16 @@ function Workbench.Refresh()
 			line.CastButton.RecipeName = nil
 			line.CastButton.OrderId = nil
 			line.CastButton.ItemToken = nil
+			ClearDisenchantButton(line.DisenchantButton)
 			if isDone then
 				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
 				line.CastButton:Hide()
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
 			elseif isTrackedInBag then
-				line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
-				line.CastButton.ActionKind = "disenchant"
-				line.CastButton.OrderId = order.Id
-				line.CastButton.ItemToken = item.Token
-				line.CastButton:SetText("DE")
-				line.CastButton:Show()
+				line.NameText:SetPoint("RIGHT", line.DisenchantButton, "LEFT", -8, 0)
+				line.CastButton:Hide()
+				ConfigureDisenchantButton(line.DisenchantButton, order.Id, item)
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("B")
 				line.StatusText:Show()
@@ -5192,8 +5717,12 @@ function Workbench.Refresh()
 		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName, displayedRecipeOccurrences[recipeName])
 		line.NameText:ClearAllPoints()
 		line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
+		ClearDisenchantButton(line.DisenchantButton)
 		line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
 		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
+		line.CastButton.ActionKind = nil
+		line.CastButton.OrderId = nil
+		line.CastButton.ItemToken = nil
 		line.CastButton.RecipeName = recipeName
 		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line.CastButton:Show()
@@ -5329,7 +5858,7 @@ function Workbench.Show()
 	ApplyFramePosition(frame)
 	frame:Show()
 	WorkbenchDebug("shown")
-	if Workbench.GetSelectedOrder() and Workbench.GetSelectedOrder().Kind == "disenchant" and EC and EC.SyncDisenchantInventoryTracking then
+	if Workbench.GetSelectedOrder() and IsMailboxItemOrder(Workbench.GetSelectedOrder()) and EC and EC.SyncDisenchantInventoryTracking then
 		EC.SyncDisenchantInventoryTracking()
 	end
 	Workbench.Refresh()
