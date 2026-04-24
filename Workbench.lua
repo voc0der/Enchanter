@@ -4729,7 +4729,7 @@ local function CreateRecipeLine(parent, index)
 
 	line.DisenchantButton = CreateFrame("Button", nil, line, "SecureActionButtonTemplate,UIPanelButtonTemplate")
 	line.DisenchantButton:SetSize(56, 20)
-	line.DisenchantButton:SetPoint("RIGHT", line.StatusCheck, "LEFT", -6, 0)
+	line.DisenchantButton:SetPoint("RIGHT", line, "RIGHT", -24, 0)
 	line.DisenchantButton:SetText("DE")
 	ApplyElvUISkin(line.DisenchantButton, "button")
 	line.DisenchantButton:SetScript("PreClick", function(self)

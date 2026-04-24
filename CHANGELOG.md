@@ -1,3 +1,8 @@
+## [2.1.75] - 2026-04-24
+
+### Fixed
+- Recipe rows now anchor the secure mailbox disenchant button to the row frame instead of a texture region, preventing protected `SetPoint` Lua errors when the workbench refreshes after invites or new orders
+
 ## [2.1.74] - 2026-04-24
 
 ### Added
