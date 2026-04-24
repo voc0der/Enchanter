@@ -275,6 +275,7 @@ local function setup_env(opts)
             width = 0,
             height = 0,
             scripts = {},
+            attributes = {},
             frame_level = parent and parent.frame_level and (parent.frame_level + 1) or 1,
         }
 
@@ -363,6 +364,8 @@ local function setup_env(opts)
         function frame:GetNumber() return tonumber(self.text) or 0 end
         function frame:SetChecked(value) self.checked = value and true or false end
         function frame:GetChecked() return self.checked end
+        function frame:SetAttribute(key, value) self.attributes[key] = value end
+        function frame:GetAttribute(key) return self.attributes[key] end
         function frame:Enable() self.enabled = true end
         function frame:Disable() self.enabled = false end
         function frame:IsEnabled() return self.enabled ~= false end
@@ -1116,6 +1119,7 @@ local function setup_env(opts)
                 itemID = item.item_id or normalize_item_id(item.link),
                 quality = item.quality,
                 hyperlink = item.link,
+                isLocked = item.is_locked and true or false,
             }
         end,
         GetContainerItemLink = function(bag, slot)
@@ -3335,6 +3339,144 @@ local function test_mailbox_loot_ignores_non_disenchantable_trade_goods()
     assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "non-disenchantable trade goods should not create mailbox disenchant work")
 end
 
+local function test_mailbox_lockboxes_queue_as_lockbox_orders_not_disenchant()
+    local iron_lockbox = {
+        item_id = 1101,
+        name = "Iron Lockbox",
+        link = "|cff1eff00|Hitem:1101::::::::|h[Iron Lockbox]|h|r",
+        quality = 2,
+        item_type = "Container",
+        item_sub_type = "Junk",
+        equip_loc = "",
+        class_id = 15,
+        subclass_id = 0,
+        count = 1,
+        is_locked = true,
+    }
+    local khorium_lockbox = {
+        item_id = 1102,
+        name = "Khorium Lockbox",
+        link = "|cff1eff00|Hitem:1102::::::::|h[Khorium Lockbox]|h|r",
+        quality = 2,
+        item_type = "Container",
+        item_sub_type = "Junk",
+        equip_loc = "",
+        class_id = 15,
+        subclass_id = 0,
+        count = 1,
+        is_locked = true,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1101] = iron_lockbox,
+            [1102] = khorium_lockbox,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "please unlock",
+                attachments = { iron_lockbox },
+            },
+            [2] = {
+                sender = "Alice",
+                subject = "one more lock",
+                attachments = { khorium_lockbox },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = iron_lockbox,
+                [2] = khorium_lockbox,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "lockboxes should enter the mailbox work queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+    assert_true(addon.HandlePotentialMailboxLoot(2, 1), "more lockboxes from the same sender should keep spooling")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local lockbox_order = addon.Workbench.GetLockboxOrderByCustomer("Alice")
+    assert_not_nil(lockbox_order, "lockboxes should create a lockbox work order")
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "lockboxes should not create a disenchant order")
+    assert_equal(lockbox_order.Kind, "lockbox", "lockbox mailbox work should use its own order kind")
+    assert_equal(#lockbox_order.SourceItems, 2, "lockboxes from the same sender should spool into one lockbox order")
+    assert_equal(lockbox_order.SourceItems[1].Bag, 0, "tracked lockboxes should remember their bag")
+    assert_equal(lockbox_order.SourceItems[1].Slot, 1, "tracked lockboxes should remember their slot")
+
+    addon.Workbench.Show()
+    addon.Workbench.SelectOrder(lockbox_order.Id)
+
+    local frame = addon.Workbench.Frame
+    assert_equal(frame.OrderRows[1].SummaryText.text, "2 lockboxes to unlock", "queue summary should describe lockbox work separately")
+    assert_equal(frame.Detail.RecipesHeader.text, "Lockboxes", "detail panel should label lockbox work separately")
+end
+
+local function test_mailbox_lockbox_tracking_marks_unlocked_and_prepares_return_mail()
+    local eternium_lockbox = {
+        item_id = 1103,
+        name = "Eternium Lockbox",
+        link = "|cff1eff00|Hitem:1103::::::::|h[Eternium Lockbox]|h|r",
+        quality = 2,
+        item_type = "Container",
+        item_sub_type = "Junk",
+        equip_loc = "",
+        class_id = 15,
+        subclass_id = 0,
+        count = 1,
+        is_locked = true,
+    }
+    local unlocked_eternium_lockbox = copy_table(eternium_lockbox)
+    unlocked_eternium_lockbox.is_locked = false
+    local addon, state = setup_env({
+        item_cache = {
+            [1103] = eternium_lockbox,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "unlock this",
+                attachments = { eternium_lockbox },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = eternium_lockbox,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetLockboxOrderByCustomer("Alice")
+    assert_not_nil(order, "lockbox mail should create a lockbox order before tracking progress")
+    assert_equal(select(1, addon.Workbench.GetLockboxProgress(order)), 0, "locked boxes should start incomplete")
+
+    set_bag_item(state, 0, 1, unlocked_eternium_lockbox)
+    state.event_handlers["ITEM_UNLOCKED"]()
+
+    order = addon.Workbench.GetLockboxOrderByCustomer("Alice")
+    assert_equal(order.SourceItems[1].Status, "done", "unlocking a tracked lockbox should mark it done")
+    assert_equal(select(1, addon.Workbench.GetLockboxProgress(order)), 1, "unlocked progress should advance")
+
+    addon.Workbench.PrepareReturnMail(order.Id)
+
+    assert_equal(SendMailNameEditBox.text, "Alice", "preparing lockbox return mail should fill the original sender")
+    assert_equal(SendMailSubjectEditBox.text, "Your unlocked lockboxes", "preparing lockbox return mail should use the lockbox subject")
+    assert_true(string.find(MailEditBox.text, "Unlocked the lockboxes", 1, true) ~= nil, "preparing lockbox return mail should prefill the lockbox body")
+    assert_equal(#state.bag_pickups, 1, "preparing lockbox return mail should attach unlocked boxes from your bags")
+    assert_not_nil(state.send_mail_attachments[1], "preparing lockbox return mail should place the unlocked box in an attachment slot")
+
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    assert_nil(addon.Workbench.GetLockboxOrderByCustomer("Alice"), "successfully sending lockbox return mail should retire the order")
+end
+
 local function test_mailbox_loot_ignores_auction_house_mail()
     local auction_green = {
         item_id = 1004,
@@ -3419,6 +3561,64 @@ local function test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
     assert_equal(addon.Workbench.EnsureState().SelectedOrderId, 2, "selection should move to the remaining work order when the selected auction house order is pruned")
 end
 
+local function test_mailbox_loot_prunes_legacy_untracked_duplicate_source_rows()
+    local addon = setup_env({
+        char_db = {
+            Workbench = {
+                SelectedOrderId = 1,
+                NextOrderId = 2,
+                Orders = {
+                    {
+                        Id = 1,
+                        Customer = "Alice",
+                        Kind = "disenchant",
+                        SourceItems = {
+                            {
+                                Token = 1,
+                                Name = "Lucky Strike Axe",
+                                ItemId = 1006,
+                                Quality = 2,
+                                Status = "queued",
+                                MailSubject = "de these",
+                                CreatedAt = "12:14 PM",
+                                UpdatedAt = "12:14 PM",
+                                Bag = 0,
+                                Slot = 1,
+                            },
+                            {
+                                Token = 2,
+                                Name = "Lucky Strike Axe",
+                                ItemId = 1006,
+                                Quality = 2,
+                                Status = "queued",
+                                MailSubject = "de these",
+                                CreatedAt = "12:14 PM",
+                                UpdatedAt = "12:14 PM",
+                            },
+                            {
+                                Token = 3,
+                                Name = "Sunroc Pants",
+                                ItemId = 1007,
+                                Quality = 2,
+                                Status = "queued",
+                                MailSubject = "de these",
+                                CreatedAt = "12:14 PM",
+                                UpdatedAt = "12:14 PM",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "saved mailbox disenchant work should remain")
+    assert_equal(#order.SourceItems, 2, "legacy duplicate rows with one tracked copy and one ghost copy should be pruned")
+    assert_equal(order.SourceItems[1].Name, "Lucky Strike Axe", "the tracked source row should be preserved")
+    assert_equal(order.SourceItems[2].Name, "Sunroc Pants", "unrelated source rows should be preserved")
+end
+
 local function test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
     local mailed_green = {
         item_id = 1005,
@@ -3460,6 +3660,77 @@ local function test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
     local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
     assert_not_nil(order, "player-mailed gear should still create a disenchant work order")
     assert_equal(#order.SourceItems, 1, "repeat callbacks for the same attachment should only create one source item")
+end
+
+local function test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
+    local mailed_green = {
+        item_id = 1005,
+        name = "Mailed Green Gloves",
+        link = "|cff1eff00|Hitem:1005::::::::|h[Mailed Green Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1005] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+    })
+    local original_get_item_info = GetItemInfo
+
+    addon.OnLoad()
+    _G.GetItemInfo = function()
+        return mailed_green.name,
+            nil,
+            mailed_green.quality,
+            0,
+            0,
+            mailed_green.item_type,
+            mailed_green.item_sub_type,
+            1,
+            mailed_green.equip_loc,
+            nil,
+            0,
+            mailed_green.class_id,
+            mailed_green.subclass_id,
+            mailed_green.bind_type
+    end
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "the first take should queue even if the item link has not hydrated")
+    _G.GetItemInfo = original_get_item_info
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "a later callback with a hydrated link should still match the pending attachment")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "player-mailed gear should still create a disenchant work order")
+    assert_equal(#order.SourceItems, 1, "late item-link hydration should not create a duplicate source item")
+    assert_true(order.SourceItems[1].LootKey ~= "", "mailbox source items should remember their stable attachment key")
+
+    addon.Workbench.AddDisenchantMailItem("Alice", {
+        Name = mailed_green.name,
+        Link = mailed_green.link,
+        ItemId = mailed_green.item_id,
+        Quality = mailed_green.quality,
+        MailSubject = "pls de this",
+        LootKey = order.SourceItems[1].LootKey,
+    })
+    assert_equal(#order.SourceItems, 1, "workbench source insertion should also ignore a duplicate attachment key")
 end
 
 local function test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
@@ -3609,12 +3880,20 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 
     local frame = addon.Workbench.Frame
     local line = frame.Detail.RecipeLines[1]
+    local de_button = line.DisenchantButton
 
-    assert_equal(line.CastButton.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
-    assert_true(line.CastButton.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
+    assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
+    assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
+    assert_true(line.CastButton.shown == false, "tracked mailbox items should use the secure disenchant button instead of the normal recipe button")
+    assert_equal(de_button:GetAttribute("type"), "spell", "the mailbox shortcut should use a secure spell action")
+    assert_equal(de_button:GetAttribute("spell"), "Disenchant", "the mailbox shortcut should cast Disenchant securely")
+    assert_equal(de_button:GetAttribute("target-bag"), 0, "the mailbox shortcut should secure-target the tracked bag")
+    assert_equal(de_button:GetAttribute("target-slot"), 1, "the mailbox shortcut should secure-target the tracked slot")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
 
-    line.CastButton.scripts["OnClick"](line.CastButton)
+    de_button.scripts["PreClick"](de_button)
+    CastSpellByName(de_button:GetAttribute("spell"))
+    C_Container.UseContainerItem(de_button:GetAttribute("target-bag"), de_button:GetAttribute("target-slot"))
 
     assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
     assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")
@@ -6559,9 +6838,13 @@ test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
 test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
 test_mailbox_loot_ignores_non_disenchantable_trade_goods()
+test_mailbox_lockboxes_queue_as_lockbox_orders_not_disenchant()
+test_mailbox_lockbox_tracking_marks_unlocked_and_prepares_return_mail()
 test_mailbox_loot_ignores_auction_house_mail()
 test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
+test_mailbox_loot_prunes_legacy_untracked_duplicate_source_rows()
 test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
+test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 test_workbench_debug_output_is_printed()

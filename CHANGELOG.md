@@ -1,3 +1,17 @@
+## [2.1.74] - 2026-04-24
+
+### Added
+- Player-mailed lockboxes now create their own mailbox workbench orders instead of being treated as disenchant work, grouping multiple boxes from the same sender into one queue entry
+- Lockbox rows track bag locations and mark individual boxes complete when the TBC Anniversary container API reports the tracked slot is no longer locked
+- Lockbox return mail can be prefilled from the workbench and auto-attaches tracked unlocked boxes when they are still in their recorded bag slots
+
+## [2.1.73] - 2026-04-24
+
+### Fixed
+- Mailbox disenchant `DE` rows now use Blizzard's secure spell button `target-bag` / `target-slot` flow, so one click can cast Disenchant and target the tracked bag item
+- Mailbox disenchant result tracking is primed before the secure target click consumes the item, keeping return mats tied to the correct source row
+- Mailbox loots now carry a stable attachment key through the pending queue and workbench insert, preventing late item-link hydration or duplicate callbacks from adding a second row for one mailed item
+
 ## [2.1.72] - 2026-04-24
 
 ### Fixed

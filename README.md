@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.72`
+Current version: `2.1.74`
 
 ## What It Does
 
@@ -74,6 +74,7 @@ Current version: `2.1.72`
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
 - Player-mailed BoE greens and blues create mailbox disenchant rows while Auction House item mail is ignored; rows show `DE` once Enchanter has found the item in your bags, and the row flips to a green check automatically when it resolves into return mats.
+- Player-mailed lockboxes create separate mailbox rows, group by sender, and flip to green checks when the tracked bag slot reports the box has been unlocked.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
