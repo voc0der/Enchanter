@@ -1,3 +1,10 @@
+## [2.1.72] - 2026-04-24
+
+### Fixed
+- Enchanter now stays dormant on characters that do not know Enchanting, so mailbox, chat, slash-command, and workbench actions are not registered on non-enchanter alts
+- Learning Enchanting during a session activates the addon from the lightweight profession-change listener without requiring a reload
+- Added profession and legacy skill-line detection coverage so the TBC Anniversary client path and older-client fallback stay guarded
+
 ## [2.1.71] - 2026-04-24
 
 ### Fixed

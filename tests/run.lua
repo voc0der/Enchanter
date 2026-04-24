@@ -65,6 +65,9 @@ local original_os_date = os.date
 
 local function setup_env(opts)
     opts = opts or {}
+    local default_profession_name = opts.enchanting_spell_name or "Enchanting"
+    local default_professions
+    local default_skill_lines
 
     local function normalize_item_id(item_reference)
         local item_id
@@ -84,6 +87,40 @@ local function setup_env(opts)
         end
 
         return nil
+    end
+
+    if opts.professions ~= nil then
+        default_professions = copy_table(opts.professions)
+    elseif opts.is_enchanter == false then
+        default_professions = {
+            {
+                name = "Alchemy",
+                skill_line = 171,
+                skill_line_name = "Alchemy",
+            },
+        }
+    else
+        default_professions = {
+            {
+                name = default_profession_name,
+                skill_line = 333,
+                skill_line_name = default_profession_name,
+            },
+        }
+    end
+
+    if opts.skill_lines ~= nil then
+        default_skill_lines = copy_table(opts.skill_lines)
+    elseif opts.is_enchanter == false then
+        default_skill_lines = {
+            { name = "Professions", header = true, expanded = true },
+            { name = "Alchemy", header = false, rank = 1, max_rank = 75 },
+        }
+    else
+        default_skill_lines = {
+            { name = "Professions", header = true, expanded = true },
+            { name = default_profession_name, header = false, rank = 1, max_rank = 75 },
+        }
     end
 
     local state = {
@@ -121,6 +158,8 @@ local function setup_env(opts)
         frames = {},
         current_time = tonumber(opts.current_time) or 0,
         current_spell_name = opts.current_spell_name,
+        professions = default_professions,
+        skill_lines = default_skill_lines,
         current_mouseover_name = opts.current_mouseover_name or nil,
         current_npc_name = opts.current_npc_name or nil,
         current_party_members = copy_table(opts.current_party_members or {}),
@@ -920,6 +959,59 @@ local function setup_env(opts)
             return opts.use_local_time and true or false
         end
         return false
+    end
+    if opts.omit_get_professions then
+        _G.GetProfessions = nil
+        _G.GetProfessionInfo = nil
+    else
+        _G.GetProfessions = function()
+            local indexes = {}
+            for index, profession in ipairs(state.professions or {}) do
+                if profession ~= nil then
+                    indexes[#indexes + 1] = index
+                end
+            end
+            return table.unpack(indexes)
+        end
+        _G.GetProfessionInfo = function(index)
+            local profession = state.professions and state.professions[tonumber(index) or 0] or nil
+            if not profession then
+                return nil
+            end
+            return profession.name,
+                profession.texture,
+                profession.rank or 1,
+                profession.max_rank or 75,
+                profession.num_spells or 1,
+                profession.spell_offset or 0,
+                profession.skill_line,
+                profession.rank_modifier or 0,
+                profession.specialization_index,
+                profession.specialization_offset,
+                profession.skill_line_name
+        end
+    end
+    if opts.omit_skill_lines then
+        _G.GetNumSkillLines = nil
+        _G.GetSkillLineInfo = nil
+    else
+        _G.GetNumSkillLines = function()
+            return #(state.skill_lines or {})
+        end
+        _G.GetSkillLineInfo = function(index)
+            local skill_line = state.skill_lines and state.skill_lines[tonumber(index) or 0] or nil
+            if not skill_line then
+                return nil
+            end
+            return skill_line.name,
+                skill_line.header and true or false,
+                skill_line.expanded and true or false,
+                skill_line.rank or 1,
+                skill_line.temp_points or 0,
+                skill_line.modifier or 0,
+                skill_line.max_rank or 75,
+                skill_line.abandonable and true or false
+        end
     end
     _G.GetSpellInfo = function(spell)
         if type(opts.spell_info_map) == "table" and opts.spell_info_map[spell] ~= nil then
@@ -3778,6 +3870,89 @@ local function test_trade_events_register_even_when_chat_scanning_is_stopped()
     assert_true(seen["PLAYER_FLAGS_CHANGED"], "player flag changes should be registered so AFK state can auto-pause chat scanning")
 end
 
+local function test_non_enchanter_keeps_addon_actions_dormant()
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
+        equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        is_enchanter = false,
+        item_cache = {
+            [1001] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+    })
+
+    addon.OnLoad()
+
+    assert_true(addon.Initalized == false, "non-enchanter characters should leave Enchanter inactive")
+    assert_true(addon.DormantForNonEnchanter == true, "non-enchanter characters should be marked dormant")
+    assert_nil(state.slash, "non-enchanter characters should not register slash actions")
+    assert_equal(#state.secure_hooks, 0, "non-enchanter characters should not install mailbox or bag hooks")
+    assert_nil(state.event_handlers["MAIL_SHOW"], "non-enchanter characters should not register mailbox actions")
+    assert_nil(state.event_handlers["CHAT_MSG_CHANNEL"], "non-enchanter characters should not register chat scanning")
+    assert_not_nil(state.event_handlers["SKILL_LINES_CHANGED"], "non-enchanter characters should keep only the lightweight profession-change listener")
+    assert_equal(#state.prints, 0, "non-enchanter characters should stay quiet while the addon remains dormant")
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "non-enchanter mailbox loot should not enter the DE queue")
+
+    TakeInboxItem(1, 1)
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "opening mail on a non-enchanter should not create DE work")
+end
+
+local function test_skill_lines_changed_activates_after_learning_enchanting()
+    local addon, state = setup_env({
+        is_enchanter = false,
+    })
+
+    addon.OnLoad()
+    state.professions = {
+        {
+            name = "Enchanting",
+            skill_line = 333,
+            skill_line_name = "Enchanting",
+        },
+    }
+    state.skill_lines = {
+        { name = "Professions", header = true, expanded = true },
+        { name = "Enchanting", header = false, rank = 1, max_rank = 75 },
+    }
+
+    state.event_handlers["SKILL_LINES_CHANGED"]()
+
+    assert_true(addon.Initalized == true, "learning enchanting should activate the addon without a reload")
+    assert_true(addon.DormantForNonEnchanter == false, "learning enchanting should clear the dormant flag")
+    assert_not_nil(state.slash, "learning enchanting should register slash actions")
+    assert_not_nil(state.event_handlers["MAIL_SHOW"], "learning enchanting should register mailbox actions")
+    assert_true(#state.secure_hooks > 0, "learning enchanting should install mailbox and bag hooks")
+end
+
+local function test_enchanter_detection_uses_skill_lines_when_profession_api_is_missing()
+    local addon = setup_env({
+        omit_get_professions = true,
+        skill_lines = {
+            { name = "Professions", header = true, expanded = true },
+            { name = "Enchanting", header = false, rank = 1, max_rank = 75 },
+        },
+    })
+
+    assert_true(addon.Initalized == true, "skill-line fallback should activate known enchanters on older clients")
+end
+
 local function test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
     local addon, state = setup_env({
         trade_target_money = 123400,
@@ -6398,6 +6573,9 @@ test_workbench_lock_button_survives_clients_without_text_insets()
 test_workbench_toggle_shows_a_newly_created_hidden_frame()
 test_workbench_toggle_recovers_from_a_stale_hidden_frame_state()
 test_trade_events_register_even_when_chat_scanning_is_stopped()
+test_non_enchanter_keeps_addon_actions_dormant()
+test_skill_lines_changed_activates_after_learning_enchanting()
+test_enchanter_detection_uses_skill_lines_when_profession_api_is_missing()
 test_workbench_tracks_trade_tip_using_trade_money_api_and_auto_completes_verified_trade()
 test_workbench_verified_orders_auto_complete_without_a_button()
 test_workbench_active_trade_hides_manual_completion_controls()
