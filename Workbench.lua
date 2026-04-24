@@ -1056,16 +1056,6 @@ local function GetDisenchantItemDisplayText(item)
 	return "Unknown item"
 end
 
-local function CanUpdateSecureAttributes()
-	return not (type(InCombatLockdown) == "function" and InCombatLockdown())
-end
-
-local function SetSecureButtonAttribute(button, key, value)
-	if button and button.SetAttribute and CanUpdateSecureAttributes() then
-		button:SetAttribute(key, value)
-	end
-end
-
 local function ClearDisenchantButton(button)
 	if not button then
 		return
@@ -1076,10 +1066,6 @@ local function ClearDisenchantButton(button)
 	button.ItemToken = nil
 	button.Bag = nil
 	button.Slot = nil
-	SetSecureButtonAttribute(button, "type", nil)
-	SetSecureButtonAttribute(button, "spell", nil)
-	SetSecureButtonAttribute(button, "target-bag", nil)
-	SetSecureButtonAttribute(button, "target-slot", nil)
 	if button.Hide then
 		button:Hide()
 	end
@@ -1097,13 +1083,6 @@ local function ConfigureDisenchantButton(button, orderId, item)
 	button.Slot = item.Slot
 	if button.SetText then
 		button:SetText("DE")
-	end
-	SetSecureButtonAttribute(button, "type", "spell")
-	SetSecureButtonAttribute(button, "spell", (EC and EC.GetDisenchantSpellName and EC.GetDisenchantSpellName()) or "Disenchant")
-	SetSecureButtonAttribute(button, "target-bag", tonumber(item.Bag))
-	SetSecureButtonAttribute(button, "target-slot", tonumber(item.Slot))
-	if button.RegisterForClicks then
-		button:RegisterForClicks("AnyUp")
 	end
 	if button.Show then
 		button:Show()
@@ -4727,14 +4706,14 @@ local function CreateRecipeLine(parent, index)
 		end
 	end)
 
-	line.DisenchantButton = CreateFrame("Button", nil, line, "SecureActionButtonTemplate,UIPanelButtonTemplate")
+	line.DisenchantButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.DisenchantButton:SetSize(56, 20)
 	line.DisenchantButton:SetPoint("RIGHT", line, "RIGHT", -24, 0)
 	line.DisenchantButton:SetText("DE")
 	ApplyElvUISkin(line.DisenchantButton, "button")
-	line.DisenchantButton:SetScript("PreClick", function(self)
-		if self.OrderId and self.ItemToken and EC and EC.PrimeTrackedDisenchantItem then
-			EC.PrimeTrackedDisenchantItem(self.OrderId, self.ItemToken, self.Bag, self.Slot)
+	line.DisenchantButton:SetScript("OnClick", function(self)
+		if self.OrderId and self.ItemToken then
+			Workbench.CastDisenchantItem(self.OrderId, self.ItemToken)
 		end
 	end)
 	line.DisenchantButton:Hide()

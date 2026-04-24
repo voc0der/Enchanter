@@ -3883,17 +3883,14 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
     local de_button = line.DisenchantButton
 
     assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
+    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) == nil, "the direct disenchant shortcut must not make its recipe line protected")
+    assert_not_nil(de_button.scripts["OnClick"], "the direct disenchant shortcut should use the normal tracked-item click path")
+    assert_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should not rely on secure PreClick priming")
     assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
-    assert_true(line.CastButton.shown == false, "tracked mailbox items should use the secure disenchant button instead of the normal recipe button")
-    assert_equal(de_button:GetAttribute("type"), "spell", "the mailbox shortcut should use a secure spell action")
-    assert_equal(de_button:GetAttribute("spell"), "Disenchant", "the mailbox shortcut should cast Disenchant securely")
-    assert_equal(de_button:GetAttribute("target-bag"), 0, "the mailbox shortcut should secure-target the tracked bag")
-    assert_equal(de_button:GetAttribute("target-slot"), 1, "the mailbox shortcut should secure-target the tracked slot")
+    assert_true(line.CastButton.shown == false, "tracked mailbox items should hide the normal recipe button when the DE shortcut is shown")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
 
-    de_button.scripts["PreClick"](de_button)
-    CastSpellByName(de_button:GetAttribute("spell"))
-    C_Container.UseContainerItem(de_button:GetAttribute("target-bag"), de_button:GetAttribute("target-slot"))
+    de_button.scripts["OnClick"](de_button)
 
     assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
     assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")

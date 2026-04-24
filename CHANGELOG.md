@@ -1,3 +1,8 @@
+## [2.1.76] - 2026-04-24
+
+### Fixed
+- Mailbox disenchant `DE` rows now use a normal workbench button and the tracked-item cast path again, preventing the row from becoming protected and throwing `SetPoint` / `ClearAllPoints` Lua errors during refresh
+
 ## [2.1.75] - 2026-04-24
 
 ### Fixed
