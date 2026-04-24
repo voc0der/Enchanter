@@ -35,6 +35,7 @@ local randomSeeded = false
 local randomFallbackCounter = 0
 local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
 local ENCHANTING_SPELL_ID = 7411
+local ENCHANTING_SKILL_LINE_ID = 333
 local DISENCHANT_SPELL_ID = 13262
 local RECIPE_FORMULA_PREFIX = "Formula: "
 local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox disenchant work started."
@@ -81,6 +82,8 @@ local simulationMessageTemplates = {
 	"%s %s if you're around",
 }
 local RecipeAuctionSearchOverrides = {}
+local activeEventsInstalled = false
+local RegisterActiveEvents
 
 local function HasCraftRecipeApi()
 	return GetNumCrafts and GetCraftInfo and GetCraftRecipeLink
@@ -1342,6 +1345,10 @@ function EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
 	local itemInfo = GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
 	local runtime = GetMailboxDisenchantRuntime()
 
+	if not EC.Initalized then
+		return false
+	end
+
 	if not IsMailboxDisenchantCandidate(itemInfo) then
 		return false
 	end
@@ -1507,16 +1514,22 @@ local function InstallMailboxDisenchantHooks()
 	mailboxHooksInstalled = true
 	if type(TakeInboxItem) == "function" then
 		hooksecurefunc("TakeInboxItem", function(mailIndex, attachmentIndex)
-			EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
+			if EC.Initalized then
+				EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
+			end
 		end)
 	end
 	if C_Container and type(C_Container.UseContainerItem) == "function" then
 		hooksecurefunc(C_Container, "UseContainerItem", function(bagIndex, slotIndex)
-			EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+			if EC.Initalized then
+				EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+			end
 		end)
 	elseif type(UseContainerItem) == "function" then
 		hooksecurefunc("UseContainerItem", function(bagIndex, slotIndex)
-			EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+			if EC.Initalized then
+				EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
+			end
 		end)
 	end
 end
@@ -2024,6 +2037,80 @@ local function SkillLineMatchesEnchanting(skillLineName)
 	local normalizedSkillLineName = NormalizePhrase(skillLineName)
 	local normalizedEnchantingName = NormalizePhrase(GetEnchantingSkillLineName())
 	return normalizedSkillLineName ~= "" and normalizedSkillLineName == normalizedEnchantingName
+end
+
+local function ProfessionIndexMatchesEnchanting(professionIndex)
+	local name, _, _, _, _, _, skillLineId, _, _, _, skillLineName
+
+	if not professionIndex or type(GetProfessionInfo) ~= "function" then
+		return false
+	end
+
+	name, _, _, _, _, _, skillLineId, _, _, _, skillLineName = GetProfessionInfo(professionIndex)
+	return tonumber(skillLineId) == ENCHANTING_SKILL_LINE_ID
+		or SkillLineMatchesEnchanting(name)
+		or SkillLineMatchesEnchanting(skillLineName)
+end
+
+local function ProfessionListShowsEnchanting()
+	if type(GetProfessions) ~= "function" or type(GetProfessionInfo) ~= "function" then
+		return nil
+	end
+
+	for _, professionIndex in ipairs({ GetProfessions() }) do
+		if ProfessionIndexMatchesEnchanting(professionIndex) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function SkillLinesShowEnchanting()
+	if type(GetNumSkillLines) ~= "function" or type(GetSkillLineInfo) ~= "function" then
+		return nil
+	end
+
+	for skillIndex = 1, math.max(0, math.floor(tonumber(GetNumSkillLines()) or 0)) do
+		local skillName, isHeader = GetSkillLineInfo(skillIndex)
+		if not isHeader and SkillLineMatchesEnchanting(skillName) then
+			return true
+		end
+	end
+
+	return false
+end
+
+function EC.IsPlayerEnchanter()
+	local professionMatch = ProfessionListShowsEnchanting()
+	local skillLineMatch
+
+	if professionMatch == true then
+		return true
+	end
+
+	skillLineMatch = SkillLinesShowEnchanting()
+	if skillLineMatch == true then
+		return true
+	end
+
+	if type(IsSpellKnown) == "function" and IsSpellKnown(ENCHANTING_SPELL_ID) then
+		return true
+	end
+
+	if skillLineMatch ~= nil then
+		return false
+	end
+
+	if professionMatch ~= nil then
+		return professionMatch
+	end
+
+	if type(IsSpellKnown) == "function" then
+		return false
+	end
+
+	return true
 end
 
 local function BuildAuctionSearchTermForRecipe(recipeName)
@@ -3666,8 +3753,35 @@ function EC.OpenConfigPanel(panelID)
 	return false
 end
 
+function EC.DeactivateForNonEnchanter()
+	EC.Initalized = false
+	EC.DormantForNonEnchanter = true
+	EC.PlayerList = {}
+	EC.LfRecipeList = {}
+	EC.LfRequestedRecipeCounts = {}
+	EC.PendingInvites = {}
+	if EC.Workbench and EC.Workbench.Hide then
+		EC.Workbench.Hide()
+	end
+	if EC.Simulation and EC.Simulation.Running and EC.StopSimulation then
+		EC.StopSimulation()
+	end
+	return false
+end
+
 function EC.Init()
 	EnsureSavedVariables()
+	if EC.Initalized then
+		return true
+	end
+	if not EC.IsPlayerEnchanter() then
+		return EC.DeactivateForNonEnchanter()
+	end
+
+	EC.DormantForNonEnchanter = false
+	if RegisterActiveEvents then
+		RegisterActiveEvents()
+	end
 	InstallMailboxDisenchantHooks()
 	RemoveAuctionHouseDisenchantOrders()
 
@@ -3738,6 +3852,7 @@ function EC.Init()
 		.. (GetAddOnMetadataCompat(TOCNAME, "Title") or TOCNAME)
 		.. " " .. (GetAddOnMetadataCompat(TOCNAME, "Version") or "")
 		.. " by " .. (GetAddOnMetadataCompat(TOCNAME, "Author") or ""))
+	return true
 end
 
 function EC.SendMsg(name)
@@ -3861,19 +3976,32 @@ function EC.ParseMessage(msg, name, options)
 	end
 end
 
+local function IsAddonActive()
+	return EC.Initalized == true
+end
+
 local function Event_TRADE_SHOW()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.BeginTrade then
 		EC.Workbench.BeginTrade(EC.Workbench.GetTradePartnerName and EC.Workbench.GetTradePartnerName() or nil)
 	end
 end
 
 local function Event_TRADE_STATE_CHANGED()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.SyncActiveTrade then
 		EC.Workbench.SyncActiveTrade()
 	end
 end
 
 local function Event_TRADE_ACCEPT_UPDATE(playerAccepted, targetAccepted)
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.SetTradeAcceptState then
 		EC.Workbench.SetTradeAcceptState(playerAccepted, targetAccepted)
 	end
@@ -3883,12 +4011,18 @@ local function Event_TRADE_ACCEPT_UPDATE(playerAccepted, targetAccepted)
 end
 
 local function Event_TRADE_CLOSED()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.FinishTrade then
 		EC.Workbench.FinishTrade(0)
 	end
 end
 
 local function Event_GROUP_ROSTER_UPDATE()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.SyncGroupedOrders then
 		EC.Workbench.SyncGroupedOrders()
 	elseif EC.Workbench and EC.Workbench.Refresh then
@@ -3900,16 +4034,25 @@ local function Event_GROUP_ROSTER_UPDATE()
 end
 
 local function Event_PLAYER_FLAGS_CHANGED(unitToken)
+	if not IsAddonActive() then
+		return
+	end
 	EC.HandlePlayerFlagsChanged(unitToken)
 end
 
 local function Event_MAIL_SHOW()
+	if not IsAddonActive() then
+		return
+	end
 	local runtime = GetMailboxDisenchantRuntime()
 	runtime.PendingReturnMailOrderId = nil
 	EC.SyncDisenchantInventoryTracking()
 end
 
 local function Event_MAIL_CLOSED()
+	if not IsAddonActive() then
+		return
+	end
 	local runtime = GetMailboxDisenchantRuntime()
 	runtime.PendingLoots = {}
 	runtime.PendingDisenchant = nil
@@ -3917,6 +4060,9 @@ local function Event_MAIL_CLOSED()
 end
 
 local function Event_MAIL_SUCCESS()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.HandlePendingMailboxLootSuccess and EC.HandlePendingMailboxLootSuccess() then
 		return
 	end
@@ -3926,6 +4072,9 @@ local function Event_MAIL_SUCCESS()
 end
 
 local function Event_MAIL_FAILED()
+	if not IsAddonActive() then
+		return
+	end
 	local runtime = GetMailboxDisenchantRuntime()
 	if type(runtime.PendingLoots) == "table" and #runtime.PendingLoots > 0 then
 		table.remove(runtime.PendingLoots, 1)
@@ -3933,18 +4082,27 @@ local function Event_MAIL_FAILED()
 end
 
 local function Event_BAG_UPDATE_DELAYED()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.SyncDisenchantInventoryTracking then
 		EC.SyncDisenchantInventoryTracking()
 	end
 end
 
 local function Event_UI_CONTEXT_REFRESH()
+	if not IsAddonActive() then
+		return
+	end
 	if EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
 	end
 end
 
 local function Event_ITEM_DATA_RECEIVED(itemId, success)
+	if not IsAddonActive() then
+		return
+	end
 	itemId = tonumber(itemId)
 	if itemId and itemId > 0 then
 		itemId = math.floor(itemId)
@@ -3968,20 +4126,23 @@ local function Event_ITEM_DATA_RECEIVED(itemId, success)
 end
 
 local function Event_CHAT_MSG_CHANNEL(msg, name)
-	if not EC.Initalized then
+	if not IsAddonActive() then
 		return
 	end
 	EC.ParseMessage(msg, name)
 end
 
 local function Event_CHAT_MSG_WHISPER(msg, name)
-	if not EC.Initalized or not EC.IsWhisperListenMode(name) then
+	if not IsAddonActive() or not EC.IsWhisperListenMode(name) then
 		return
 	end
 	EC.ParseMessage(msg, name, { AllowMissingPrefix = true })
 end
 
 local function Event_CHAT_MSG_SYSTEM(msg)
+	if not IsAddonActive() then
+		return
+	end
 	if msg == ERR_TRADE_COMPLETE and EC.Workbench and EC.Workbench.MarkTradeCompleted then
 		EC.Workbench.MarkTradeCompleted()
 	end
@@ -3990,6 +4151,10 @@ end
 
 local function Event_UI_ERROR_MESSAGE(arg1, arg2, arg3)
 	local message
+	if not IsAddonActive() then
+		return
+	end
+
 	if type(arg1) == "string" then
 		message = arg1
 	elseif type(arg2) == "string" then
@@ -4002,6 +4167,10 @@ end
 
 local function Event_UI_INFO_MESSAGE(arg1, arg2, arg3)
 	local message
+	if not IsAddonActive() then
+		return
+	end
+
 	if type(arg1) == "string" then
 		message = arg1
 	elseif type(arg2) == "string" then
@@ -4016,6 +4185,9 @@ local function Event_UI_INFO_MESSAGE(arg1, arg2, arg3)
 end
 
 local function Event_TRADE_REPLACE_ENCHANT()
+	if not IsAddonActive() then
+		return
+	end
 	if not (EC.DB and EC.DB.AutoReplaceEnchant) then
 		return
 	end
@@ -4032,13 +4204,27 @@ end
 local function Event_ADDON_LOADED(arg1)
 	if arg1 == TOCNAME then
 		EC.Init()
-	elseif arg1 == "Auctionator" and EC.Workbench and EC.Workbench.Refresh then
+	elseif IsAddonActive() and arg1 == "Auctionator" and EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
 	end
 end
 
-function EC.OnLoad()
-	EC.Tool.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
+local function Event_SKILL_LINES_CHANGED()
+	if EC.IsPlayerEnchanter() then
+		if not IsAddonActive() then
+			EC.Init()
+		end
+	elseif IsAddonActive() then
+		EC.DeactivateForNonEnchanter()
+	end
+end
+
+RegisterActiveEvents = function()
+	if activeEventsInstalled then
+		return
+	end
+
+	activeEventsInstalled = true
 	EC.Tool.RegisterEvent("TRADE_REPLACE_ENCHANT", Event_TRADE_REPLACE_ENCHANT)
 	EC.Tool.RegisterEvent("MAIL_SHOW", Event_MAIL_SHOW)
 	EC.Tool.RegisterEvent("MAIL_CLOSED", Event_MAIL_CLOSED)
@@ -4071,4 +4257,9 @@ function EC.OnLoad()
 	EC.Tool.RegisterEvent("TRADE_SKILL_CLOSE", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_SHOW", Event_UI_CONTEXT_REFRESH)
 	EC.Tool.RegisterEvent("CRAFT_CLOSE", Event_UI_CONTEXT_REFRESH)
+end
+
+function EC.OnLoad()
+	EC.Tool.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
+	EC.Tool.RegisterEvent("SKILL_LINES_CHANGED", Event_SKILL_LINES_CHANGED)
 end

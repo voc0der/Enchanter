@@ -14,11 +14,12 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.71`
+Current version: `2.1.72`
 
 ## What It Does
 
 - Run `/ec scan` once after learning recipes to build your known-enchant list
+- Stay dormant on characters that do not know Enchanting, so mailbox, chat, and workbench actions do not run on alts
 - Match trade-chat requests against configured recipe tags
 - Avoid starting shorthand matches in the middle of unrelated tokens, so posts like `1815 resto druid LF 2's partner` do not trip `15 res`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
