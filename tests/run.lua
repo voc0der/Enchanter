@@ -3243,6 +3243,133 @@ local function test_mailbox_loot_ignores_non_disenchantable_trade_goods()
     assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "non-disenchantable trade goods should not create mailbox disenchant work")
 end
 
+local function test_mailbox_loot_ignores_auction_house_mail()
+    local auction_green = {
+        item_id = 1004,
+        name = "Reaver Gloves",
+        link = "|cff1eff00|Hitem:1004::::::::|h[Reaver Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1004] = auction_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Horde Auction House",
+                subject = "Auction won: Reaver Gloves of Defense",
+                attachments = { auction_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = auction_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "auction house item mail should not enter the pending mailbox disenchant queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Horde Auction House"), "auction house item mail should not create a disenchant work order")
+end
+
+local function test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
+    local addon = setup_env({
+        char_db = {
+            Workbench = {
+                SelectedOrderId = 1,
+                NextOrderId = 3,
+                Orders = {
+                    {
+                        Id = 1,
+                        Customer = "Horde Auction House",
+                        Kind = "disenchant",
+                        SourceItems = {
+                            {
+                                Token = 1,
+                                Name = "Reaver Gloves",
+                                ItemId = 1004,
+                                Quality = 2,
+                                Status = "queued",
+                            },
+                        },
+                    },
+                    {
+                        Id = 2,
+                        Customer = "Alice",
+                        Kind = "disenchant",
+                        SourceItems = {
+                            {
+                                Token = 1,
+                                Name = "Mailed Green Gloves",
+                                ItemId = 1005,
+                                Quality = 2,
+                                Status = "queued",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+    assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Horde Auction House"), "saved auction house disenchant work should be pruned on startup")
+    assert_not_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "saved player disenchant work should be left alone")
+    assert_equal(addon.Workbench.EnsureState().SelectedOrderId, 2, "selection should move to the remaining work order when the selected auction house order is pruned")
+end
+
+local function test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
+    local mailed_green = {
+        item_id = 1005,
+        name = "Mailed Green Gloves",
+        link = "|cff1eff00|Hitem:1005::::::::|h[Mailed Green Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1005] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "the first take for a player-mailed item should enter the pending queue")
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "repeat callbacks for the same attachment should not queue a duplicate pending loot")
+    state.event_handlers["MAIL_SUCCESS"]()
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "player-mailed gear should still create a disenchant work order")
+    assert_equal(#order.SourceItems, 1, "repeat callbacks for the same attachment should only create one source item")
+end
+
 local function test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
     local mailed_green = {
         item_id = 1001,
@@ -6257,6 +6384,9 @@ test_parse_message_expands_recipe_quantity_suffix_into_duplicate_order_entries()
 test_workbench_remove_clears_player_gate()
 test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat_scanning()
 test_mailbox_loot_ignores_non_disenchantable_trade_goods()
+test_mailbox_loot_ignores_auction_house_mail()
+test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
+test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 test_workbench_debug_output_is_printed()

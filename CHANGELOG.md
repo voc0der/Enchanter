@@ -1,3 +1,10 @@
+## [2.1.71] - 2026-04-24
+
+### Fixed
+- Mailbox disenchant work now ignores Auction House item mail, so won green and blue gear no longer appears as return-mat jobs from `Horde Auction House`
+- Repeated mailbox loot callbacks for the same attachment are deduped before the workbench order is created, preventing a single mailed item from showing as two DE rows
+- Saved Auction House disenchant rows are pruned on startup, so already-queued bad AH jobs disappear after reload while player-mailed DE work stays intact
+
 ## [2.1.70] - 2026-04-23
 
 ### Fixed
