@@ -43,6 +43,7 @@ local MAILBOX_DISENCHANT_RETURN_BODY = "Disenchanted the greens and blues you ma
 local DISENCHANT_SHORTCUT_RETRY_DELAYS = { 0.05, 0.15, 0.35 }
 local MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
+local MAILBOX_DISENCHANT_AUCTION_HOUSE_SENDER = "auction house"
 local MAILBOX_DISENCHANT_BLOCKED_EQUIP_LOCS = {
 	INVTYPE_AMMO = true,
 	INVTYPE_BAG = true,
@@ -768,6 +769,11 @@ local function IsOtherPlayerName(value)
 	return senderName ~= "" and senderName ~= playerName
 end
 
+local function IsAuctionHouseSender(value)
+	local senderName = NormalizeTextValue(value):lower()
+	return senderName ~= "" and senderName:find(MAILBOX_DISENCHANT_AUCTION_HOUSE_SENDER, 1, true) ~= nil
+end
+
 local function GetMailboxDisenchantRuntime()
 	EC.MailboxDisenchant = EC.MailboxDisenchant or {}
 	local runtime = EC.MailboxDisenchant
@@ -840,6 +846,8 @@ local function GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
 	itemInfo.MailSubject = NormalizeTextValue(subject)
 	itemInfo.CODAmount = math.max(0, math.floor(tonumber(codAmount) or 0))
 	itemInfo.Count = math.max(1, math.floor(tonumber(itemCount) or 1))
+	itemInfo.MailIndex = math.max(0, math.floor(tonumber(mailIndex) or 0))
+	itemInfo.AttachmentIndex = math.max(0, math.floor(tonumber(attachmentIndex) or 0))
 	return itemInfo
 end
 
@@ -854,6 +862,10 @@ local function IsMailboxDisenchantCandidate(itemInfo)
 	end
 
 	if not IsOtherPlayerName(itemInfo.Sender) then
+		return false
+	end
+
+	if IsAuctionHouseSender(itemInfo.Sender) then
 		return false
 	end
 
@@ -885,6 +897,73 @@ local function IsMailboxDisenchantCandidate(itemInfo)
 		return false
 	end
 
+	return true
+end
+
+local function GetPendingMailboxLootKey(itemInfo)
+	if type(itemInfo) ~= "table" then
+		return ""
+	end
+
+	return table.concat({
+		tostring(itemInfo.MailIndex or ""),
+		tostring(itemInfo.AttachmentIndex or ""),
+		tostring(itemInfo.ItemId or ""),
+		NormalizeTextValue(itemInfo.Link),
+	}, ":")
+end
+
+local function IsPendingMailboxLootQueued(runtime, itemInfo)
+	local pendingKey = GetPendingMailboxLootKey(itemInfo)
+
+	if pendingKey == "" then
+		return false
+	end
+
+	for _, pendingItem in ipairs(runtime.PendingLoots or {}) do
+		if GetPendingMailboxLootKey(pendingItem) == pendingKey then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function RemoveAuctionHouseDisenchantOrders()
+	local state
+	local changed = false
+	local selectedOrderExists = false
+
+	if not (EC.Workbench and EC.Workbench.EnsureState) then
+		return false
+	end
+
+	state = EC.Workbench.EnsureState()
+	for index = #(state.Orders or {}), 1, -1 do
+		local order = state.Orders[index]
+		if order and order.Kind == "disenchant" and IsAuctionHouseSender(order.Customer) then
+			table.remove(state.Orders, index)
+			changed = true
+		end
+	end
+
+	if not changed then
+		return false
+	end
+
+	for _, order in ipairs(state.Orders or {}) do
+		if order.Id == state.SelectedOrderId then
+			selectedOrderExists = true
+			break
+		end
+	end
+	if not selectedOrderExists then
+		state.SelectedOrderId = state.Orders[1] and state.Orders[1].Id or nil
+	end
+
+	if EC.Workbench.Refresh then
+		EC.Workbench.Refresh()
+	end
 	return true
 end
 
@@ -1264,6 +1343,10 @@ function EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
 	local runtime = GetMailboxDisenchantRuntime()
 
 	if not IsMailboxDisenchantCandidate(itemInfo) then
+		return false
+	end
+
+	if IsPendingMailboxLootQueued(runtime, itemInfo) then
 		return false
 	end
 
@@ -3586,6 +3669,7 @@ end
 function EC.Init()
 	EnsureSavedVariables()
 	InstallMailboxDisenchantHooks()
+	RemoveAuctionHouseDisenchantOrders()
 
 	EC.Tool.SlashCommand({"/ec", "/enchanter", "/e"}, {
 		{"", "Toggles the workbench queue.", function()
