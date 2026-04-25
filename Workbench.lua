@@ -3290,6 +3290,25 @@ local function GetDisplayedRecipeVerificationProgress(order)
 	return checked, total
 end
 
+local function GetPrimaryRecipeActionName(order)
+	local displayedOccurrences = {}
+	local firstRecipeName
+
+	if not order then
+		return nil
+	end
+
+	for _, recipeName in ipairs(order.Recipes or {}) do
+		firstRecipeName = firstRecipeName or recipeName
+		displayedOccurrences[recipeName] = (displayedOccurrences[recipeName] or 0) + 1
+		if not IsRecipeVerifiedForDisplay(order, recipeName, displayedOccurrences[recipeName]) then
+			return recipeName
+		end
+	end
+
+	return firstRecipeName
+end
+
 function Workbench.GetMaterialSnapshot(order)
 	order = order or Workbench.GetSelectedOrder()
 
@@ -5061,6 +5080,21 @@ function Workbench.CreateFrame()
 	end)
 	frame.Detail.ReturnMailButton:Hide()
 
+	frame.Detail.PrimaryCastButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
+	frame.Detail.PrimaryCastButton:SetSize(56, 20)
+	frame.Detail.PrimaryCastButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+	frame.Detail.PrimaryCastButton:SetText("Cast")
+	if frame.Detail.PrimaryCastButton.SetFrameLevel and frame.Detail.ActionRow.GetFrameLevel then
+		frame.Detail.PrimaryCastButton:SetFrameLevel(frame.Detail.ActionRow:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.Detail.PrimaryCastButton, "button")
+	frame.Detail.PrimaryCastButton:SetScript("OnClick", function(self)
+		if self.RecipeName then
+			Workbench.CastRecipe(self.RecipeName)
+		end
+	end)
+	frame.Detail.PrimaryCastButton:Hide()
+
 	do
 		local rh = CreateFrame("Frame", nil, frame.Detail.Content)
 		rh:SetHeight(12)
@@ -5327,6 +5361,7 @@ function Workbench.Refresh()
 		frame.Detail.TipStatus:Hide()
 		frame.Detail.CompleteButton:Hide()
 		frame.Detail.ReturnMailButton:Hide()
+		frame.Detail.PrimaryCastButton:Hide()
 		frame.Detail.RecipesHeader:Hide()
 		frame.Detail.MatsHeader:Hide()
 		frame.Detail.AllMatsButton:Hide()
@@ -5388,6 +5423,7 @@ function Workbench.Refresh()
 		frame.Detail.CompleteButton:ClearAllPoints()
 		frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ReturnMailButton, "LEFT", -6, 0)
 		frame.Detail.CompleteButton:Show()
+		frame.Detail.PrimaryCastButton:Hide()
 
 		frame.Detail.TipStatus:ClearAllPoints()
 		frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
@@ -5527,6 +5563,7 @@ function Workbench.Refresh()
 		frame.Detail.CompleteButton:ClearAllPoints()
 		frame.Detail.CompleteButton:SetPoint("RIGHT", frame.Detail.ReturnMailButton, "LEFT", -6, 0)
 		frame.Detail.CompleteButton:Show()
+		frame.Detail.PrimaryCastButton:Hide()
 
 		frame.Detail.TipStatus:ClearAllPoints()
 		frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
@@ -5667,6 +5704,7 @@ function Workbench.Refresh()
 
 	local activeTrade = GetActiveTradeForOrder(order)
 	local checked, total, _, manualChecked, offeredChecked = GetDisplayedMaterialProgress(order)
+	local primaryRecipeName = GetPrimaryRecipeActionName(order)
 	local verifiedCount
 	local recipeTotal
 
@@ -5698,12 +5736,25 @@ function Workbench.Refresh()
 	frame.Detail.ReturnMailButton:Hide()
 	frame.Detail.CompleteButton:SetText("Complete")
 	frame.Detail.CompleteButton:Hide()
+	frame.Detail.PrimaryCastButton.RecipeName = primaryRecipeName
+	frame.Detail.PrimaryCastButton:SetText(activeTrade and "Apply" or "Cast")
+	frame.Detail.PrimaryCastButton:ClearAllPoints()
+	frame.Detail.PrimaryCastButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+	if primaryRecipeName then
+		frame.Detail.PrimaryCastButton:Show()
+	else
+		frame.Detail.PrimaryCastButton:Hide()
+	end
 
 	frame.Detail.TipStatus:ClearAllPoints()
 	frame.Detail.TipStatus:SetPoint("LEFT", frame.Detail.ActionRow, "LEFT", 0, 0)
 	frame.Detail.TipStatus:SetText(GetTipStatusText(order, activeTrade))
 	frame.Detail.TipStatus:Show()
-	frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+	if primaryRecipeName then
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.PrimaryCastButton, "LEFT", -8, 0)
+	else
+		frame.Detail.TipStatus:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
+	end
 
 	frame.Detail.RecipesHeader:SetText("Enchants")
 	frame.Detail.RecipesHeader:ClearAllPoints()

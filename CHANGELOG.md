@@ -1,3 +1,8 @@
+## [2.1.82] - 2026-04-25
+
+### Fixed
+- Kept normal enchant orders from losing their `Cast` / `Apply` action after grouped-customer and accepted-trade refreshes by adding a stable order-level action beside the tip status while preserving the per-recipe row action
+
 ## [2.1.81] - 2026-04-25
 
 ### Fixed

@@ -5607,6 +5607,10 @@ local function test_grouped_customer_join_auto_shows_hidden_workbench()
 
     assert_true(frame:IsShown(), "a queued customer joining the group should automatically show the hidden workbench")
     assert_true(workbenchState.Visible, "auto-show should persist the visible workbench state")
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "joining the group should keep the row-level Cast action visible")
+    assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Cast", "row-level recipe actions should still read Cast after the customer joins")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "joining the group should keep the order-level Cast action visible")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Cast", "order-level recipe actions should still read Cast after the customer joins")
 end
 
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
@@ -6678,6 +6682,10 @@ local function test_trade_detected_enchant_shows_as_checked_before_trade_closes(
 
     assert_true(frame.Detail.RecipeLines[1].StatusCheck.shown, "a trade-detected enchant should flip the recipe row to a green check before the trade closes")
     assert_true(frame.Detail.RecipeLines[1].StatusText.shown == false, "a trade-detected enchant should hide the question mark immediately")
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "a trade-detected enchant should not hide the row-level Apply action while the trade is open")
+    assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Apply", "a trade-detected enchant should keep row-level action text as Apply")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "a trade-detected enchant should not hide the order-level Apply action while the trade is open")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Apply", "a trade-detected enchant should keep order-level action text as Apply")
     assert_true(string.find(frame.Detail.Meta.text or "", "Verified") ~= nil, "detail meta should reflect the live verified state while the trade is still open")
 end
 
@@ -6835,11 +6843,23 @@ local function test_active_trade_updates_recipe_button_to_apply()
 
     assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "queued recipe actions should show the Cast button before trade")
     assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Cast", "queued recipe actions should read Cast before trade")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "queued orders should expose the order-level Cast action")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Cast", "queued order-level recipe actions should read Cast")
 
     addon.Workbench.BeginTrade("Buyer-Apply")
 
     assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "active trade recipe actions should keep the Apply button visible")
     assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Apply", "active trade recipe actions should read Apply so the trade-slot flow is more obvious")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "active trades should keep the order-level Apply action visible")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Apply", "active trade order-level recipe actions should read Apply")
+
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.SyncActiveTrade()
+
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "accepted trades should not hide the row-level Apply action before the trade closes")
+    assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Apply", "accepted trade row-level recipe actions should still read Apply")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "accepted trades should not hide the order-level Apply action before the trade closes")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Apply", "accepted trade order-level recipe actions should still read Apply")
     assert_true(string.find(frame.Detail.TradeHint.text or "", "Trade active") ~= nil, "detail pane should explain the trade apply flow when a matching trade is open")
 end
 

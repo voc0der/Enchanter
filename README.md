@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.78`
+Current version: `2.1.82`
 
 ## What It Does
 
@@ -78,7 +78,7 @@ Current version: `2.1.78`
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
-- When a matching trade is open, the recipe action changes to `Apply` and the detail pane switches into the trade-slot flow.
+- Normal enchant orders keep a `Cast` / `Apply` action beside the tip status as well as on the recipe row, and matching trades switch those actions to `Apply` for the trade-slot flow.
 - `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it, including late completion updates.
 - `Cast` / `Apply` now temporarily clears remembered enchanting profession searches and older Craft filters so queued enchants can still be selected reliably before the previous UI state is restored.
 - If they tip during earlier mat trades before the final enchant trade, that gold stays attached to the order until the verified trade retires it automatically.
