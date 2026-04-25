@@ -4681,22 +4681,29 @@ local function CreateRecipeLine(parent, index)
 	line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
 	line.NameText:SetJustifyH("LEFT")
 
-	line.StatusCheck = line:CreateTexture(nil, "ARTWORK")
-	line.StatusCheck:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.StatusAnchor = CreateFrameCompat("Frame", nil, line)
+	line.StatusAnchor:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+	line.StatusAnchor:SetSize(18, 18)
+
+	line.StatusCheck = line.StatusAnchor:CreateTexture(nil, "ARTWORK")
+	line.StatusCheck:SetPoint("CENTER", line.StatusAnchor, "CENTER", 0, 0)
 	line.StatusCheck:SetSize(18, 18)
 	line.StatusCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
 	line.StatusCheck:SetVertexColor(0.45, 0.82, 0.42)
 	line.StatusCheck:Hide()
 
 	line.StatusText = line:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	line.StatusText:SetPoint("CENTER", line.StatusCheck, "CENTER", 0, 0)
+	line.StatusText:SetPoint("CENTER", line.StatusAnchor, "CENTER", 0, 0)
 	line.StatusText:SetText("?")
 	line.StatusText:SetTextColor(1, 0.82, 0.42)
 
 	line.CastButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.CastButton:SetSize(56, 20)
-	line.CastButton:SetPoint("RIGHT", line.StatusCheck, "LEFT", -6, 0)
+	line.CastButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
 	line.CastButton:SetText("Cast")
+	if line.CastButton.SetFrameLevel and line.GetFrameLevel then
+		line.CastButton:SetFrameLevel(line:GetFrameLevel() + 2)
+	end
 	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
 		if self.ActionKind == "disenchant" and self.OrderId and self.ItemToken then
@@ -4708,8 +4715,11 @@ local function CreateRecipeLine(parent, index)
 
 	line.DisenchantButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.DisenchantButton:SetSize(56, 20)
-	line.DisenchantButton:SetPoint("RIGHT", line, "RIGHT", -24, 0)
+	line.DisenchantButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
 	line.DisenchantButton:SetText("DE")
+	if line.DisenchantButton.SetFrameLevel and line.GetFrameLevel then
+		line.DisenchantButton:SetFrameLevel(line:GetFrameLevel() + 2)
+	end
 	ApplyElvUISkin(line.DisenchantButton, "button")
 	line.DisenchantButton:SetScript("OnClick", function(self)
 		if self.OrderId and self.ItemToken then
@@ -5423,16 +5433,16 @@ function Workbench.Refresh()
 			line.CastButton:Hide()
 			ClearDisenchantButton(line.DisenchantButton)
 			if isDone then
-				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
 			elseif isTrackedInBag then
-				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("B")
 				line.StatusText:Show()
 			else
-				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("?")
 				line.StatusText:Show()
@@ -5560,21 +5570,29 @@ function Workbench.Refresh()
 			line.CastButton.RecipeName = nil
 			line.CastButton.OrderId = nil
 			line.CastButton.ItemToken = nil
+			if line.CastButton.ClearAllPoints and line.StatusAnchor then
+				line.CastButton:ClearAllPoints()
+				line.CastButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
+			end
 			ClearDisenchantButton(line.DisenchantButton)
 			if isDone then
-				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.CastButton:Hide()
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
 			elseif isTrackedInBag then
 				line.NameText:SetPoint("RIGHT", line.DisenchantButton, "LEFT", -8, 0)
 				line.CastButton:Hide()
+				if line.DisenchantButton.ClearAllPoints and line.StatusAnchor then
+					line.DisenchantButton:ClearAllPoints()
+					line.DisenchantButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
+				end
 				ConfigureDisenchantButton(line.DisenchantButton, order.Id, item)
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("B")
 				line.StatusText:Show()
 			else
-				line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.CastButton:Hide()
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("?")
@@ -5710,6 +5728,10 @@ function Workbench.Refresh()
 		line.CastButton.OrderId = nil
 		line.CastButton.ItemToken = nil
 		line.CastButton.RecipeName = recipeName
+		if line.CastButton.ClearAllPoints and line.StatusAnchor then
+			line.CastButton:ClearAllPoints()
+			line.CastButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
+		end
 		line.CastButton:SetText(activeTrade and "Apply" or "Cast")
 		line.CastButton:Show()
 		if isVerified then

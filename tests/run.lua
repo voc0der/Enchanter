@@ -4009,6 +4009,44 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
     assert_true(line.StatusText.shown == false, "completed mailbox disenchant rows should hide their pending indicator")
 end
 
+local function test_recipe_action_reappears_after_mailbox_row_reuse()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+
+    local mailbox_order, source_item = addon.Workbench.AddDisenchantMailItem("Alice", {
+        Name = "Lucky Strike Axe",
+        Link = "|cff1eff00|Hitem:1001::::::::|h[Lucky Strike Axe]|h|r",
+        ItemId = 1001,
+        Quality = 2,
+        LootKey = "mail:1:1",
+    })
+    addon.Workbench.SelectOrder(mailbox_order.Id)
+    addon.Workbench.SetDisenchantItemLocation(mailbox_order.Id, source_item.Token, 0, 1)
+    addon.Workbench.Refresh()
+
+    local line = frame.Detail.RecipeLines[1]
+    assert_true(line.DisenchantButton.shown, "tracked mailbox rows should show the DE shortcut before the row is reused")
+    assert_true(line.CastButton.shown == false, "tracked mailbox rows should hide the normal cast action before the row is reused")
+
+    addon.ParseMessage("LF minor speed pst", "Buyer-Reuse")
+    local enchant_order = addon.Workbench.GetOrderByCustomer("Buyer-Reuse")
+    addon.Workbench.SelectOrder(enchant_order.Id)
+
+    line = frame.Detail.RecipeLines[1]
+    assert_true(line.CastButton.shown, "normal enchant rows should restore the Cast action after reusing a mailbox row")
+    assert_equal(line.CastButton.text, "Cast", "restored normal enchant actions should read Cast")
+    assert_true(line.DisenchantButton.shown == false, "normal enchant rows should hide the mailbox-only DE shortcut")
+    assert_equal(line.CastButton.points[1][2], line.StatusAnchor, "normal enchant actions should anchor to the row status frame instead of a texture region")
+end
+
 local function test_workbench_debug_output_is_printed()
     local addon, state = setup_env({
         char_db = {
@@ -6794,8 +6832,13 @@ local function test_active_trade_updates_recipe_button_to_apply()
     local frame = addon.Workbench.CreateFrame()
     addon.RefreshCompiledData()
     addon.ParseMessage("LF minor speed pst", "Buyer-Apply")
+
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "queued recipe actions should show the Cast button before trade")
+    assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Cast", "queued recipe actions should read Cast before trade")
+
     addon.Workbench.BeginTrade("Buyer-Apply")
 
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "active trade recipe actions should keep the Apply button visible")
     assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Apply", "active trade recipe actions should read Apply so the trade-slot flow is more obvious")
     assert_true(string.find(frame.Detail.TradeHint.text or "", "Trade active") ~= nil, "detail pane should explain the trade apply flow when a matching trade is open")
 end
@@ -6949,6 +6992,7 @@ test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
 test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
+test_recipe_action_reappears_after_mailbox_row_reuse()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
 test_workbench_title_includes_addon_version()

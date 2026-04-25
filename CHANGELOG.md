@@ -1,3 +1,8 @@
+## [2.1.81] - 2026-04-25
+
+### Fixed
+- Restored the order-pane `Cast` / `Apply` action after mailbox `DE` row fixes by anchoring recipe-row actions to a real status frame and resetting the normal enchant button whenever rows are reused
+
 ## [2.1.78] - 2026-04-25
 
 ### Fixed
