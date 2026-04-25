@@ -3987,20 +3987,13 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
     local de_button = line.DisenchantButton
 
     assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
-    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) ~= nil, "the direct disenchant shortcut should use the secure action template for one-click cast-and-target")
-    assert_not_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should prime tracking in PreClick before the secure action fires")
+    assert_not_nil(de_button.scripts["OnClick"], "the direct disenchant shortcut should cast via OnClick")
     assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
     assert_true(line.CastButton.shown == false, "tracked mailbox items should hide the normal recipe button when the DE shortcut is shown")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
-    assert_equal(de_button.attributes["type"], "spell", "the secure DE button should carry the spell action type attribute")
-    assert_equal(de_button.attributes["target-bag"], 0, "the secure DE button should carry the tracked bag attribute")
-    assert_equal(de_button.attributes["target-slot"], 1, "the secure DE button should carry the tracked slot attribute")
 
-    -- Fire PreClick (primes tracking and refreshes attributes), then simulate what the
-    -- secure template does: PerformAction casts the spell, then UseContainerItem targets the item.
-    de_button.scripts["PreClick"](de_button)
-    _G.CastSpellByName(de_button.attributes["spell"] or "Disenchant")
-    _G.C_Container.UseContainerItem(de_button.attributes["target-bag"], de_button.attributes["target-slot"])
+    -- Fire OnClick: CastDisenchantItem syncs inventory, casts the spell, and targets the item.
+    de_button.scripts["OnClick"](de_button)
 
     assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
     assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")

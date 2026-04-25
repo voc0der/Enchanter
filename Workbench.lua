@@ -1056,16 +1056,6 @@ local function GetDisenchantItemDisplayText(item)
 	return "Unknown item"
 end
 
-local function CanUpdateSecureButton()
-	return type(InCombatLockdown) ~= "function" or not InCombatLockdown()
-end
-
-local function SetSecureButtonAttribute(button, key, value)
-	if button and button.SetAttribute and CanUpdateSecureButton() then
-		button:SetAttribute(key, value)
-	end
-end
-
 local function ClearDisenchantButton(button)
 	if not button then
 		return
@@ -1076,11 +1066,7 @@ local function ClearDisenchantButton(button)
 	button.ItemToken = nil
 	button.Bag = nil
 	button.Slot = nil
-	SetSecureButtonAttribute(button, "type", nil)
-	SetSecureButtonAttribute(button, "spell", nil)
-	SetSecureButtonAttribute(button, "target-bag", nil)
-	SetSecureButtonAttribute(button, "target-slot", nil)
-	if button.Hide and CanUpdateSecureButton() then
+	if button.Hide then
 		button:Hide()
 	end
 end
@@ -1095,14 +1081,10 @@ local function ConfigureDisenchantButton(button, orderId, item)
 	button.ItemToken = item.Token
 	button.Bag = item.Bag
 	button.Slot = item.Slot
-	SetSecureButtonAttribute(button, "type", "spell")
-	SetSecureButtonAttribute(button, "spell", (EC and EC.GetDisenchantSpellName and EC.GetDisenchantSpellName()) or "Disenchant")
-	SetSecureButtonAttribute(button, "target-bag", tonumber(item.Bag))
-	SetSecureButtonAttribute(button, "target-slot", tonumber(item.Slot))
 	if button.SetText then
 		button:SetText("DE")
 	end
-	if button.Show and CanUpdateSecureButton() then
+	if button.Show then
 		button:Show()
 	end
 end
@@ -4724,28 +4706,14 @@ local function CreateRecipeLine(parent, index)
 		end
 	end)
 
-	line.DisenchantButton = CreateFrame("Button", nil, line, "SecureActionButtonTemplate,UIPanelButtonTemplate")
+	line.DisenchantButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.DisenchantButton:SetSize(56, 20)
 	line.DisenchantButton:SetPoint("RIGHT", line, "RIGHT", -24, 0)
 	line.DisenchantButton:SetText("DE")
 	ApplyElvUISkin(line.DisenchantButton, "button")
-	line.DisenchantButton:SetScript("PreClick", function(self)
-		if not (self.OrderId and self.ItemToken) then
-			return
-		end
-		if EC and EC.SyncDisenchantInventoryTracking then
-			EC.SyncDisenchantInventoryTracking()
-			local order = Workbench.GetOrderById(self.OrderId)
-			local sourceItem = order and FindSourceItemByToken(order, self.ItemToken)
-			if sourceItem and sourceItem.Bag ~= nil then
-				self.Bag = sourceItem.Bag
-				self.Slot = sourceItem.Slot
-				SetSecureButtonAttribute(self, "target-bag", tonumber(self.Bag))
-				SetSecureButtonAttribute(self, "target-slot", tonumber(self.Slot))
-			end
-		end
-		if self.Bag ~= nil and self.Slot ~= nil and EC and EC.PrimeTrackedDisenchantItem then
-			EC.PrimeTrackedDisenchantItem(self.OrderId, self.ItemToken, self.Bag, self.Slot)
+	line.DisenchantButton:SetScript("OnClick", function(self)
+		if self.OrderId and self.ItemToken then
+			Workbench.CastDisenchantItem(self.OrderId, self.ItemToken)
 		end
 	end)
 	line.DisenchantButton:Hide()
@@ -5599,11 +5567,7 @@ function Workbench.Refresh()
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
 			elseif isTrackedInBag then
-				if CanUpdateSecureButton() then
-					line.NameText:SetPoint("RIGHT", line.DisenchantButton, "LEFT", -8, 0)
-				else
-					line.NameText:SetPoint("RIGHT", line.StatusCheck, "LEFT", -8, 0)
-				end
+				line.NameText:SetPoint("RIGHT", line.DisenchantButton, "LEFT", -8, 0)
 				line.CastButton:Hide()
 				ConfigureDisenchantButton(line.DisenchantButton, order.Id, item)
 				line.StatusCheck:Hide()
