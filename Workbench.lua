@@ -1614,6 +1614,15 @@ local function GetMaterialDisplayText(material)
 	return material.Link or material.Name or "Unknown Material"
 end
 
+local function GetRecipeDisplayText(recipeName)
+	local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
+
+	if TrimText(recipeLink) ~= "" then
+		return recipeLink
+	end
+	return recipeName
+end
+
 local function CreateFrameCompat(frameType, name, parent, template)
 	if not CreateFrame then
 		return nil
@@ -5767,14 +5776,14 @@ function Workbench.Refresh()
 			frame.Detail.RecipeLines[index] = CreateRecipeLine(frame.Detail.Content, index)
 		end
 		local line = frame.Detail.RecipeLines[index]
-		local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
+		local recipeText = GetRecipeDisplayText(recipeName)
 		displayedRecipeOccurrences[recipeName] = (displayedRecipeOccurrences[recipeName] or 0) + 1
 		local isVerified = IsRecipeVerifiedForDisplay(order, recipeName, displayedRecipeOccurrences[recipeName])
 		line.NameText:ClearAllPoints()
 		line.NameText:SetPoint("LEFT", line, "LEFT", 0, 0)
 		ClearDisenchantButton(line.DisenchantButton)
 		line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
-		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. (recipeLink or recipeName) .. (isVerified and "|r" or ""))
+		line.NameText:SetText((isVerified and "|cFF74D06C" or "") .. recipeText .. (isVerified and "|r" or ""))
 		line.CastButton.ActionKind = nil
 		line.CastButton.OrderId = nil
 		line.CastButton.ItemToken = nil

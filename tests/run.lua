@@ -2940,6 +2940,25 @@ local function test_message_prefix_keeps_literal_commas_inside_one_phrase()
     assert_true(string.find(whisper, "can do [Enchant Weapon - Mongoose]", 1, true) ~= nil, "single-prefix commas should still keep normal link spacing")
 end
 
+local function test_recipe_whisper_falls_back_when_saved_link_is_blank()
+    local addon = setup_env({
+        db = {
+            MsgPrefix = "I can do ",
+        },
+        char_db = {
+            RecipeLinks = {
+                ["Enchant Chest - Restore Mana Prime"] = "",
+            },
+        },
+    })
+
+    local whisper = addon.BuildRecipeWhisper({
+        ["Enchant Chest - Restore Mana Prime"] = true,
+    }, 1)
+
+    assert_equal(whisper, "I can do [Enchant Chest - Restore Mana Prime] ", "blank stored recipe links should not create empty recipe whispers")
+end
+
 local function test_parse_message_warns_for_incomplete_order()
     local addon, state = setup_env({
         db = {
@@ -5073,6 +5092,28 @@ local function test_workbench_detail_lines_keep_a_usable_width_after_refresh()
     assert_true((frame.ListScroll:GetHeight() or 0) < emptyQueueHeight, "a short queue should collapse so the detail pane gets more room")
 end
 
+local function test_workbench_detail_recipe_name_falls_back_when_saved_link_is_blank()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Restore Mana Prime"] = { "restore mana prime" },
+            },
+            RecipeLinks = {
+                ["Enchant Chest - Restore Mana Prime"] = "",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mp5 to chest pst", "Buyer-BlankLink")
+
+    assert_not_nil(frame.Detail.RecipeLines[1], "detail recipe line should still be created when the saved recipe link is blank")
+    assert_equal(frame.Detail.RecipesHeader.text, "Enchants", "normal enchant orders should still show the enchant section")
+    assert_equal(frame.Detail.RecipeLines[1].NameText.text, "Enchant Chest - Restore Mana Prime", "blank stored recipe links should fall back to the recipe name in the detail row")
+    assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "the row-level Cast action should stay beside the fallback recipe name")
+end
+
 local function test_workbench_resize_persists_saved_size_and_updates_layout()
     local addon = setup_env()
 
@@ -7037,6 +7078,7 @@ test_incomplete_order_settings_default_on()
 test_parse_message_invites_once_and_whispers_link()
 test_message_prefix_randomizes_across_comma_separated_choices()
 test_message_prefix_keeps_literal_commas_inside_one_phrase()
+test_recipe_whisper_falls_back_when_saved_link_is_blank()
 test_parse_message_warns_for_incomplete_order()
 test_parse_message_skips_incomplete_warning_when_disabled()
 test_incomplete_order_can_be_left_unflagged_until_corrected()
@@ -7094,6 +7136,7 @@ test_auction_search_uses_saved_scan_when_the_profession_window_is_closed()
 test_auction_search_requires_a_scan_when_no_recipe_data_is_available()
 test_workbench_refresh_survives_without_fontstring_setshown()
 test_workbench_detail_lines_keep_a_usable_width_after_refresh()
+test_workbench_detail_recipe_name_falls_back_when_saved_link_is_blank()
 test_workbench_resize_persists_saved_size_and_updates_layout()
 test_workbench_applies_elvui_skin_when_available()
 test_scan_selects_trade_skill_before_capturing_materials()

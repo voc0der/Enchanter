@@ -1,3 +1,8 @@
+## [2.1.83] - 2026-04-25
+
+### Fixed
+- Recipe whisper and workbench detail rows now fall back to the bracketed recipe name when the saved recipe link is blank, preventing empty whisper entries and missing labels
+
 ## [2.1.82] - 2026-04-25
 
 ### Fixed

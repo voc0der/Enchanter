@@ -3349,7 +3349,8 @@ function EC.BuildRecipeWhisper(recipeNames, requestedRecipeCount)
 	end
 
 	for _, recipeName in ipairs(matchedRecipeNames) do
-		msg = msg .. (EC.DBChar.RecipeLinks[recipeName] or ("[" .. recipeName .. "] "))
+		local recipeLink = EC.DBChar.RecipeLinks[recipeName]
+		msg = msg .. (NormalizeTextValue(recipeLink) ~= "" and recipeLink or ("[" .. recipeName .. "] "))
 	end
 
 	return msg
