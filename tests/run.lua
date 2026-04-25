@@ -3262,16 +3262,19 @@ local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat
             [1] = {
                 sender = "Alice",
                 subject = "pls de these",
+                days_left = 30,
                 attachments = { mailed_green },
             },
             [2] = {
                 sender = "Bob",
                 subject = "blue for de",
+                days_left = 29,
                 attachments = { mailed_blue },
             },
             [3] = {
                 sender = "Alice",
                 subject = "one more",
+                days_left = 28,
                 attachments = { mailed_green },
             },
         },
@@ -3931,14 +3934,20 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
     local de_button = line.DisenchantButton
 
     assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
-    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) == nil, "the direct disenchant shortcut must not make its recipe line protected")
-    assert_not_nil(de_button.scripts["OnClick"], "the direct disenchant shortcut should use the normal tracked-item click path")
-    assert_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should not rely on secure PreClick priming")
+    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) ~= nil, "the direct disenchant shortcut should use the secure action template for one-click cast-and-target")
+    assert_not_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should prime tracking in PreClick before the secure action fires")
     assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
     assert_true(line.CastButton.shown == false, "tracked mailbox items should hide the normal recipe button when the DE shortcut is shown")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
+    assert_equal(de_button.attributes["type"], "spell", "the secure DE button should carry the spell action type attribute")
+    assert_equal(de_button.attributes["target-bag"], 0, "the secure DE button should carry the tracked bag attribute")
+    assert_equal(de_button.attributes["target-slot"], 1, "the secure DE button should carry the tracked slot attribute")
 
-    de_button.scripts["OnClick"](de_button)
+    -- Fire PreClick (primes tracking and refreshes attributes), then simulate what the
+    -- secure template does: PerformAction casts the spell, then UseContainerItem targets the item.
+    de_button.scripts["PreClick"](de_button)
+    _G.CastSpellByName(de_button.attributes["spell"] or "Disenchant")
+    _G.C_Container.UseContainerItem(de_button.attributes["target-bag"], de_button.attributes["target-slot"])
 
     assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
     assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")
