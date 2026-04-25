@@ -1,3 +1,8 @@
+## [2.1.84] - 2026-04-25
+
+### Fixed
+- Restored the enchant section header and recipe rows in the detail pane by reverting `RecipesHeader` to a FontString; the Frame wrapper introduced earlier had zero width in the WoW client, clipping its layer content and making "Enchants" and the recipe rows invisible
+
 ## [2.1.83] - 2026-04-25
 
 ### Fixed

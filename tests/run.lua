@@ -5088,6 +5088,8 @@ local function test_workbench_detail_lines_keep_a_usable_width_after_refresh()
     assert_not_nil(frame.Detail.MaterialLines[1], "detail material lines should be created when a mats snapshot exists")
     assert_true((frame.Detail.RecipeLines[1]:GetWidth() or 0) > 100, "detail recipe rows should keep enough width to render their text and buttons")
     assert_true((frame.Detail.MaterialLines[1]:GetWidth() or 0) > 100, "detail material rows should keep enough width to render the tracked material status")
+    assert_equal(frame.Detail.RecipesHeader.shown, true, "enchants section header should be visible for a normal enchant order")
+    assert_equal(frame.Detail.RecipeLines[1].shown, true, "enchant recipe rows should be visible for a normal enchant order")
     assert_equal(frame.Detail.MatsHeader.shown, true, "materials header should stay visible when the selected order has queued mats")
     assert_true((frame.ListScroll:GetHeight() or 0) < emptyQueueHeight, "a short queue should collapse so the detail pane gets more room")
 end

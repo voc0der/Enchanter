@@ -1739,6 +1739,8 @@ local function ApplyFrameLayout(frame)
 			frame.Detail.Message,
 			frame.Detail.TradeHint,
 			frame.Detail.TipStatus,
+			frame.Detail.RecipesHeader,
+			frame.Detail.MatsHeader,
 			frame.Detail.Empty,
 			frame.Detail.ReadyText,
 		}) do
@@ -5104,15 +5106,8 @@ function Workbench.CreateFrame()
 	end)
 	frame.Detail.PrimaryCastButton:Hide()
 
-	do
-		local rh = CreateFrame("Frame", nil, frame.Detail.Content)
-		rh:SetHeight(12)
-		local rht = rh:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-		rht:SetPoint("TOPLEFT", rh, "TOPLEFT", 0, 0)
-		rht:SetText("Enchants")
-		rh.SetText = function(self, t) self.text = t; rht:SetText(t) end
-		frame.Detail.RecipesHeader = rh
-	end
+	frame.Detail.RecipesHeader = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	frame.Detail.RecipesHeader:SetText("Enchants")
 
 	frame.Detail.MatsHeader = frame.Detail.Content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	frame.Detail.MatsHeader:SetText("Materials")
