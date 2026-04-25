@@ -6480,6 +6480,53 @@ local function test_order_only_turns_verified_when_all_recipes_are_checked()
     assert_equal(frame.Detail.Title.text, "No active order selected", "detail meta should reset once the fully verified order retires")
 end
 
+local function test_partial_multi_enchant_trade_stays_queued()
+    local addon, state = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Stormherald", enchantment = "Mongoose" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose and minor speed pst", "Buyer-PartialMulti")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-PartialMulti")
+    assert_not_nil(order, "multi-enchant trade test should queue an order")
+    assert_equal(#order.Recipes, 2, "multi-enchant trade test should start with two requested enchants")
+
+    addon.Workbench.BeginTrade("Buyer-PartialMulti")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-PartialMulti")
+    local verifiedAfterFirstTrade, totalAfterFirstTrade = addon.Workbench.GetRecipeVerificationProgress(order)
+    local workbenchState = addon.Workbench.EnsureState()
+
+    assert_not_nil(order, "one completed enchant should leave a two-enchant order queued")
+    assert_equal(verifiedAfterFirstTrade, 1, "one completed enchant should verify exactly one recipe")
+    assert_equal(totalAfterFirstTrade, 2, "a partially completed multi-enchant order should keep its full recipe total")
+    assert_equal(workbenchState.CompletedOrders, 0, "a partially completed multi-enchant order should not increment completed orders")
+
+    state.trade_target_items = {
+        [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+    }
+
+    addon.Workbench.BeginTrade("Buyer-PartialMulti")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-PartialMulti"), "the multi-enchant order should retire only after the final requested enchant")
+    assert_equal(workbenchState.CompletedOrders, 1, "the multi-enchant order should complete once all requested enchants are verified")
+end
+
 local function test_recipe_lines_show_read_only_status_indicators()
     local addon = setup_env({
         char_db = {
@@ -7090,6 +7137,7 @@ test_declined_invite_order_auto_expires_when_timer_enabled()
 test_manual_reinvite_clears_declined_invite_timer()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
+test_partial_multi_enchant_trade_stays_queued()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_workbench_tracks_duplicate_recipe_verification_one_trade_at_a_time()
