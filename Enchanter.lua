@@ -43,7 +43,6 @@ local MAILBOX_DISENCHANT_RETURN_SUBJECT = "Your disenchant mats"
 local MAILBOX_DISENCHANT_RETURN_BODY = "Disenchanted the greens and blues you mailed over. Sending the mats back."
 local MAILBOX_LOCKBOX_RETURN_SUBJECT = "Your unlocked lockboxes"
 local MAILBOX_LOCKBOX_RETURN_BODY = "Unlocked the lockboxes you mailed over. Sending them back."
-local DISENCHANT_SHORTCUT_RETRY_DELAYS = { 0.05, 0.15, 0.35 }
 local MAILBOX_DISENCHANT_ITEM_CLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local MAILBOX_DISENCHANT_ITEM_CLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
 local MAILBOX_DISENCHANT_AUCTION_HOUSE_SENDER = "auction house"
@@ -1645,6 +1644,18 @@ function EC.HandlePotentialMailboxLoot(mailIndex, attachmentIndex)
 		return false
 	end
 
+	if EC.Workbench and EC.Workbench.EnsureState then
+		for _, order in ipairs(EC.Workbench.EnsureState().Orders or {}) do
+			if (order.Kind == "disenchant" or order.Kind == "lockbox") and order.Customer == itemInfo.Sender then
+				for _, item in ipairs(order.SourceItems or {}) do
+					if item.Status ~= "done" and NormalizeTextValue(item.LootKey) == lootKey then
+						return false
+					end
+				end
+			end
+		end
+	end
+
 	runtime.PendingLoots[#runtime.PendingLoots + 1] = itemInfo
 	return true
 end
@@ -1696,24 +1707,9 @@ function EC.HandleDisenchantReturnMailSent()
 end
 
 local function IsDisenchantSpellTargeting()
-	local targetingItem = (type(SpellIsTargeting) == "function" and SpellIsTargeting()) or (type(SpellCanTargetItem) == "function" and SpellCanTargetItem()) or false
-	local spellName = GetDisenchantSpellName()
-
-	if not targetingItem then
-		return false
-	end
-
-	if type(IsCurrentSpell) ~= "function" then
-		return true
-	end
-
-	local ok, isCurrentSpell = pcall(IsCurrentSpell, DISENCHANT_SPELL_ID)
-	if ok and isCurrentSpell then
-		return true
-	end
-
-	ok, isCurrentSpell = pcall(IsCurrentSpell, spellName)
-	return ok and isCurrentSpell or false
+	return (type(SpellCanTargetItem) == "function" and SpellCanTargetItem() and true)
+		or (type(SpellIsTargeting) == "function" and SpellIsTargeting() and true)
+		or false
 end
 
 function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
@@ -1753,22 +1749,6 @@ function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
 		return UseContainerItemCompat(bagIndex, slotIndex)
 	end
 
-	local function RetryTargetItem(attemptIndex)
-		if TryTargetTrackedItem() then
-			return
-		end
-
-		local nextDelay = DISENCHANT_SHORTCUT_RETRY_DELAYS[attemptIndex]
-		if nextDelay and C_Timer and C_Timer.After then
-			C_Timer.After(nextDelay, function()
-				RetryTargetItem(attemptIndex + 1)
-			end)
-			return
-		end
-
-		print("|cFFFF1C1CEnchanter|r Cast started, but the client did not expose a disenchant item target yet. Click the tracked item in your bag once to finish.")
-	end
-
 	bagIndex = tonumber(bagIndex)
 	slotIndex = tonumber(slotIndex)
 	if not orderId or not itemToken or bagIndex == nil or slotIndex == nil then
@@ -1787,14 +1767,7 @@ function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
 		return true
 	end
 
-	if C_Timer and C_Timer.After then
-		C_Timer.After(DISENCHANT_SHORTCUT_RETRY_DELAYS[1], function()
-			RetryTargetItem(2)
-		end)
-	else
-		print("|cFFFF1C1CEnchanter|r Click the tracked item in your bag after Disenchant starts targeting.")
-	end
-
+	print("|cFFFF1C1CEnchanter|r Disenchant started. Click the tracked item in your bag once to finish.")
 	return false
 end
 

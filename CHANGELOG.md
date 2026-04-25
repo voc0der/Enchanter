@@ -1,3 +1,11 @@
+## [2.1.77] - 2026-04-25
+
+### Fixed
+- Mailbox `DE` button now correctly clicks the tracked bag item in the same hardware-event context as the button click — `SpellIsTargeting` / `SpellCanTargetItem` is checked directly after casting, without the `IsCurrentSpell` guard that incorrectly returned false during item-selection targeting mode
+- Removed unreachable `C_Timer.After` retry chain from the disenchant cast path; timer callbacks lack hardware-event trust and could never call `UseContainerItem` successfully
+- Mailbox disenchant material results are now tracked correctly when the `DE` button is used, since the pending-disenchant state is properly primed before the item click
+- Autolooting the same attachment again after it has already been added to a workbench order no longer re-queues a ghost entry that could steal a `MAIL_SUCCESS` event from a subsequent mail
+
 ## [2.1.76] - 2026-04-24
 
 ### Fixed

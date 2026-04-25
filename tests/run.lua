@@ -3733,6 +3733,54 @@ local function test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late
     assert_equal(#order.SourceItems, 1, "workbench source insertion should also ignore a duplicate attachment key")
 end
 
+local function test_mailbox_loot_dedupes_take_after_item_already_in_order()
+    local mailed_green = {
+        item_id = 1005,
+        name = "Mailed Green Gloves",
+        link = "|cff1eff00|Hitem:1005::::::::|h[Mailed Green Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1005] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "first take for a player-mailed item should enter the pending queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "player-mailed gear should create a disenchant work order after MAIL_SUCCESS")
+    assert_equal(#order.SourceItems, 1, "only one source item should exist after the first loot")
+
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1) == false, "re-take for the same attachment should not re-queue once already in the order")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "order should still exist after the spurious re-take")
+    assert_equal(#order.SourceItems, 1, "spurious re-take after item is already tracked should not create a duplicate source item")
+end
+
 local function test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
     local mailed_green = {
         item_id = 1001,
@@ -6842,6 +6890,7 @@ test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
 test_mailbox_loot_prunes_legacy_untracked_duplicate_source_rows()
 test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
 test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
+test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 test_workbench_debug_output_is_printed()
