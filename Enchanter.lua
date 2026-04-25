@@ -831,7 +831,8 @@ local function GetItemInfoSnapshot(itemReference, fallbackName, fallbackLink, fa
 end
 
 local function GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
-	local sender, subject, codAmount
+	local sender, subject, codAmount, daysLeft
+	local normalizedDaysLeft
 	local itemName, itemId, _, itemCount, quality
 	local itemLink
 	local itemInfo
@@ -840,7 +841,7 @@ local function GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
 		return nil
 	end
 
-	_, _, sender, subject, _, codAmount = GetInboxHeaderInfo(mailIndex)
+	_, _, sender, subject, _, codAmount, daysLeft = GetInboxHeaderInfo(mailIndex)
 	if GetInboxItem then
 		itemName, itemId, _, itemCount, quality = GetInboxItem(mailIndex, attachmentIndex)
 	end
@@ -852,6 +853,11 @@ local function GetInboxAttachmentSnapshot(mailIndex, attachmentIndex)
 	itemInfo.Count = math.max(1, math.floor(tonumber(itemCount) or 1))
 	itemInfo.MailIndex = math.max(0, math.floor(tonumber(mailIndex) or 0))
 	itemInfo.AttachmentIndex = math.max(0, math.floor(tonumber(attachmentIndex) or 0))
+	normalizedDaysLeft = math.max(0, tonumber(daysLeft) or 0)
+	itemInfo.MailDaysLeft = normalizedDaysLeft
+	if normalizedDaysLeft > 0 then
+		itemInfo.MailExpiresAt = math.floor(MailboxNow() + (normalizedDaysLeft * 24 * 60 * 60) + 0.5)
+	end
 	return itemInfo
 end
 
@@ -963,7 +969,8 @@ local function GetPendingMailboxLootKey(itemInfo)
 	return table.concat({
 		NormalizeTextValue(itemInfo.MailboxJobKind),
 		NormalizeTextValue(itemInfo.Sender),
-		tostring(itemInfo.MailIndex or ""),
+		NormalizeTextValue(itemInfo.MailSubject),
+		tostring(itemInfo.MailExpiresAt or itemInfo.MailIndex or ""),
 		tostring(itemInfo.AttachmentIndex or ""),
 		itemPart,
 	}, ":")

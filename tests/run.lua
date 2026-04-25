@@ -3262,16 +3262,19 @@ local function test_mailbox_loot_queues_sender_disenchant_orders_and_pauses_chat
             [1] = {
                 sender = "Alice",
                 subject = "pls de these",
+                days_left = 30,
                 attachments = { mailed_green },
             },
             [2] = {
                 sender = "Bob",
                 subject = "blue for de",
+                days_left = 29,
                 attachments = { mailed_blue },
             },
             [3] = {
                 sender = "Alice",
                 subject = "one more",
+                days_left = 28,
                 attachments = { mailed_green },
             },
         },
@@ -3733,6 +3736,59 @@ local function test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late
     assert_equal(#order.SourceItems, 1, "workbench source insertion should also ignore a duplicate attachment key")
 end
 
+local function test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
+    local mailed_green = {
+        item_id = 1005,
+        name = "Mailed Green Gloves",
+        link = "|cff1eff00|Hitem:1005::::::::|h[Mailed Green Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        current_time = 100,
+        item_cache = {
+            [1005] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "same batch",
+                days_left = 30.10,
+                attachments = { mailed_green },
+            },
+            [2] = {
+                sender = "Alice",
+                subject = "same batch",
+                days_left = 30.11,
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+                [2] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "the first same-hour mail should enter the pending queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+    assert_true(addon.HandlePotentialMailboxLoot(2, 1), "a distinct mail from the same sender in the same expiration hour should not be deduped")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "same-hour mails should still create one sender work order")
+    assert_equal(#order.SourceItems, 2, "same-hour same-item mails should both be tracked")
+    assert_true(order.SourceItems[1].LootKey ~= order.SourceItems[2].LootKey, "distinct same-hour mails should carry distinct stable loot keys")
+end
+
 local function test_mailbox_loot_dedupes_take_after_item_already_in_order()
     local mailed_green = {
         item_id = 1005,
@@ -3931,14 +3987,20 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
     local de_button = line.DisenchantButton
 
     assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
-    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) == nil, "the direct disenchant shortcut must not make its recipe line protected")
-    assert_not_nil(de_button.scripts["OnClick"], "the direct disenchant shortcut should use the normal tracked-item click path")
-    assert_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should not rely on secure PreClick priming")
+    assert_true(string.find(de_button.template or "", "SecureActionButtonTemplate", 1, true) ~= nil, "the direct disenchant shortcut should use the secure action template for one-click cast-and-target")
+    assert_not_nil(de_button.scripts["PreClick"], "the direct disenchant shortcut should prime tracking in PreClick before the secure action fires")
     assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
     assert_true(line.CastButton.shown == false, "tracked mailbox items should hide the normal recipe button when the DE shortcut is shown")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
+    assert_equal(de_button.attributes["type"], "spell", "the secure DE button should carry the spell action type attribute")
+    assert_equal(de_button.attributes["target-bag"], 0, "the secure DE button should carry the tracked bag attribute")
+    assert_equal(de_button.attributes["target-slot"], 1, "the secure DE button should carry the tracked slot attribute")
 
-    de_button.scripts["OnClick"](de_button)
+    -- Fire PreClick (primes tracking and refreshes attributes), then simulate what the
+    -- secure template does: PerformAction casts the spell, then UseContainerItem targets the item.
+    de_button.scripts["PreClick"](de_button)
+    _G.CastSpellByName(de_button.attributes["spell"] or "Disenchant")
+    _G.C_Container.UseContainerItem(de_button.attributes["target-bag"], de_button.attributes["target-slot"])
 
     assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
     assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")
@@ -6890,6 +6952,7 @@ test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
 test_mailbox_loot_prunes_legacy_untracked_duplicate_source_rows()
 test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
 test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
+test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
 test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
