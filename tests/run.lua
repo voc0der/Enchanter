@@ -3736,6 +3736,59 @@ local function test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late
     assert_equal(#order.SourceItems, 1, "workbench source insertion should also ignore a duplicate attachment key")
 end
 
+local function test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
+    local mailed_green = {
+        item_id = 1005,
+        name = "Mailed Green Gloves",
+        link = "|cff1eff00|Hitem:1005::::::::|h[Mailed Green Gloves]|h|r",
+        quality = 2,
+        item_type = "Armor",
+        item_sub_type = "Leather",
+        equip_loc = "INVTYPE_HAND",
+        class_id = 4,
+        subclass_id = 2,
+        bind_type = 2,
+        count = 1,
+    }
+    local addon, state = setup_env({
+        current_time = 100,
+        item_cache = {
+            [1005] = mailed_green,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "same batch",
+                days_left = 30.10,
+                attachments = { mailed_green },
+            },
+            [2] = {
+                sender = "Alice",
+                subject = "same batch",
+                days_left = 30.11,
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+                [2] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    assert_true(addon.HandlePotentialMailboxLoot(1, 1), "the first same-hour mail should enter the pending queue")
+    state.event_handlers["MAIL_SUCCESS"]()
+    assert_true(addon.HandlePotentialMailboxLoot(2, 1), "a distinct mail from the same sender in the same expiration hour should not be deduped")
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    assert_not_nil(order, "same-hour mails should still create one sender work order")
+    assert_equal(#order.SourceItems, 2, "same-hour same-item mails should both be tracked")
+    assert_true(order.SourceItems[1].LootKey ~= order.SourceItems[2].LootKey, "distinct same-hour mails should carry distinct stable loot keys")
+end
+
 local function test_mailbox_loot_dedupes_take_after_item_already_in_order()
     local mailed_green = {
         item_id = 1005,
@@ -6899,6 +6952,7 @@ test_mailbox_loot_removes_saved_auction_house_disenchant_orders()
 test_mailbox_loot_prunes_legacy_untracked_duplicate_source_rows()
 test_mailbox_loot_dedupes_repeated_take_for_same_attachment()
 test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
+test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
 test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_offer_direct_de_shortcuts()

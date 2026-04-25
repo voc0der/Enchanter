@@ -1077,6 +1077,7 @@ local function ClearDisenchantButton(button)
 	button.Bag = nil
 	button.Slot = nil
 	SetSecureButtonAttribute(button, "type", nil)
+	SetSecureButtonAttribute(button, "spell", nil)
 	SetSecureButtonAttribute(button, "target-bag", nil)
 	SetSecureButtonAttribute(button, "target-slot", nil)
 	if button.Hide and CanUpdateSecureButton() then

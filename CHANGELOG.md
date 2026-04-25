@@ -1,3 +1,9 @@
+## [2.1.78] - 2026-04-25
+
+### Fixed
+- Mailbox `DE` rows use the secure spell-button path again so one click casts Disenchant and targets the tracked bag item, while combat refreshes avoid protected button updates
+- Mailbox loot keys now use a higher-resolution mail expiration fingerprint, preventing same-sender items from different mails in the same expiration hour from collapsing into one workbench row
+
 ## [2.1.77] - 2026-04-25
 
 ### Fixed
