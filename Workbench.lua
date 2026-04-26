@@ -1071,24 +1071,6 @@ local function ClearDisenchantButton(button)
 	end
 end
 
-local function ConfigureDisenchantButton(button, orderId, item)
-	if not button or not item then
-		return
-	end
-
-	button.ActionKind = "disenchant"
-	button.OrderId = orderId
-	button.ItemToken = item.Token
-	button.Bag = item.Bag
-	button.Slot = item.Slot
-	if button.SetText then
-		button:SetText("DE")
-	end
-	if button.Show then
-		button:Show()
-	end
-end
-
 local function EnsureOrderFields(order)
 	local nextSourceItemToken = 1
 	local normalizedReturnMaterials = {}
@@ -2698,36 +2680,6 @@ function Workbench.PrepareReturnMail(orderId)
 
 	if IsDisenchantOrder(order) and EC and EC.PrepareDisenchantReturnMail then
 		return EC.PrepareDisenchantReturnMail(order.Id)
-	end
-
-	return false
-end
-
-function Workbench.CastDisenchantItem(orderId, itemToken)
-	local order = Workbench.GetOrderById(orderId)
-	local sourceItem
-
-	if not IsDisenchantOrder(order) then
-		return false
-	end
-
-	if EC and EC.SyncDisenchantInventoryTracking then
-		EC.SyncDisenchantInventoryTracking()
-		order = Workbench.GetOrderById(orderId)
-	end
-
-	sourceItem = FindSourceItemByToken(order, itemToken)
-	if not sourceItem or sourceItem.Status == "done" then
-		return false
-	end
-
-	if sourceItem.Bag == nil or sourceItem.Slot == nil then
-		print("|cFFFF1C1CEnchanter|r Couldn't find that tracked mailbox item in your bags yet. Try moving it once or reopening the mailbox to refresh tracking.")
-		return false
-	end
-
-	if EC and EC.CastTrackedDisenchantItem then
-		return EC.CastTrackedDisenchantItem(order.Id, sourceItem.Token, sourceItem.Bag, sourceItem.Slot)
 	end
 
 	return false
@@ -4736,9 +4688,7 @@ local function CreateRecipeLine(parent, index)
 	end
 	ApplyElvUISkin(line.CastButton, "button")
 	line.CastButton:SetScript("OnClick", function(self)
-		if self.ActionKind == "disenchant" and self.OrderId and self.ItemToken then
-			Workbench.CastDisenchantItem(self.OrderId, self.ItemToken)
-		elseif self.RecipeName then
+		if self.RecipeName then
 			Workbench.CastRecipe(self.RecipeName)
 		end
 	end)
@@ -4746,16 +4696,11 @@ local function CreateRecipeLine(parent, index)
 	line.DisenchantButton = CreateFrame("Button", nil, line, "UIPanelButtonTemplate")
 	line.DisenchantButton:SetSize(56, 20)
 	line.DisenchantButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
-	line.DisenchantButton:SetText("DE")
+	line.DisenchantButton:SetText("")
 	if line.DisenchantButton.SetFrameLevel and line.GetFrameLevel then
 		line.DisenchantButton:SetFrameLevel(line:GetFrameLevel() + 2)
 	end
 	ApplyElvUISkin(line.DisenchantButton, "button")
-	line.DisenchantButton:SetScript("OnClick", function(self)
-		if self.OrderId and self.ItemToken then
-			Workbench.CastDisenchantItem(self.OrderId, self.ItemToken)
-		end
-	end)
 	line.DisenchantButton:Hide()
 	line.NameText:SetPoint("RIGHT", line.CastButton, "LEFT", -8, 0)
 	line.CastButton:Show()
@@ -5092,9 +5037,9 @@ function Workbench.CreateFrame()
 	frame.Detail.ReturnMailButton:Hide()
 
 	frame.Detail.PrimaryCastButton = CreateFrame("Button", nil, frame.Detail.ActionRow, "UIPanelButtonTemplate")
-	frame.Detail.PrimaryCastButton:SetSize(56, 20)
+	frame.Detail.PrimaryCastButton:SetSize(76, 20)
 	frame.Detail.PrimaryCastButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
-	frame.Detail.PrimaryCastButton:SetText("Cast")
+	frame.Detail.PrimaryCastButton:SetText("Autocast")
 	if frame.Detail.PrimaryCastButton.SetFrameLevel and frame.Detail.ActionRow.GetFrameLevel then
 		frame.Detail.PrimaryCastButton:SetFrameLevel(frame.Detail.ActionRow:GetFrameLevel() + 2)
 	end
@@ -5583,7 +5528,7 @@ function Workbench.Refresh()
 		elseif completedItems > 0 then
 			frame.Detail.TipStatus:SetText(string.format("%d/%d mailed items are finished and stacked into return mats.", completedItems, totalItems))
 		elseif trackedBagItems > 0 then
-			frame.Detail.TipStatus:SetText("Tracked bag items show DE. Click it to cast Disenchant on that item from the workbench.")
+			frame.Detail.TipStatus:SetText("Tracked bag items show B. Cast Disenchant normally, then click the item in your bag.")
 		else
 			frame.Detail.TipStatus:SetText("Looted mailbox gear will keep stacking here until it's all disenchanted.")
 		end
@@ -5622,13 +5567,8 @@ function Workbench.Refresh()
 				line.StatusCheck:Show()
 				line.StatusText:Hide()
 			elseif isTrackedInBag then
-				line.NameText:SetPoint("RIGHT", line.DisenchantButton, "LEFT", -8, 0)
+				line.NameText:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -8, 0)
 				line.CastButton:Hide()
-				if line.DisenchantButton.ClearAllPoints and line.StatusAnchor then
-					line.DisenchantButton:ClearAllPoints()
-					line.DisenchantButton:SetPoint("RIGHT", line.StatusAnchor, "LEFT", -6, 0)
-				end
-				ConfigureDisenchantButton(line.DisenchantButton, order.Id, item)
 				line.StatusCheck:Hide()
 				line.StatusText:SetText("B")
 				line.StatusText:Show()
@@ -5675,7 +5615,7 @@ function Workbench.Refresh()
 		elseif completedItems > 0 then
 			frame.Detail.ReadyText:SetText("|cFFFFD26AResults are being tracked as the mailed gear gets disenchanted. More mailbox items from this sender will keep spooling into the same order.|r")
 		else
-			frame.Detail.ReadyText:SetText("|cFFFFD26ALoot BoE greens or blues from the mailbox and they will keep stacking here for this sender. Disenchant the tracked items and the return mats will fill in automatically.|r")
+			frame.Detail.ReadyText:SetText("|cFFFFD26ALoot BoE greens or blues from the mailbox and they will keep stacking here for this sender. Cast Disenchant normally and click tracked items in your bags; return mats fill in automatically.|r")
 		end
 		frame.Detail.ReadyText:Show()
 
@@ -5741,7 +5681,7 @@ function Workbench.Refresh()
 	frame.Detail.CompleteButton:SetText("Complete")
 	frame.Detail.CompleteButton:Hide()
 	frame.Detail.PrimaryCastButton.RecipeName = primaryRecipeName
-	frame.Detail.PrimaryCastButton:SetText(activeTrade and "Apply" or "Cast")
+	frame.Detail.PrimaryCastButton:SetText(activeTrade and "Apply" or "Autocast")
 	frame.Detail.PrimaryCastButton:ClearAllPoints()
 	frame.Detail.PrimaryCastButton:SetPoint("RIGHT", frame.Detail.ActionRow, "RIGHT", 0, 0)
 	if primaryRecipeName then

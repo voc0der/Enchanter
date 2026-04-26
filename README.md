@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.82`
+Current version: `2.1.85`
 
 ## What It Does
 
@@ -73,14 +73,14 @@ Current version: `2.1.82`
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
 - When every requested enchant is verified, the workbench watches live trade gold automatically and retires the order on its own, even if the final tip is `0g`.
-- Player-mailed BoE greens and blues create mailbox disenchant rows while Auction House item mail is ignored; rows show `DE` once Enchanter has found the item in your bags, and the row flips to a green check automatically when it resolves into return mats.
+- Player-mailed BoE greens and blues create mailbox disenchant rows while Auction House item mail is ignored; rows show `B` once Enchanter has found the item in your bags, then listen for you to cast Disenchant normally and click that bag item so the row can record the returned mats.
 - Player-mailed lockboxes create separate mailbox rows, group by sender, and flip to green checks when the tracked bag slot reports the box has been unlocked.
 - A footer line near the resize grip keeps a rolling `orders / done / tips` summary across reloads and relogs.
 - Use the header `Clear` button to wipe the current queue, reset the running totals, and clear the detail pane if you want a fresh slate.
 - Drag the `Resize` handle in the lower-right corner to resize the workbench; the queue and detail panes will resize with it.
-- Normal enchant orders keep a `Cast` / `Apply` action beside the tip status as well as on the recipe row, and matching trades switch those actions to `Apply` for the trade-slot flow.
+- Normal enchant orders keep an order-level `Autocast` / `Apply` action beside the tip status plus a row-level `Cast` / `Apply` action on the recipe row, and matching trades switch those actions to `Apply` for the trade-slot flow.
 - `Apply` is an optional shortcut for picking the queued enchant; once both sides accept, the workbench records the trade gold, flips matching mats to green checks, and marks the applied enchant automatically when the trade slot reports it, including late completion updates.
-- `Cast` / `Apply` now temporarily clears remembered enchanting profession searches and older Craft filters so queued enchants can still be selected reliably before the previous UI state is restored.
+- `Autocast`, `Cast`, and `Apply` temporarily clear remembered enchanting profession searches and older Craft filters so queued enchants can still be selected reliably before the previous UI state is restored.
 - If they tip during earlier mat trades before the final enchant trade, that gold stays attached to the order until the verified trade retires it automatically.
 - Short queues now collapse to give the selected order more vertical room, and long detail panes stay inside the workbench frame with an internal scroll area.
 - Requested enchants now show `?` until a settled trade confirms them, then flip to a green check automatically.
