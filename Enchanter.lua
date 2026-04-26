@@ -36,7 +36,6 @@ local randomFallbackCounter = 0
 local AUCTIONATOR_CALLER_ID = TOCNAME or "Enchanter"
 local ENCHANTING_SPELL_ID = 7411
 local ENCHANTING_SKILL_LINE_ID = 333
-local DISENCHANT_SPELL_ID = 13262
 local RECIPE_FORMULA_PREFIX = "Formula: "
 local MAILBOX_DISENCHANT_PAUSE_MESSAGE = "|cFFFF1C1CEnchanter|r Paused chat scanning after mailbox work started."
 local MAILBOX_DISENCHANT_RETURN_SUBJECT = "Your disenchant mats"
@@ -755,12 +754,10 @@ local function MailboxNow()
 	return 0
 end
 
-local function GetDisenchantSpellName()
-	local spellName = GetSpellInfo and GetSpellInfo(DISENCHANT_SPELL_ID) or nil
+EC.GetDisenchantSpellName = function()
+	local spellName = GetSpellInfo and GetSpellInfo(13262) or nil
 	return NormalizeTextValue(spellName) ~= "" and spellName or "Disenchant"
 end
-
-EC.GetDisenchantSpellName = GetDisenchantSpellName
 
 local function NormalizePlayerName(value)
 	value = NormalizeTextValue(value):lower()
@@ -1097,6 +1094,14 @@ local function CaptureBagSnapshot()
 	return snapshot
 end
 
+EC.CopyMailboxCountMap = function(counts)
+	local out = {}
+	for key, count in pairs(counts or {}) do
+		out[key] = count
+	end
+	return out
+end
+
 local function FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	if not (EC.Workbench and EC.Workbench.EnsureState) then
 		return nil, nil
@@ -1115,23 +1120,7 @@ local function FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	return nil, nil
 end
 
-local function FindTrackedDisenchantItemByToken(orderId, itemToken)
-	local order = EC.Workbench and EC.Workbench.GetOrderById and EC.Workbench.GetOrderById(orderId) or nil
-
-	if not order or order.Kind ~= "disenchant" then
-		return nil, nil
-	end
-
-	for _, item in ipairs(order.SourceItems or {}) do
-		if item.Status ~= "done" and item.Token == itemToken then
-			return order, item
-		end
-	end
-
-	return nil, nil
-end
-
-local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
+local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, beforeCounts)
 	local snapshot
 	local runtime
 
@@ -1153,11 +1142,11 @@ local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
 		Bag = bagIndex,
 		Slot = slotIndex,
 		ItemKey = GetMailboxBagCountKey(sourceItem),
-		BeforeCounts = snapshot.Counts,
-		ResolveAfter = MailboxNow() + 1.5,
+		BeforeCounts = EC.CopyMailboxCountMap(beforeCounts or snapshot.Counts),
+		ResolveAfter = MailboxNow() + 8,
 	}
 	if C_Timer and C_Timer.After then
-		C_Timer.After(1.6, function()
+		C_Timer.After(8.1, function()
 			local pendingAction = GetMailboxDisenchantRuntime().PendingDisenchant
 			if pendingAction
 				and pendingAction.OrderId == order.Id
@@ -1171,6 +1160,38 @@ local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
 		end)
 	end
 	return true
+end
+
+EC.CaptureRecentMailboxItemTargeting = function()
+	local runtime = GetMailboxDisenchantRuntime()
+	local isItemTargeting = (type(SpellCanTargetItem) == "function" and SpellCanTargetItem() and true)
+		or (type(SpellCanTargetItemID) == "function" and SpellCanTargetItemID() and true)
+		or (type(SpellIsTargeting) == "function" and SpellIsTargeting() and true)
+		or false
+
+	if isItemTargeting then
+		local snapshot = CaptureBagSnapshot()
+		runtime.RecentItemTargeting = {
+			Active = true,
+			BeforeCounts = EC.CopyMailboxCountMap(snapshot.Counts),
+			UpdatedAt = MailboxNow(),
+			ExpiresAt = nil,
+		}
+	elseif runtime.RecentItemTargeting then
+		runtime.RecentItemTargeting.Active = false
+		runtime.RecentItemTargeting.ExpiresAt = MailboxNow() + 2
+	end
+end
+
+EC.GetRecentMailboxItemTargetingCounts = function()
+	local recent = GetMailboxDisenchantRuntime().RecentItemTargeting
+	if not recent then
+		return nil
+	end
+	if recent.Active or MailboxNow() <= (tonumber(recent.ExpiresAt) or 0) then
+		return recent.BeforeCounts
+	end
+	return nil
 end
 
 local function SyncDisenchantBagAssignments(snapshot)
@@ -1366,12 +1387,16 @@ local function ResolvePendingDisenchantAction(snapshot)
 	end
 
 	materialDelta = BuildPositiveMaterialDelta(snapshot, pendingAction.BeforeCounts, pendingAction.ItemKey)
-	if next(materialDelta) ~= nil or MailboxNow() >= (tonumber(pendingAction.ResolveAfter) or 0) then
+	if next(materialDelta) ~= nil then
 		runtime.PendingDisenchant = nil
 		if EC.Workbench and EC.Workbench.MarkDisenchantItemProcessed then
 			EC.Workbench.MarkDisenchantItemProcessed(order.Id, pendingAction.ItemToken, materialDelta)
 		end
 		return true
+	end
+
+	if MailboxNow() >= (tonumber(pendingAction.ResolveAfter) or 0) then
+		runtime.PendingDisenchant = nil
 	end
 
 	return false
@@ -1406,18 +1431,6 @@ local function PickupContainerItemCompat(bagIndex, slotIndex)
 	end
 	if type(PickupContainerItem) == "function" then
 		PickupContainerItem(bagIndex, slotIndex)
-		return true
-	end
-	return false
-end
-
-local function UseContainerItemCompat(bagIndex, slotIndex)
-	if C_Container and type(C_Container.UseContainerItem) == "function" then
-		C_Container.UseContainerItem(bagIndex, slotIndex)
-		return true
-	end
-	if type(UseContainerItem) == "function" then
-		UseContainerItem(bagIndex, slotIndex)
 		return true
 	end
 	return false
@@ -1715,6 +1728,7 @@ end
 
 local function IsDisenchantSpellTargeting()
 	return (type(SpellCanTargetItem) == "function" and SpellCanTargetItem() and true)
+		or (type(SpellCanTargetItemID) == "function" and SpellCanTargetItemID() and true)
 		or (type(SpellIsTargeting) == "function" and SpellIsTargeting() and true)
 		or false
 end
@@ -1722,8 +1736,10 @@ end
 function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 	local order
 	local sourceItem
+	local beforeCounts
 
-	if not IsDisenchantSpellTargeting() then
+	beforeCounts = EC.GetRecentMailboxItemTargetingCounts()
+	if not IsDisenchantSpellTargeting() and not beforeCounts then
 		return false
 	end
 
@@ -1732,50 +1748,7 @@ function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 		return false
 	end
 
-	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
-end
-
-function EC.PrimeTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
-	local order
-	local sourceItem
-
-	order, sourceItem = FindTrackedDisenchantItemByToken(orderId, itemToken)
-	if not order or not sourceItem then
-		return false
-	end
-
-	return PrimePendingDisenchant(order, sourceItem, bagIndex or sourceItem.Bag, slotIndex or sourceItem.Slot)
-end
-
-function EC.CastTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
-	local function TryTargetTrackedItem()
-		if not IsDisenchantSpellTargeting() then
-			return false
-		end
-		EC.PrimeTrackedDisenchantItem(orderId, itemToken, bagIndex, slotIndex)
-		return UseContainerItemCompat(bagIndex, slotIndex)
-	end
-
-	bagIndex = tonumber(bagIndex)
-	slotIndex = tonumber(slotIndex)
-	if not orderId or not itemToken or bagIndex == nil or slotIndex == nil then
-		return false
-	end
-
-	if TryTargetTrackedItem() then
-		return true
-	end
-
-	if CastSpellByName then
-		CastSpellByName(GetDisenchantSpellName())
-	end
-
-	if TryTargetTrackedItem() then
-		return true
-	end
-
-	print("|cFFFF1C1CEnchanter|r Disenchant started. Click the tracked item in your bag once to finish.")
-	return false
+	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, beforeCounts)
 end
 
 local function InstallMailboxDisenchantHooks()
@@ -4372,6 +4345,13 @@ local function Event_ITEM_UNLOCKED()
 	end
 end
 
+EC.HandleCurrentSpellCastChanged = function()
+	if not IsAddonActive() then
+		return
+	end
+	EC.CaptureRecentMailboxItemTargeting()
+end
+
 local function Event_UI_CONTEXT_REFRESH()
 	if not IsAddonActive() then
 		return
@@ -4514,6 +4494,7 @@ RegisterActiveEvents = function()
 	EC.Tool.RegisterEvent("MAIL_FAILED", Event_MAIL_FAILED)
 	EC.Tool.RegisterEvent("BAG_UPDATE_DELAYED", Event_BAG_UPDATE_DELAYED)
 	EC.Tool.RegisterEvent("ITEM_UNLOCKED", Event_ITEM_UNLOCKED)
+	EC.Tool.RegisterEvent("CURRENT_SPELL_CAST_CHANGED", EC.HandleCurrentSpellCastChanged)
 	EC.Tool.RegisterEvent("CHAT_MSG_CHANNEL", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_SAY", Event_CHAT_MSG_CHANNEL)
 	EC.Tool.RegisterEvent("CHAT_MSG_YELL", Event_CHAT_MSG_CHANNEL)

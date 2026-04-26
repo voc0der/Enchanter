@@ -3941,7 +3941,7 @@ local function test_mailbox_disenchant_tracking_records_results_and_prepares_ret
     assert_nil(addon.Workbench.GetDisenchantOrderByCustomer("Alice"), "successfully sending return mail should retire the mailbox disenchant work order")
 end
 
-local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
+local function test_mailbox_disenchant_rows_listen_for_manual_de_results()
     local mailed_green = {
         item_id = 1001,
         name = "Mailed Green Blade",
@@ -4003,20 +4003,25 @@ local function test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
 
     local frame = addon.Workbench.Frame
     local line = frame.Detail.RecipeLines[1]
-    local de_button = line.DisenchantButton
 
-    assert_equal(de_button.text, "DE", "tracked mailbox items should expose a direct disenchant shortcut")
-    assert_not_nil(de_button.scripts["OnClick"], "the direct disenchant shortcut should cast via OnClick")
-    assert_true(de_button.shown == true, "tracked mailbox items should show the direct disenchant shortcut button")
-    assert_true(line.CastButton.shown == false, "tracked mailbox items should hide the normal recipe button when the DE shortcut is shown")
+    assert_true(line.DisenchantButton.shown == false, "tracked mailbox items should not offer a direct disenchant shortcut")
+    assert_true(line.CastButton.shown == false, "tracked mailbox items should not reuse the normal recipe button")
     assert_equal(line.StatusText.text, "B", "tracked mailbox items should still show that they were found in bags")
+    assert_true(string.find(frame.Detail.TipStatus.text or "", "Cast Disenchant normally", 1, true) ~= nil, "detail text should point players to the normal Disenchant flow")
 
-    -- Fire OnClick: CastDisenchantItem syncs inventory, casts the spell, and targets the item.
-    de_button.scripts["OnClick"](de_button)
+    state.current_spell_name = "Disenchant"
+    state.spell_is_targeting = true
+    state.spell_can_target_item = true
+    state.event_handlers["CURRENT_SPELL_CAST_CHANGED"]()
 
-    assert_equal(state.last_cast, "Disenchant", "the mailbox shortcut should cast Disenchant")
-    assert_equal(state.bag_use_calls[1].bag, 0, "the mailbox shortcut should target the tracked bag location")
-    assert_equal(state.bag_use_calls[1].slot, 1, "the mailbox shortcut should target the tracked bag slot")
+    state.spell_is_targeting = false
+    state.spell_can_target_item = false
+    state.event_handlers["CURRENT_SPELL_CAST_CHANGED"]()
+    C_Container.UseContainerItem(0, 1)
+
+    assert_nil(state.last_cast, "manual disenchant tracking should not cast Disenchant from the addon")
+    assert_equal(state.bag_use_calls[1].bag, 0, "the manual bag click should still go through the normal container API")
+    assert_equal(state.bag_use_calls[1].slot, 1, "the manual bag click should target the tracked bag slot")
 
     set_bag_item(state, 0, 1, nil)
     set_bag_item(state, 0, 2, arcane_dust)
@@ -4052,7 +4057,7 @@ local function test_recipe_action_reappears_after_mailbox_row_reuse()
     addon.Workbench.Refresh()
 
     local line = frame.Detail.RecipeLines[1]
-    assert_true(line.DisenchantButton.shown, "tracked mailbox rows should show the DE shortcut before the row is reused")
+    assert_true(line.DisenchantButton.shown == false, "tracked mailbox rows should not show a direct disenchant shortcut before the row is reused")
     assert_true(line.CastButton.shown == false, "tracked mailbox rows should hide the normal cast action before the row is reused")
 
     addon.ParseMessage("LF minor speed pst", "Buyer-Reuse")
@@ -4062,7 +4067,7 @@ local function test_recipe_action_reappears_after_mailbox_row_reuse()
     line = frame.Detail.RecipeLines[1]
     assert_true(line.CastButton.shown, "normal enchant rows should restore the Cast action after reusing a mailbox row")
     assert_equal(line.CastButton.text, "Cast", "restored normal enchant actions should read Cast")
-    assert_true(line.DisenchantButton.shown == false, "normal enchant rows should hide the mailbox-only DE shortcut")
+    assert_true(line.DisenchantButton.shown == false, "normal enchant rows should hide the mailbox-only disenchant control")
     assert_equal(line.CastButton.points[1][2], line.StatusAnchor, "normal enchant actions should anchor to the row status frame instead of a texture region")
 end
 
@@ -5652,8 +5657,8 @@ local function test_grouped_customer_join_auto_shows_hidden_workbench()
     assert_true(workbenchState.Visible, "auto-show should persist the visible workbench state")
     assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "joining the group should keep the row-level Cast action visible")
     assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Cast", "row-level recipe actions should still read Cast after the customer joins")
-    assert_true(frame.Detail.PrimaryCastButton.shown, "joining the group should keep the order-level Cast action visible")
-    assert_equal(frame.Detail.PrimaryCastButton.text, "Cast", "order-level recipe actions should still read Cast after the customer joins")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "joining the group should keep the order-level Autocast action visible")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Autocast", "order-level recipe actions should still read Autocast after the customer joins")
 end
 
 local function test_workbench_cast_selects_trade_skill_and_uses_create_count()
@@ -6933,8 +6938,8 @@ local function test_active_trade_updates_recipe_button_to_apply()
 
     assert_true(frame.Detail.RecipeLines[1].CastButton.shown, "queued recipe actions should show the Cast button before trade")
     assert_equal(frame.Detail.RecipeLines[1].CastButton.text, "Cast", "queued recipe actions should read Cast before trade")
-    assert_true(frame.Detail.PrimaryCastButton.shown, "queued orders should expose the order-level Cast action")
-    assert_equal(frame.Detail.PrimaryCastButton.text, "Cast", "queued order-level recipe actions should read Cast")
+    assert_true(frame.Detail.PrimaryCastButton.shown, "queued orders should expose the order-level Autocast action")
+    assert_equal(frame.Detail.PrimaryCastButton.text, "Autocast", "queued order-level recipe actions should read Autocast")
 
     addon.Workbench.BeginTrade("Buyer-Apply")
 
@@ -7102,7 +7107,7 @@ test_mailbox_loot_dedupes_attachment_when_item_link_hydrates_late()
 test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
 test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
-test_mailbox_disenchant_rows_offer_direct_de_shortcuts()
+test_mailbox_disenchant_rows_listen_for_manual_de_results()
 test_recipe_action_reappears_after_mailbox_row_reuse()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()

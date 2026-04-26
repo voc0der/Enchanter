@@ -1,3 +1,9 @@
+## [2.1.85] - 2026-04-26
+
+### Changed
+- Renamed the order-level workbench `Cast` action to `Autocast` so it no longer looks identical to the per-recipe `Cast` button.
+- Removed the mailbox disenchant shortcut button from tracked bag rows; Enchanter now listens for the normal Disenchant target click and records the returned mats passively.
+
 ## [2.1.84] - 2026-04-25
 
 ### Fixed
