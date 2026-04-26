@@ -1,3 +1,8 @@
+## [2.1.86] - 2026-04-26
+
+### Fixed
+- Return mail for DE orders now splits merged mat stacks correctly; previously if DE yield landed on top of a pre-existing stack the slot was skipped entirely, leaving mats unattached
+
 ## [2.1.85] - 2026-04-26
 
 ### Changed
