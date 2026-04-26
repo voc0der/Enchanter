@@ -1436,6 +1436,18 @@ local function PickupContainerItemCompat(bagIndex, slotIndex)
 	return false
 end
 
+local function SplitContainerItemCompat(bagIndex, slotIndex, count)
+	if C_Container and type(C_Container.SplitContainerItem) == "function" then
+		C_Container.SplitContainerItem(bagIndex, slotIndex, count)
+		return true
+	end
+	if type(SplitContainerItem) == "function" then
+		SplitContainerItem(bagIndex, slotIndex, count)
+		return true
+	end
+	return false
+end
+
 local function CountSendMailAttachments()
 	local attachmentLimit = math.max(1, math.floor(tonumber(_G and _G.ATTACHMENTS_MAX_SEND or 12) or 12))
 	local attachmentCount = 0
@@ -1479,11 +1491,20 @@ local function AttachTrackedReturnMaterials(order)
 		if attachedStacks >= attachmentLimit then
 			break
 		end
-		if key ~= "" and remaining[key] and remaining[key] > 0 and stackCount > 0 and stackCount <= remaining[key] then
-			if PickupContainerItemCompat(itemInfo.Bag, itemInfo.Slot) and type(ClickSendMailItemButton) == "function" then
-				ClickSendMailItemButton()
-				remaining[key] = remaining[key] - stackCount
-				attachedStacks = attachedStacks + 1
+		if key ~= "" and remaining[key] and remaining[key] > 0 and stackCount > 0 then
+			if stackCount <= remaining[key] then
+				if PickupContainerItemCompat(itemInfo.Bag, itemInfo.Slot) and type(ClickSendMailItemButton) == "function" then
+					ClickSendMailItemButton()
+					remaining[key] = remaining[key] - stackCount
+					attachedStacks = attachedStacks + 1
+				end
+			else
+				local splitCount = remaining[key]
+				if SplitContainerItemCompat(itemInfo.Bag, itemInfo.Slot, splitCount) and type(ClickSendMailItemButton) == "function" then
+					ClickSendMailItemButton()
+					remaining[key] = 0
+					attachedStacks = attachedStacks + 1
+				end
 			end
 		end
 	end
