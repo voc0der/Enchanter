@@ -663,7 +663,7 @@ local function MergeRecipeLists(existingRecipes, incomingRecipes)
 	local mergedCounts = BuildRecipeCountMap(existingRecipes)
 
 	for recipeName, count in pairs(BuildRecipeCountMap(incomingRecipes)) do
-		mergedCounts[recipeName] = count
+		mergedCounts[recipeName] = math.max(mergedCounts[recipeName] or 0, count)
 	end
 
 	return BuildRecipeListFromCountMap(mergedCounts)
@@ -4578,7 +4578,7 @@ local function CreateOrderRow(parent, index)
 	row.InviteButton = CreateFrame("Button", nil, row)
 	row.InviteButton:SetSize(20, 20)
 	row.InviteButton:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -6, 5)
-	row.InviteButton:SetNormalTexture("Interface\\Icons\\Achievement_GuildRep_01")
+	row.InviteButton:SetNormalTexture("Interface\\Icons\\INV_Misc_GroupLooking")
 	row.InviteButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
 	row.InviteButton:SetScript("OnEnter", function(self)
 		if GameTooltip then

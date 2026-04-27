@@ -1,3 +1,9 @@
+## [2.1.89] - 2026-04-27
+
+### Fixed
+- Multi-enchant orders no longer auto-complete after the first trade when the customer re-whispers with fewer recipe mentions (e.g. "pst mongoose" after "LF 2x mongoose"); `MergeRecipeLists` now takes the maximum of the existing and incoming count per recipe instead of overwriting, so a follow-up message can never shrink a queued order
+- "Invite to Group" button in the queue pane now shows a visible icon; `Achievement_GuildRep_01` is a WotLK+ asset that does not exist in the TBC Anniversary Classic client, replaced with `INV_Misc_GroupLooking`
+
 ## [2.1.88] - 2026-04-27
 
 ### Fixed
