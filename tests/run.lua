@@ -4033,6 +4033,78 @@ local function test_mailbox_disenchant_rows_listen_for_manual_de_results()
     assert_true(line.StatusText.shown == false, "completed mailbox disenchant rows should hide their pending indicator")
 end
 
+local function test_mailbox_disenchant_tracks_same_frame_click_without_targeting_event()
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
+        equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
+        bind_type = 2,
+        count = 1,
+    }
+    local arcane_dust = {
+        item_id = 2001,
+        name = "Arcane Dust",
+        link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+        quality = 1,
+        item_type = "Trade Goods",
+        item_sub_type = "Enchanting",
+        class_id = 7,
+        subclass_id = 12,
+        count = 2,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1001] = mailed_green,
+            [2001] = arcane_dust,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    -- Simulate the same-frame race: player selected DE and clicked the item
+    -- in the same game frame so CURRENT_SPELL_CAST_CHANGED has not fired yet.
+    -- spell_is_targeting is false (targeting already ended from the engine's
+    -- perspective) and no passive BeforeCounts capture exists.
+    assert_true(state.spell_is_targeting == false or state.spell_is_targeting == nil,
+        "test precondition: spell_is_targeting should be false before the click")
+    C_Container.UseContainerItem(0, 1)
+
+    set_bag_item(state, 0, 1, nil)
+    set_bag_item(state, 0, 2, arcane_dust)
+    state.event_handlers["BAG_UPDATE_DELAYED"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    assert_equal(order.SourceItems[1].Status, "done",
+        "same-frame DE click should still mark the source item as completed")
+    assert_equal(#materials, 1,
+        "same-frame DE click should still record the resulting mats")
+    assert_equal(materials[1].Key, "item:2001",
+        "same-frame DE result mats should be keyed by item id")
+end
+
 local function test_recipe_action_reappears_after_mailbox_row_reuse()
     local addon = setup_env({
         char_db = {
@@ -7108,6 +7180,7 @@ test_mailbox_loot_keeps_same_hour_same_sender_mails_distinct()
 test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_listen_for_manual_de_results()
+test_mailbox_disenchant_tracks_same_frame_click_without_targeting_event()
 test_recipe_action_reappears_after_mailbox_row_reuse()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
