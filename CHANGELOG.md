@@ -1,3 +1,8 @@
+## [2.1.87] - 2026-04-27
+
+### Fixed
+- DE tracking no longer misses ~10% of casts when Disenchant is selected and the item clicked fast enough to land in the same game frame; the passive `CURRENT_SPELL_CAST_CHANGED` capture hadn't fired yet at hook time so both the live targeting check and the pre-capture fell through
+
 ## [2.1.86] - 2026-04-26
 
 ### Fixed
