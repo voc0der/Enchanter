@@ -4105,6 +4105,101 @@ local function test_mailbox_disenchant_tracks_same_frame_click_without_targeting
         "same-frame DE result mats should be keyed by item id")
 end
 
+local function test_mailbox_disenchant_excludes_preexisting_mats_from_tracked_yield()
+    -- Regression: if BeforeCounts was an empty table {} (truthy in Lua),
+    -- "beforeCounts or snapshot.Counts" silently used {} and the delta
+    -- counted all current bag items — including pre-existing dust — as yield.
+    -- PrimePendingDisenchant now always snapshots at click time instead.
+    local mailed_green = {
+        item_id = 1001,
+        name = "Mailed Green Blade",
+        link = "|cff1eff00|Hitem:1001::::::::|h[Mailed Green Blade]|h|r",
+        quality = 2,
+        item_type = "Weapon",
+        item_sub_type = "Swords",
+        equip_loc = "INVTYPE_WEAPON",
+        class_id = 2,
+        subclass_id = 7,
+        bind_type = 2,
+        count = 1,
+    }
+    local arcane_dust = {
+        item_id = 2001,
+        name = "Arcane Dust",
+        link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+        quality = 1,
+        item_type = "Trade Goods",
+        item_sub_type = "Enchanting",
+        class_id = 7,
+        subclass_id = 12,
+        count = 2,
+    }
+    local addon, state = setup_env({
+        item_cache = {
+            [1001] = mailed_green,
+            [2001] = arcane_dust,
+        },
+        inbox = {
+            [1] = {
+                sender = "Alice",
+                subject = "pls de this",
+                attachments = { mailed_green },
+            },
+        },
+        bags = {
+            [0] = {
+                [1] = mailed_green,
+                -- Slot 2: pre-existing Arcane Dust the enchanter already had
+                [2] = { item_id = 2001, count = 5,
+                    link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+                    quality = 1, item_type = "Trade Goods",
+                    item_sub_type = "Enchanting", class_id = 7, subclass_id = 12 },
+            },
+        },
+    })
+
+    addon.OnLoad()
+    state.event_handlers["MAIL_SHOW"]()
+    addon.HandlePotentialMailboxLoot(1, 1)
+    state.event_handlers["MAIL_SUCCESS"]()
+
+    -- Fire CURRENT_SPELL_CAST_CHANGED with an empty BeforeCounts snapshot
+    -- to simulate the stale/empty passive capture bug: the bags at the moment
+    -- of capture appeared to have no dust (e.g., captured before items loaded).
+    -- Even with this stale empty capture, the tracked yield should reflect
+    -- only the DE result, not the pre-existing dust.
+    state.spell_is_targeting = true
+    state.spell_can_target_item = true
+    -- Temporarily clear the bag so the passive capture sees no dust
+    local saved_slot2 = state.bags[0][2]
+    state.bags[0][2] = nil
+    state.event_handlers["CURRENT_SPELL_CAST_CHANGED"]()
+    -- Restore the bag (simulate: bags were updating, now settled)
+    state.bags[0][2] = saved_slot2
+    state.spell_is_targeting = false
+    state.spell_can_target_item = false
+    state.event_handlers["CURRENT_SPELL_CAST_CHANGED"]()
+    C_Container.UseContainerItem(0, 1)
+
+    -- DE completes: item gone, 2 dust added to slot 3 (yield only)
+    set_bag_item(state, 0, 1, nil)
+    set_bag_item(state, 0, 3, { item_id = 2001, count = 2,
+        link = "|cffffffff|Hitem:2001::::::::|h[Arcane Dust]|h|r",
+        quality = 1, item_type = "Trade Goods",
+        item_sub_type = "Enchanting", class_id = 7, subclass_id = 12 })
+    state.event_handlers["BAG_UPDATE_DELAYED"]()
+
+    local order = addon.Workbench.GetDisenchantOrderByCustomer("Alice")
+    local materials = addon.Workbench.GetMaterialSnapshot(order)
+
+    assert_equal(order.SourceItems[1].Status, "done",
+        "DE with pre-existing mats in bags should still mark the source item done")
+    assert_equal(#materials, 1,
+        "only one mat type should be tracked")
+    assert_equal(materials[1].Count, 2,
+        "tracked yield should be only the 2 new dust, not the 5 pre-existing")
+end
+
 local function test_recipe_action_reappears_after_mailbox_row_reuse()
     local addon = setup_env({
         char_db = {
@@ -7181,6 +7276,7 @@ test_mailbox_loot_dedupes_take_after_item_already_in_order()
 test_mailbox_disenchant_tracking_records_results_and_prepares_return_mail()
 test_mailbox_disenchant_rows_listen_for_manual_de_results()
 test_mailbox_disenchant_tracks_same_frame_click_without_targeting_event()
+test_mailbox_disenchant_excludes_preexisting_mats_from_tracked_yield()
 test_recipe_action_reappears_after_mailbox_row_reuse()
 test_workbench_debug_output_is_printed()
 test_workbench_frame_keeps_buttons_above_drag_header()
