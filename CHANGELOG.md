@@ -1,3 +1,8 @@
+## [2.1.88] - 2026-04-27
+
+### Fixed
+- DE mat tracking no longer includes pre-existing bag mats in the yield count; `PrimePendingDisenchant` now always snapshots bag counts at click time rather than using the passive `CURRENT_SPELL_CAST_CHANGED` pre-capture, which could be an empty-but-truthy table — causing `{}` to win over the live snapshot in the `or` fallback and counting all current bag items as new yield
+
 ## [2.1.87] - 2026-04-27
 
 ### Fixed

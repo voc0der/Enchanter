@@ -1120,7 +1120,7 @@ local function FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	return nil, nil
 end
 
-local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, beforeCounts)
+local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
 	local snapshot
 	local runtime
 
@@ -1134,6 +1134,12 @@ local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, be
 		return false
 	end
 
+	-- Always snapshot at click time. DE results arrive from the server
+	-- asynchronously, so the bag is always pre-DE here. A click-time snapshot
+	-- avoids stale or empty BeforeCounts that could come from the passive
+	-- CURRENT_SPELL_CAST_CHANGED capture (an empty table is truthy in Lua,
+	-- causing "beforeCounts or snapshot" to silently use the empty table and
+	-- count all current bag items — including pre-existing mats — as yield).
 	snapshot = CaptureBagSnapshot()
 	runtime = GetMailboxDisenchantRuntime()
 	runtime.PendingDisenchant = {
@@ -1142,7 +1148,7 @@ local function PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, be
 		Bag = bagIndex,
 		Slot = slotIndex,
 		ItemKey = GetMailboxBagCountKey(sourceItem),
-		BeforeCounts = EC.CopyMailboxCountMap(beforeCounts or snapshot.Counts),
+		BeforeCounts = EC.CopyMailboxCountMap(snapshot.Counts),
 		ResolveAfter = MailboxNow() + 8,
 	}
 	if C_Timer and C_Timer.After then
@@ -1757,22 +1763,20 @@ end
 function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 	local order
 	local sourceItem
-	local beforeCounts
 
-	-- Look up the tracked item first so that same-frame DE+click sequences
+	-- Check for a tracked item first so that same-frame DE+click sequences
 	-- are not dropped. When DE is selected and the item clicked in the same
 	-- game frame, CURRENT_SPELL_CAST_CHANGED fires after the UseContainerItem
-	-- hook, so SpellIsTargeting() is already false and the passive BeforeCounts
-	-- capture hasn't run yet. A slot match is strong enough evidence;
-	-- PrimePendingDisenchant falls back to the current bag snapshot for
-	-- BeforeCounts and self-clears after 8 s if no mat delta appears.
+	-- hook, so SpellIsTargeting() is already false and the passive capture
+	-- hasn't run yet. A slot match is strong enough evidence.
+	-- PrimePendingDisenchant always takes a fresh click-time bag snapshot, so
+	-- there is no need to pass beforeCounts from the passive capture here.
 	order, sourceItem = FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	if not order or not sourceItem then
 		return false
 	end
 
-	beforeCounts = EC.GetRecentMailboxItemTargetingCounts()
-	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, beforeCounts)
+	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex)
 end
 
 local function InstallMailboxDisenchantHooks()
