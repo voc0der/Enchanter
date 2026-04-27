@@ -6838,6 +6838,45 @@ local function test_workbench_tracks_duplicate_recipe_verification_one_trade_at_
     assert_equal(state.CompletedOrders, 1, "the final duplicate verification should auto-complete the order")
 end
 
+local function test_rewhisper_with_fewer_recipes_does_not_reduce_existing_order_count()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed x2 pst", "Buyer-Rewhisper")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-Rewhisper")
+    assert_not_nil(order, "initial 2x request should queue an order")
+    assert_equal(#order.Recipes, 2, "initial 2x request should queue two recipe rows")
+
+    addon.Workbench.BeginTrade("Buyer-Rewhisper")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-Rewhisper")
+    assert_not_nil(order, "first completed trade should leave a 2x order queued")
+
+    addon.ParseMessage("pst minor speed", "Buyer-Rewhisper")
+
+    order = addon.Workbench.GetOrderByCustomer("Buyer-Rewhisper")
+    assert_not_nil(order, "a follow-up whisper with only one recipe mention should not auto-complete the order")
+    assert_equal(#order.Recipes, 2, "a follow-up whisper with fewer recipe matches should not reduce an existing order's recipe count")
+
+    local verifiedCount, recipeTotal = addon.Workbench.GetRecipeVerificationProgress(order)
+    assert_equal(verifiedCount, 1, "verified count should remain 1 after a shorter re-whisper")
+    assert_equal(recipeTotal, 2, "recipe total should remain 2 after a shorter re-whisper")
+    assert_equal(addon.Workbench.EnsureState().CompletedOrders, 0, "a shorter re-whisper during a partially-done 2x order should not complete it")
+end
+
 local function test_successful_trade_can_emote_thank_directly_to_customer()
     local addon, state = setup_env({
         db = {
@@ -7360,6 +7399,7 @@ test_partial_multi_enchant_trade_stays_queued()
 test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_workbench_tracks_duplicate_recipe_verification_one_trade_at_a_time()
+test_rewhisper_with_fewer_recipes_does_not_reduce_existing_order_count()
 test_successful_trade_can_emote_thank_directly_to_customer()
 test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
 test_tip_only_trade_does_not_emote_thank()
