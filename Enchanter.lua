@@ -1759,16 +1759,19 @@ function EC.HandlePotentialDisenchantTarget(bagIndex, slotIndex)
 	local sourceItem
 	local beforeCounts
 
-	beforeCounts = EC.GetRecentMailboxItemTargetingCounts()
-	if not IsDisenchantSpellTargeting() and not beforeCounts then
-		return false
-	end
-
+	-- Look up the tracked item first so that same-frame DE+click sequences
+	-- are not dropped. When DE is selected and the item clicked in the same
+	-- game frame, CURRENT_SPELL_CAST_CHANGED fires after the UseContainerItem
+	-- hook, so SpellIsTargeting() is already false and the passive BeforeCounts
+	-- capture hasn't run yet. A slot match is strong enough evidence;
+	-- PrimePendingDisenchant falls back to the current bag snapshot for
+	-- BeforeCounts and self-clears after 8 s if no mat delta appears.
 	order, sourceItem = FindTrackedDisenchantItemByLocation(bagIndex, slotIndex)
 	if not order or not sourceItem then
 		return false
 	end
 
+	beforeCounts = EC.GetRecentMailboxItemTargetingCounts()
 	return PrimePendingDisenchant(order, sourceItem, bagIndex, slotIndex, beforeCounts)
 end
 
