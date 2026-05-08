@@ -534,16 +534,18 @@ local function GetTradeEnchantSlotIndex()
 	return 7
 end
 
-local function BuildTradeEnchantInfo(itemName, enchantment, side)
+local function BuildTradeEnchantInfo(itemName, enchantment, side, itemLink)
 	local cleanedItemName = TrimText(itemName)
 	local cleanedEnchantment = TrimText(enchantment)
-	if cleanedItemName == "" and cleanedEnchantment == "" then
+	local cleanedItemLink = TrimText(itemLink)
+	if cleanedItemName == "" and cleanedEnchantment == "" and cleanedItemLink == "" then
 		return nil
 	end
 
 	return {
 		ItemName = cleanedItemName,
 		Enchantment = cleanedEnchantment,
+		ItemLink = cleanedItemLink,
 		Side = side,
 	}
 end
@@ -555,12 +557,14 @@ local function CaptureTradeEnchantInfo()
 
 	if GetTradeTargetItemInfo then
 		local itemName, _, _, _, _, enchantment = GetTradeTargetItemInfo(enchantSlotIndex)
-		targetInfo = BuildTradeEnchantInfo(itemName, enchantment, "target")
+		local itemLink = GetTradeTargetItemLink and GetTradeTargetItemLink(enchantSlotIndex) or nil
+		targetInfo = BuildTradeEnchantInfo(itemName, enchantment, "target", itemLink)
 	end
 
 	if GetTradePlayerItemInfo then
 		local itemName, _, _, _, enchantment = GetTradePlayerItemInfo(enchantSlotIndex)
-		playerInfo = BuildTradeEnchantInfo(itemName, enchantment, "player")
+		local itemLink = GetTradePlayerItemLink and GetTradePlayerItemLink(enchantSlotIndex) or nil
+		playerInfo = BuildTradeEnchantInfo(itemName, enchantment, "player", itemLink)
 	end
 
 	if targetInfo and targetInfo.Enchantment ~= "" then
@@ -1534,6 +1538,9 @@ local function SyncQueueOrderStates(state)
 	return changed
 end
 
+local GetMaterialDisplayText
+local GetRecipeDisplayText
+
 local function CountAppliedRecipes(activeTrade)
 	local count = 0
 	local appliedRecipes = activeTrade and activeTrade.AppliedRecipeCounts
@@ -1548,12 +1555,12 @@ local function CountAppliedRecipes(activeTrade)
 	return count
 end
 
-local function MaybeSendSuccessfulTradeThanks(order, activeTrade)
+local function MaybeSendSuccessfulTradeThanks(order, activeTrade, tradeTipCopper)
 	if not order or not activeTrade or activeTrade.Thanked then
 		return false
 	end
 
-	if CountAppliedRecipes(activeTrade) <= 0 then
+	if math.max(0, math.floor(tonumber(tradeTipCopper) or 0)) <= 0 then
 		return false
 	end
 
@@ -1564,6 +1571,118 @@ local function MaybeSendSuccessfulTradeThanks(order, activeTrade)
 	end
 
 	return false
+end
+
+local function EnchanterTradeMessagesEnabled(order)
+	return order
+		and not IsMailboxItemOrder(order)
+		and EC
+		and EC.DB
+		and EC.DB.UseEnchanterMessages == true
+end
+
+local function SendEnchanterTradeMessage(message)
+	if EC and EC.SendGroupAnnouncement then
+		return EC.SendGroupAnnouncement(message, false)
+	end
+	return false
+end
+
+local function FormatMaterialAnnouncementPart(count, displayText)
+	count = NormalizeItemCount(count)
+	displayText = TrimText(displayText)
+	if displayText == "" then
+		displayText = "Unknown Material"
+	end
+	return tostring(math.max(1, count)) .. "x " .. displayText
+end
+
+local function MaybeAnnounceReceivedTradeMaterials(order, activeTrade)
+	local appliedCounts = activeTrade and activeTrade.LastAppliedMaterialCounts
+	local parts = {}
+
+	if not EnchanterTradeMessagesEnabled(order) or not activeTrade or activeTrade.EnchanterMaterialsAnnounced then
+		return false
+	end
+	if type(appliedCounts) ~= "table" or next(appliedCounts) == nil then
+		return false
+	end
+
+	for _, material in ipairs(Workbench.GetMaterialSnapshot(order)) do
+		local appliedCount = NormalizeItemCount(appliedCounts[material.Key] or 0)
+		if appliedCount > 0 then
+			parts[#parts + 1] = FormatMaterialAnnouncementPart(
+				appliedCount,
+				activeTrade.OfferedMaterialDisplays and activeTrade.OfferedMaterialDisplays[material.Key] or GetMaterialDisplayText(material)
+			)
+		end
+	end
+
+	if #parts == 0 then
+		return false
+	end
+
+	activeTrade.EnchanterMaterialsAnnounced = true
+	return SendEnchanterTradeMessage(string.format("%s traded materials: %s.", tostring(order.Customer), table.concat(parts, ", ")))
+end
+
+local function GetTradeEnchantItemDisplayText(activeTrade)
+	local itemLink = TrimText(activeTrade and activeTrade.LastSeenEnchantItemLink)
+	if itemLink ~= "" then
+		return itemLink
+	end
+	return TrimText(activeTrade and activeTrade.LastSeenEnchantItemName)
+end
+
+local function MaybeAnnounceAppliedTradeEnchants(order, activeTrade)
+	local appliedRecipes = activeTrade and activeTrade.AppliedRecipeCounts
+	local itemText
+	local enchantText
+	local announced = false
+
+	if not EnchanterTradeMessagesEnabled(order) or not activeTrade or activeTrade.EnchanterEnchantsAnnounced then
+		return false
+	end
+	if type(appliedRecipes) ~= "table" or next(appliedRecipes) == nil then
+		appliedRecipes = activeTrade.AppliedRecipes or {}
+	end
+	if CountAppliedRecipes(activeTrade) <= 0 then
+		return false
+	end
+
+	itemText = GetTradeEnchantItemDisplayText(activeTrade)
+	for recipeName in pairs(appliedRecipes) do
+		local appliedCount = GetAppliedRecipeCount(activeTrade, recipeName)
+		for _ = 1, appliedCount do
+			enchantText = TrimText(activeTrade.LastSeenEnchantmentText)
+			if enchantText == "" then
+				enchantText = GetRecipeDisplayText(recipeName)
+			end
+			if itemText ~= "" and enchantText ~= "" then
+				announced = SendEnchanterTradeMessage(string.format("Enchanted %s's %s with %s.", tostring(order.Customer), itemText, enchantText)) or announced
+			elseif enchantText ~= "" then
+				announced = SendEnchanterTradeMessage(string.format("Enchanted %s with %s.", tostring(order.Customer), enchantText)) or announced
+			else
+				announced = SendEnchanterTradeMessage(string.format("Enchanted %s.", tostring(order.Customer))) or announced
+			end
+		end
+	end
+
+	activeTrade.EnchanterEnchantsAnnounced = true
+	return announced
+end
+
+local function MaybeAnnounceEnchanterTradeMessages(order, activeTrade)
+	local announced = false
+
+	if MaybeAnnounceReceivedTradeMaterials(order, activeTrade) then
+		announced = true
+	end
+	if MaybeAnnounceAppliedTradeEnchants(order, activeTrade) then
+		announced = true
+	end
+
+	return announced
 end
 
 local function MaterialKey(material)
@@ -1586,7 +1705,7 @@ local function GetMaterialDisplayName(material)
 	return TrimText(material.Name)
 end
 
-local function GetMaterialDisplayText(material)
+GetMaterialDisplayText = function(material)
 	if EC and EC.GetStoredRecipeMaterialDisplayText then
 		return EC.GetStoredRecipeMaterialDisplayText(material)
 	end
@@ -1596,7 +1715,7 @@ local function GetMaterialDisplayText(material)
 	return material.Link or material.Name or "Unknown Material"
 end
 
-local function GetRecipeDisplayText(recipeName)
+GetRecipeDisplayText = function(recipeName)
 	local recipeLink = EC.DBChar and EC.DBChar.RecipeLinks and EC.DBChar.RecipeLinks[recipeName]
 
 	if TrimText(recipeLink) ~= "" then
@@ -1748,45 +1867,52 @@ end
 
 local function CaptureTradeTargetCounts()
 	local counts = {}
-	local function AddCount(key, itemCount)
+	local displays = {}
+	local function AddCount(key, itemCount, displayText)
 		key = TrimText(key)
 		if key ~= "" then
 			counts[key] = (counts[key] or 0) + itemCount
+			displayText = TrimText(displayText)
+			if displayText ~= "" and not displays[key] then
+				displays[key] = displayText
+			end
 		end
 	end
 	if not GetTradeTargetItemInfo then
-		return counts
+		return counts, displays
 	end
 
 	for index = 1, GetTradeSlotLimit() do
 		local itemName, _, itemCount, _, _, _, itemId = GetTradeTargetItemInfo(index)
 		local materialKey
 		local itemLink
+		local displayText
 
 		itemName = TrimText(itemName)
 		itemLink = GetTradeTargetItemLink and GetTradeTargetItemLink(index) or nil
 		if itemName ~= "" or (itemId and itemId > 0) or (type(itemLink) == "string" and itemLink ~= "") then
 			itemCount = tonumber(itemCount) or 1
+			displayText = TrimText(itemLink) ~= "" and itemLink or itemName
 			materialKey = MaterialKey({
 				ItemId = itemId,
 				Name = itemName,
 				Link = itemLink,
 			})
-			AddCount(materialKey, itemCount)
+			AddCount(materialKey, itemCount, displayText)
 			if type(itemLink) == "string" and itemLink ~= "" then
 				if TrimText(itemLink) ~= TrimText(materialKey) then
-					AddCount(itemLink, itemCount)
+					AddCount(itemLink, itemCount, displayText)
 				end
 			end
 			if itemName ~= "" then
 				if itemName ~= TrimText(materialKey) and itemName ~= TrimText(itemLink) then
-					AddCount(itemName, itemCount)
+					AddCount(itemName, itemCount, displayText)
 				end
 			end
 		end
 	end
 
-	return counts
+	return counts, displays
 end
 
 local function GetQueueListWidth(frame)
@@ -3060,7 +3186,8 @@ local function FinalizeSuccessfulTrade(order, activeTrade, goldDelta)
 		end
 		WorkbenchDebug("tracked trade payment for", order.Customer, "(" .. FormatMoneyCompact(tradeTipCopper) .. ", total " .. FormatMoneyCompact(order.LastObservedTipCopper) .. ")")
 	end
-	MaybeSendSuccessfulTradeThanks(order, activeTrade)
+	MaybeSendSuccessfulTradeThanks(order, activeTrade, tradeTipCopper)
+	MaybeAnnounceEnchanterTradeMessages(order, activeTrade)
 
 	return persistedRecipes, persistedMaterials, tradeTipCopper
 end
@@ -3136,6 +3263,7 @@ local function TrackTradeAppliedRecipe(order, activeTrade)
 
 	activeTrade.LastSeenEnchantItemName = enchantInfo and enchantInfo.ItemName or ""
 	activeTrade.LastSeenEnchantmentText = enchantInfo and enchantInfo.Enchantment or ""
+	activeTrade.LastSeenEnchantItemLink = enchantInfo and enchantInfo.ItemLink or ""
 
 	if not TradeEnchantSlotHasItem() then
 		return false
@@ -3181,6 +3309,7 @@ end
 CommitTradeState = function(order, activeTrade)
 	local appliedRecipeCount = 0
 	local appliedMaterialCount = 0
+	local appliedMaterialCounts = {}
 
 	if not order or not activeTrade then
 		return appliedRecipeCount, appliedMaterialCount
@@ -3204,11 +3333,12 @@ CommitTradeState = function(order, activeTrade)
 		end
 	end
 
-	appliedMaterialCount = select(1, MergeTradeMaterialCounts(
+	appliedMaterialCount, appliedMaterialCounts = MergeTradeMaterialCounts(
 		order,
 		CountTableHasPositiveCounts(activeTrade.CompletedMaterialCounts) and activeTrade.CompletedMaterialCounts or activeTrade.OfferedMaterialCounts,
 		activeTrade.ManuallyRecordedMaterialCounts
-	))
+	)
+	activeTrade.LastAppliedMaterialCounts = appliedMaterialCounts
 	return appliedRecipeCount, appliedMaterialCount
 end
 
@@ -3397,6 +3527,7 @@ function Workbench.GetTradeMaterialProgress(order)
 	local checked = 0
 	local offeredState = {}
 	local offeredMaterialCounts = {}
+	local offeredMaterialDisplays = {}
 	local activeTrade = GetActiveTradeForOrder(order)
 
 	order = order or Workbench.GetSelectedOrder()
@@ -3404,12 +3535,16 @@ function Workbench.GetTradeMaterialProgress(order)
 		return 0, total, offeredState, offeredMaterialCounts
 	end
 
-	local offeredCounts = CaptureTradeTargetCounts()
+	local offeredCounts, offeredDisplays = CaptureTradeTargetCounts()
 	for _, material in ipairs(materials) do
 		local requiredCount = GetRequiredMaterialCount(material)
-		local offeredCount = offeredCounts[material.Key] or offeredCounts[material.Link or ""] or offeredCounts[material.Name or ""] or 0
+		local offeredKey = material.Key
+		local offeredCount = offeredCounts[offeredKey] or offeredCounts[material.Link or ""] or offeredCounts[material.Name or ""] or 0
 		offeredCount = NormalizeItemCount(offeredCount)
 		offeredMaterialCounts[material.Key] = offeredCount
+		offeredMaterialDisplays[material.Key] = offeredDisplays[offeredKey]
+			or offeredDisplays[material.Link or ""]
+			or offeredDisplays[material.Name or ""]
 		if offeredCount >= requiredCount then
 			offeredState[material.Key] = true
 			checked = checked + 1
@@ -3418,6 +3553,7 @@ function Workbench.GetTradeMaterialProgress(order)
 
 	activeTrade.OfferedMaterialState = offeredState
 	activeTrade.OfferedMaterialCounts = offeredMaterialCounts
+	activeTrade.OfferedMaterialDisplays = offeredMaterialDisplays
 	activeTrade.OfferedCounts = offeredCounts
 	activeTrade.OfferedChecked = checked
 	activeTrade.OfferedTotal = total
@@ -3505,6 +3641,36 @@ function Workbench.GetGroupedCustomerCount()
 	return count
 end
 
+local function SetExternalTradeAnnouncementSuppression(shouldSuppress)
+	if EC and EC.SetGargulTradeAnnouncementSuppressed then
+		EC.SetGargulTradeAnnouncementSuppressed(shouldSuppress and true or false)
+	end
+end
+
+local function MaybeAnnounceTradeStarted(order, activeTrade)
+	if not order or not activeTrade or activeTrade.TradeStartedAnnounced then
+		return false
+	end
+
+	activeTrade.TradeStartedAnnounced = true
+	if EC and EC.AnnounceTradeStatus then
+		return EC.AnnounceTradeStatus("started", order.Customer)
+	end
+	return false
+end
+
+local function MaybeAnnounceTradeEnded(order, activeTrade)
+	if not order or not activeTrade or activeTrade.TradeEndedAnnounced then
+		return false
+	end
+
+	activeTrade.TradeEndedAnnounced = true
+	if EC and EC.AnnounceTradeStatus then
+		return EC.AnnounceTradeStatus("ended", order.Customer)
+	end
+	return false
+end
+
 function Workbench.BeginTrade(customerName)
 	local runtime = EnsureRuntime()
 	local order = Workbench.GetOrderByCustomer(customerName)
@@ -3517,8 +3683,10 @@ function Workbench.BeginTrade(customerName)
 		AppliedRecipeCounts = {},
 		LastSeenEnchantItemName = "",
 		LastSeenEnchantmentText = "",
+		LastSeenEnchantItemLink = "",
 		OfferedMaterialState = {},
 		OfferedMaterialCounts = {},
+		OfferedMaterialDisplays = {},
 		OfferedCounts = {},
 		OfferedChecked = 0,
 		OfferedTotal = 0,
@@ -3540,6 +3708,8 @@ function Workbench.BeginTrade(customerName)
 		WorkbenchDebug("trade opened with no queued order match")
 	end
 
+	SetExternalTradeAnnouncementSuppression(order ~= nil)
+	MaybeAnnounceTradeStarted(order, runtime.ActiveTrade)
 	Workbench.SyncActiveTrade()
 	return order
 end
@@ -3560,6 +3730,8 @@ function Workbench.SyncActiveTrade()
 
 	if order then
 		SetSelectedOrder(order.Id)
+		SetExternalTradeAnnouncementSuppression(true)
+		MaybeAnnounceTradeStarted(order, activeTrade)
 		Workbench.GetTradeMaterialProgress(order)
 		activeTrade.TargetTradeMoneyCopper = GetTargetTradeMoneyCopper()
 		TrackTradeAppliedRecipe(order, activeTrade)
@@ -3569,10 +3741,12 @@ function Workbench.SyncActiveTrade()
 	else
 		activeTrade.OfferedMaterialState = {}
 		activeTrade.OfferedMaterialCounts = {}
+		activeTrade.OfferedMaterialDisplays = {}
 		activeTrade.OfferedCounts = {}
 		activeTrade.OfferedChecked = 0
 		activeTrade.OfferedTotal = 0
 		activeTrade.TargetTradeMoneyCopper = 0
+		SetExternalTradeAnnouncementSuppression(false)
 	end
 
 	Workbench.Refresh()
@@ -3716,6 +3890,7 @@ function Workbench.FinishTrade(goldDelta)
 
 	if not activeTrade or not activeTrade.OrderId then
 		runtime.ActiveTrade = nil
+		SetExternalTradeAnnouncementSuppression(false)
 		WorkbenchDebug("trade closed with no tracked order")
 		return nil
 	end
@@ -3723,10 +3898,12 @@ function Workbench.FinishTrade(goldDelta)
 	local order = Workbench.GetOrderById(activeTrade.OrderId)
 	if not order then
 		runtime.ActiveTrade = nil
+		SetExternalTradeAnnouncementSuppression(false)
 		WorkbenchDebug("trade closed but tracked order is gone")
 		return nil
 	end
 
+	MaybeAnnounceTradeEnded(order, activeTrade)
 	TrackTradeAppliedRecipe(order, activeTrade)
 	SnapshotTradeCompletionState(activeTrade)
 	TrackCompletedTradeCast(order, activeTrade)
@@ -3741,6 +3918,7 @@ function Workbench.FinishTrade(goldDelta)
 	end
 
 	runtime.ActiveTrade = nil
+	SetExternalTradeAnnouncementSuppression(false)
 
 	local checked, total = Workbench.GetMaterialProgress(order)
 	local isVerified, verifiedCount, recipeTotal = Workbench.IsOrderVerified(order)
@@ -4019,7 +4197,7 @@ function Workbench.WhisperMissingMats(orderId)
 		local required = GetRequiredMaterialCount(material)
 		local recorded = GetRecordedMaterialCount(order, material, required)
 		if recorded < required then
-			local itemName = material.Name or "Unknown"
+			local itemName = GetMaterialDisplayText(material)
 			local stillNeeded = required - recorded
 			missing[#missing + 1] = stillNeeded .. "x " .. itemName
 		end

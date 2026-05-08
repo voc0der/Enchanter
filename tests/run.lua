@@ -52,6 +52,16 @@ local function split_csv(value, separator)
     return out
 end
 
+local function chat_messages_of_type(state, chat_type)
+    local out = {}
+    for _, message in ipairs(state.chat_messages or {}) do
+        if message.chat_type == chat_type then
+            out[#out + 1] = message
+        end
+    end
+    return out
+end
+
 local function load_chunk(path, ...)
     local chunk = assert(loadfile(path))
     return chunk(...)
@@ -154,6 +164,7 @@ local function setup_env(opts)
         trade_target_items = copy_table(opts.trade_target_items or {}),
         trade_player_items = copy_table(opts.trade_player_items or {}),
         trade_target_money = tonumber(opts.trade_target_money) or 0,
+        chat_messages = {},
         whispers = {},
         frames = {},
         current_time = tonumber(opts.current_time) or 0,
@@ -441,11 +452,13 @@ local function setup_env(opts)
         state.invites[#state.invites + 1] = name
     end
     _G.SendChatMessage = function(message, chat_type, _, target)
-        state.whispers[#state.whispers + 1] = {
+        local entry = {
             message = message,
             chat_type = chat_type,
             target = target,
         }
+        state.chat_messages[#state.chat_messages + 1] = entry
+        state.whispers[#state.whispers + 1] = entry
     end
     _G.DoEmote = function(token, target)
         state.emotes[#state.emotes + 1] = {
@@ -920,6 +933,21 @@ local function setup_env(opts)
         state.current_target_name = state.previous_target_name
         state.previous_target_name = current
         return state.current_target_name ~= nil and state.current_target_name ~= ""
+    end
+    _G.GetNumGroupMembers = function()
+        if #(state.current_raid_members or {}) > 0 then
+            return #(state.current_raid_members or {})
+        end
+        if #(state.current_party_members or {}) > 0 then
+            return #(state.current_party_members or {}) + 1
+        end
+        return 0
+    end
+    _G.IsInGroup = function()
+        return _G.GetNumGroupMembers() > 0
+    end
+    _G.IsInRaid = function()
+        return #(state.current_raid_members or {}) > 0
     end
     _G.UnitInParty = function(name)
         for _, member_name in ipairs(state.current_party_members or {}) do
@@ -2845,6 +2873,8 @@ local function test_incomplete_order_settings_default_on()
     assert_true(addon.DB.WarnIncompleteOrder, "incomplete-order warnings should default to enabled")
     assert_true(addon.DB.InviteIncompleteOrder, "incomplete-order invites should default to enabled")
     assert_true(addon.DB.EmoteThankAfterCast == false, "thank emotes should default to disabled")
+    assert_true(addon.DB.AnnounceTradeStatus == false, "trade status announcements should default to disabled")
+    assert_true(addon.DB.UseEnchanterMessages == false, "enchanter party messages should default to disabled")
     assert_equal(addon.DB.DeclinedInviteRemovalSeconds, 0, "declined invite removal timer should default to disabled")
     assert_equal(addon.DB.MaxGroupedCustomers, 0, "max grouped customers should default to unlimited")
 end
@@ -6068,8 +6098,8 @@ local function test_workbench_missing_mats_whisper_action()
             },
             RecipeMats = {
                 ["Enchant Weapon - Mongoose"] = {
-                    { Name = "Primal Fire", Count = 4 },
-                    { Name = "Large Prismatic Shard", Count = 1 },
+                    { Name = "Primal Fire", Count = 4, Link = "|cffffffff|Hitem:21884::::::::|h[Primal Fire]|h|r", ItemId = 21884 },
+                    { Name = "Large Prismatic Shard", Count = 1, Link = "|cff0070dd|Hitem:22449::::::::|h[Large Prismatic Shard]|h|r", ItemId = 22449 },
                 },
             },
         },
@@ -6089,6 +6119,7 @@ local function test_workbench_missing_mats_whisper_action()
     assert_equal(state.whispers[#state.whispers].target, "Buyer-MissingMats", "missing mats whisper should target the queued customer")
     assert_true(string.find(state.whispers[#state.whispers].message, "Still need:", 1, true) ~= nil, "missing mats whisper should contain a 'Still need:' label")
     assert_true(string.find(state.whispers[#state.whispers].message, "Primal Fire", 1, true) ~= nil, "missing mats whisper should list a missing material by name")
+    assert_true(string.find(state.whispers[#state.whispers].message, "|Hitem:21884", 1, true) ~= nil, "missing mats whisper should use the stored item link when available")
 end
 
 local function test_workbench_missing_mats_whisper_skips_when_all_mats_present()
@@ -6132,6 +6163,169 @@ local function test_workbench_missing_mats_whisper_skips_when_all_mats_present()
 
     assert_true(not sent, "WhisperMissingMats should return false when all materials are present")
     assert_equal(#state.whispers, baseCount, "WhisperMissingMats should not send when nothing is missing")
+end
+
+local function test_trade_status_announces_start_and_close_to_larger_party()
+    local addon, state = setup_env({
+        db = {
+            AnnounceTradeStatus = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+        current_party_members = {
+            "Buyer-Status",
+            "Party-Friend",
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Status")
+
+    addon.Workbench.BeginTrade("Buyer-Status")
+    addon.Workbench.FinishTrade(0)
+
+    local partyMessages = chat_messages_of_type(state, "PARTY")
+    assert_equal(#partyMessages, 2, "trade status should announce start and close to parties larger than two")
+    assert_equal(partyMessages[1].message, "Trade started with Buyer-Status.", "trade start status should name the client")
+    assert_equal(partyMessages[2].message, "Trade ended with Buyer-Status.", "trade close status should name the client")
+end
+
+local function test_trade_status_skips_two_player_party()
+    local addon, state = setup_env({
+        db = {
+            AnnounceTradeStatus = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+        current_party_members = {
+            "Buyer-Status",
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Status")
+
+    addon.Workbench.BeginTrade("Buyer-Status")
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#chat_messages_of_type(state, "PARTY"), 0, "trade status should stay quiet when only the client is grouped")
+end
+
+local function test_enchanter_messages_announce_materials_and_enchant_as_separate_lines()
+    local addon, state = setup_env({
+        db = {
+            UseEnchanterMessages = true,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+            RecipeMats = {
+                ["Enchant Boots - Minor Speed"] = {
+                    { Name = "Soul Dust", Count = 6, ItemId = 11083 },
+                    { Name = "Lesser Nether Essence", Count = 1, ItemId = 11174 },
+                },
+            },
+        },
+        current_party_members = {
+            "Buyer-Messages",
+            "Party-Friend",
+        },
+        trade_target_items = {
+            [1] = {
+                name = "Soul Dust",
+                count = 6,
+                item_id = 11083,
+                link = "|cffffffff|Hitem:11083::::::::|h[Soul Dust]|h|r",
+            },
+            [2] = {
+                name = "Lesser Nether Essence",
+                count = 1,
+                item_id = 11174,
+                link = "|cff1eff00|Hitem:11174::::::::|h[Lesser Nether Essence]|h|r",
+            },
+            [7] = {
+                name = "Traveler's Boots",
+                enchantment = "Minor Speed",
+                link = "|cff1eff00|Hitem:8294::::::::|h[Traveler's Boots]|h|r",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-Messages")
+
+    addon.Workbench.BeginTrade("Buyer-Messages")
+    addon.Workbench.SyncActiveTrade()
+    assert_equal(#chat_messages_of_type(state, "PARTY"), 0, "enchanter trade messages should wait for a completed trade")
+
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    local partyMessages = chat_messages_of_type(state, "PARTY")
+    assert_equal(#partyMessages, 2, "materials and enchants should be announced as separate lines")
+    assert_true(string.find(partyMessages[1].message, "Buyer-Messages traded materials:", 1, true) ~= nil, "material announcement should name the client")
+    assert_true(string.find(partyMessages[1].message, "|Hitem:11083", 1, true) ~= nil, "material announcement should use real item links from the trade")
+    assert_true(string.find(partyMessages[1].message, "|Hitem:11174", 1, true) ~= nil, "material announcement should include each material on the same line")
+    assert_true(string.find(partyMessages[2].message, "Enchanted Buyer-Messages", 1, true) ~= nil, "enchant announcement should name the client")
+    assert_true(string.find(partyMessages[2].message, "|Hitem:8294", 1, true) ~= nil, "enchant announcement should include the enchanted item link")
+    assert_true(string.find(partyMessages[2].message, "Minor Speed", 1, true) ~= nil, "enchant announcement should include the enchantment text")
+end
+
+local function test_tracked_client_trade_suppresses_gargul_trade_announcements()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+        },
+    })
+
+    _G.GargulAnnounceTradeDetails = {
+        checked = true,
+        SetChecked = function(self, value)
+            self.checked = value and true or false
+        end,
+        GetChecked = function(self)
+            return self.checked
+        end,
+    }
+    _G.Gargul = {
+        TradeWindow = {
+            State = {
+                announce = true,
+            },
+            shouldAnnounce = function()
+                return true
+            end,
+        },
+    }
+
+    addon.InstallGargulAnnouncementSuppressor()
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Gargul")
+
+    addon.Workbench.BeginTrade("Buyer-Gargul")
+
+    assert_true(_G.GargulAnnounceTradeDetails:GetChecked() == false, "tracked Enchanter trades should uncheck Gargul's announce-trade checkbox")
+    assert_true(_G.Gargul.TradeWindow.State.announce == false, "tracked Enchanter trades should clear Gargul's current announce state")
+    assert_true(_G.Gargul.TradeWindow:shouldAnnounce() == false, "tracked Enchanter trades should make Gargul's shouldAnnounce return false")
+
+    addon.Workbench.FinishTrade(0)
+
+    assert_true(_G.Gargul.TradeWindow:shouldAnnounce() == true, "Gargul announcement suppression should end when the tracked trade closes")
 end
 
 local function test_ban_player_silences_messages()
@@ -6877,11 +7071,12 @@ local function test_rewhisper_with_fewer_recipes_does_not_reduce_existing_order_
     assert_equal(addon.Workbench.EnsureState().CompletedOrders, 0, "a shorter re-whisper during a partially-done 2x order should not complete it")
 end
 
-local function test_successful_trade_can_emote_thank_directly_to_customer()
+local function test_paid_trade_can_emote_thank_directly_to_customer()
     local addon, state = setup_env({
         db = {
             EmoteThankAfterCast = true,
         },
+        trade_target_money = 5000,
         char_db = {
             RecipeList = {
                 ["Enchant Boots - Minor Speed"] = { "minor speed" },
@@ -6903,17 +7098,18 @@ local function test_successful_trade_can_emote_thank_directly_to_customer()
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    assert_equal(#state.emotes, 1, "successful enchant trades should fire one thank emote when the option is enabled")
-    assert_equal(state.emotes[1].token, "THANK", "successful enchant trades should use the THANK emote token directly")
+    assert_equal(#state.emotes, 1, "paid client trades should fire one thank emote when the option is enabled")
+    assert_equal(state.emotes[1].token, "THANK", "paid client trades should use the THANK emote token directly")
     assert_equal(state.emotes[1].target, "party1", "thank emotes should prefer a live grouped unit token instead of relying on the player's target")
     assert_nil(state.current_target_name, "grouped thank emotes should not have to retarget the player")
 end
 
-local function test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
+local function test_paid_trade_can_thank_by_temporary_target_and_restore_previous_target()
     local addon, state = setup_env({
         db = {
             EmoteThankAfterCast = true,
         },
+        trade_target_money = 5000,
         char_db = {
             RecipeList = {
                 ["Enchant Boots - Minor Speed"] = { "minor speed" },
@@ -6933,13 +7129,13 @@ local function test_successful_trade_can_thank_by_temporary_target_and_restore_p
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    assert_equal(#state.emotes, 1, "successful enchant trades should still thank non-grouped customers by temporarily targeting them")
+    assert_equal(#state.emotes, 1, "paid client trades should still thank non-grouped customers by temporarily targeting them")
     assert_equal(state.emotes[1].token, "THANK", "temporary-target thank flow should keep using the THANK emote token")
     assert_equal(state.emotes[1].target, "target", "temporary-target thank flow should direct the emote at the resolved target token")
     assert_equal(state.current_target_name, "Friendly-Priest", "temporary thank targeting should restore the player's original target afterward")
 end
 
-local function test_tip_only_trade_does_not_emote_thank()
+local function test_paid_tip_only_trade_emotes_thank()
     local addon, state = setup_env({
         db = {
             EmoteThankAfterCast = true,
@@ -6959,7 +7155,34 @@ local function test_tip_only_trade_does_not_emote_thank()
     addon.Workbench.SetTradeAcceptState(1, 1)
     addon.Workbench.FinishTrade(0)
 
-    assert_equal(#state.emotes, 0, "successful tip-only trades should not emit a thank emote when no enchant was actually applied")
+    assert_equal(#state.emotes, 1, "receiving payment from a queued client should emit a thank emote even without an enchant in that trade")
+    assert_equal(state.emotes[1].token, "THANK", "payment thank should use the THANK emote token")
+end
+
+local function test_unpaid_enchant_trade_does_not_emote_thank()
+    local addon, state = setup_env({
+        db = {
+            EmoteThankAfterCast = true,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "minor speed" },
+            },
+        },
+        trade_target_items = {
+            [7] = { name = "Netherweave Boots", enchantment = "Minor Speed" },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF minor speed pst", "Buyer-NoPaymentThanks")
+
+    addon.Workbench.BeginTrade("Buyer-NoPaymentThanks")
+    addon.Workbench.SyncActiveTrade()
+    addon.Workbench.SetTradeAcceptState(1, 1)
+    addon.Workbench.FinishTrade(0)
+
+    assert_equal(#state.emotes, 0, "unpaid enchant trades should not emit a thank emote")
 end
 
 local function test_trade_detected_enchant_shows_as_checked_before_trade_closes()
@@ -7400,9 +7623,10 @@ test_recipe_lines_show_read_only_status_indicators()
 test_workbench_auto_verifies_trade_enchant_without_apply_click()
 test_workbench_tracks_duplicate_recipe_verification_one_trade_at_a_time()
 test_rewhisper_with_fewer_recipes_does_not_reduce_existing_order_count()
-test_successful_trade_can_emote_thank_directly_to_customer()
-test_successful_trade_can_thank_by_temporary_target_and_restore_previous_target()
-test_tip_only_trade_does_not_emote_thank()
+test_paid_trade_can_emote_thank_directly_to_customer()
+test_paid_trade_can_thank_by_temporary_target_and_restore_previous_target()
+test_paid_tip_only_trade_emotes_thank()
+test_unpaid_enchant_trade_does_not_emote_thank()
 test_trade_detected_enchant_shows_as_checked_before_trade_closes()
 test_trade_offer_marks_live_material_progress()
 test_trade_sync_recovers_partner_name_after_trade_show()
@@ -7416,6 +7640,10 @@ test_simulate_survives_without_math_random_helpers()
 test_slash_commands_expose_simulate_entry()
 test_workbench_missing_mats_whisper_action()
 test_workbench_missing_mats_whisper_skips_when_all_mats_present()
+test_trade_status_announces_start_and_close_to_larger_party()
+test_trade_status_skips_two_player_party()
+test_enchanter_messages_announce_materials_and_enchant_as_separate_lines()
+test_tracked_client_trade_suppresses_gargul_trade_announcements()
 test_ban_player_silences_messages()
 test_ban_player_is_case_insensitive()
 test_unban_player_restores_matching()
