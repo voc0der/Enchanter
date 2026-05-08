@@ -1,3 +1,16 @@
+## [2.1.90] - 2026-05-08
+
+### Added
+- Added `Announce Trade Status`, which posts tracked client trade start and close messages to group chat only when more than two players are grouped
+- Added `Use Enchanter Messages`, which posts one linked material handoff line after a completed client trade and a separate line for each applied enchant
+- Added a best-effort Gargul integration that suppresses Gargul's trade announcement checkbox while an Enchanter client trade is active
+
+### Changed
+- The `/thank` option now thanks queued clients when they pay gold in trade instead of when an enchant is applied
+
+### Fixed
+- Missing-mats whispers now use stored material item links when available instead of dropping down to plain names
+
 ## [2.1.89] - 2026-04-27
 
 ### Fixed

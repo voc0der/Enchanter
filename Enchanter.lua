@@ -3414,6 +3414,133 @@ function EC.SendThankEmote(name, sourceLabel)
 	return false
 end
 
+local function GetCurrentGroupMemberCount()
+	local count = 0
+
+	if type(GetNumGroupMembers) == "function" then
+		local ok, groupCount = pcall(GetNumGroupMembers)
+		if ok then
+			count = math.max(0, math.floor(tonumber(groupCount) or 0))
+		end
+	end
+	if count > 0 then
+		return count
+	end
+
+	for index = 1, 40 do
+		if GetNamedUnit("raid" .. index) then
+			count = count + 1
+		end
+	end
+	if count > 0 then
+		return count
+	end
+
+	for index = 1, 4 do
+		if GetNamedUnit("party" .. index) then
+			count = count + 1
+		end
+	end
+	if count > 0 then
+		return count + 1
+	end
+
+	return 0
+end
+
+local function GetGroupAnnouncementChannel()
+	if type(IsInRaid) == "function" then
+		local ok, inRaid = pcall(IsInRaid)
+		if ok and inRaid then
+			return "RAID"
+		end
+	end
+	return "PARTY"
+end
+
+function EC.SendGroupAnnouncement(message, requireMoreThanTwo)
+	local minimumCount = requireMoreThanTwo and 3 or 2
+
+	message = TrimText(message)
+	if message == "" or type(SendChatMessage) ~= "function" then
+		return false
+	end
+	if GetCurrentGroupMemberCount() < minimumCount then
+		return false
+	end
+
+	SendChatMessage(message, GetGroupAnnouncementChannel())
+	return true
+end
+
+function EC.AnnounceTradeStatus(status, customerName)
+	local action = status == "started" and "started" or "ended"
+
+	if not EC.DB or EC.DB.AnnounceTradeStatus ~= true then
+		return false
+	end
+
+	customerName = TrimText(customerName)
+	if customerName == "" then
+		return false
+	end
+
+	return EC.SendGroupAnnouncement(string.format("Trade %s with %s.", action, customerName), true)
+end
+
+local function GetGargulTradeWindow()
+	return _G and _G.Gargul and _G.Gargul.TradeWindow or nil
+end
+
+local function UncheckGargulAnnounceTrade()
+	local checkBox = _G and _G.GargulAnnounceTradeDetails or nil
+	local tradeWindow = GetGargulTradeWindow()
+
+	if checkBox and checkBox.SetChecked then
+		pcall(checkBox.SetChecked, checkBox, false)
+	end
+	if tradeWindow and type(tradeWindow.State) == "table" then
+		tradeWindow.State.announce = false
+	end
+end
+
+function EC.IsGargulTradeAnnouncementSuppressed()
+	return EC.Initalized == true and EC.SuppressGargulTradeAnnouncements == true
+end
+
+function EC.InstallGargulAnnouncementSuppressor()
+	local tradeWindow = GetGargulTradeWindow()
+	local originalShouldAnnounce
+
+	if not tradeWindow or tradeWindow._EnchanterAnnouncementSuppressorInstalled then
+		return tradeWindow ~= nil
+	end
+
+	originalShouldAnnounce = tradeWindow.shouldAnnounce
+	if type(originalShouldAnnounce) ~= "function" then
+		return false
+	end
+
+	tradeWindow._EnchanterOriginalShouldAnnounce = originalShouldAnnounce
+	tradeWindow.shouldAnnounce = function(self, ...)
+		if EC.IsGargulTradeAnnouncementSuppressed and EC.IsGargulTradeAnnouncementSuppressed() then
+			return false
+		end
+		return originalShouldAnnounce(self, ...)
+	end
+	tradeWindow._EnchanterAnnouncementSuppressorInstalled = true
+	return true
+end
+
+function EC.SetGargulTradeAnnouncementSuppressed(shouldSuppress)
+	EC.SuppressGargulTradeAnnouncements = shouldSuppress and true or false
+	EC.InstallGargulAnnouncementSuppressor()
+	if EC.SuppressGargulTradeAnnouncements then
+		UncheckGargulAnnounceTrade()
+	end
+	return EC.SuppressGargulTradeAnnouncements
+end
+
 function EC.InviteCustomer(name, sourceLabel)
 	if not name or name == "" then
 		return
@@ -3498,6 +3625,8 @@ local function EnsureSavedVariables()
 	if EC.DB.WhisperLfRequests == nil then EC.DB.WhisperLfRequests = false end
 	if EC.DB.GroupedFollowUp == nil then EC.DB.GroupedFollowUp = false end
 	if EC.DB.EmoteThankAfterCast == nil then EC.DB.EmoteThankAfterCast = false end
+	if EC.DB.AnnounceTradeStatus == nil then EC.DB.AnnounceTradeStatus = false end
+	if EC.DB.UseEnchanterMessages == nil then EC.DB.UseEnchanterMessages = false end
 	if EC.DB.PlaySoundOnPartyJoinInstead == nil then EC.DB.PlaySoundOnPartyJoinInstead = false end
 	if EC.DB.InviteTimeDelay == nil then EC.DB.InviteTimeDelay = 0 end
 	if EC.DB.WhisperTimeDelay == nil then EC.DB.WhisperTimeDelay = 0 end
@@ -4121,6 +4250,9 @@ function EC.Init()
 		EC.Workbench.SyncVisibility()
 	end
 	EC.Initalized = true
+	if EC.InstallGargulAnnouncementSuppressor then
+		EC.InstallGargulAnnouncementSuppressor()
+	end
 
 	print("|cFFFF1C1C Loaded: "
 		.. (GetAddOnMetadataCompat(TOCNAME, "Title") or TOCNAME)
@@ -4496,6 +4628,8 @@ local function Event_ADDON_LOADED(arg1)
 		EC.Init()
 	elseif IsAddonActive() and arg1 == "Auctionator" and EC.Workbench and EC.Workbench.Refresh then
 		EC.Workbench.Refresh()
+	elseif IsAddonActive() and arg1 == "Gargul" and EC.InstallGargulAnnouncementSuppressor then
+		EC.InstallGargulAnnouncementSuppressor()
 	end
 end
 

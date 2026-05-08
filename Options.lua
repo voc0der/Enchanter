@@ -623,6 +623,8 @@ function EC.Default()
 	EC.DB.WhisperLfRequests = false
 	EC.DB.GroupedFollowUp = false
 	EC.DB.EmoteThankAfterCast = false
+	EC.DB.AnnounceTradeStatus = false
+	EC.DB.UseEnchanterMessages = false
 	EC.DB.PlaySoundOnPartyJoinInstead = false
 	EC.DB.InviteTimeDelay = 0
 	EC.DB.WhisperTimeDelay = 0
@@ -660,6 +662,12 @@ function EC.OptionsUpdate()
 	end
 	if EC.DB.EmoteThankAfterCast == nil then
 		EC.DB.EmoteThankAfterCast = false
+	end
+	if EC.DB.AnnounceTradeStatus == nil then
+		EC.DB.AnnounceTradeStatus = false
+	end
+	if EC.DB.UseEnchanterMessages == nil then
+		EC.DB.UseEnchanterMessages = false
 	end
 	if EC.DB.PlaySoundOnPartyJoinInstead == nil then
 		EC.DB.PlaySoundOnPartyJoinInstead = false
@@ -800,8 +808,12 @@ function EC.OptionsInit()
 	AddSavedCheckBox(EC.DB, "AutoReplaceEnchant", true, "Automatically replace enchants")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.InLine()
-	AddSavedCheckBox(EC.DB, "EmoteThankAfterCast", false, "Emote /thank after successful cast")
+	AddSavedCheckBox(EC.DB, "EmoteThankAfterCast", false, "Emote /thank when paid")
 	AddSavedCheckBox(EC.DB, "PlaySoundOnPartyJoinInstead", false, "Play sound on party join instead")
+	EC.OptionsBuilder.EndInLine()
+	EC.OptionsBuilder.InLine()
+	AddSavedCheckBox(EC.DB, "AnnounceTradeStatus", false, "Announce Trade Status")
+	AddSavedCheckBox(EC.DB, "UseEnchanterMessages", false, "Use Enchanter Messages")
 	EC.OptionsBuilder.EndInLine()
 	EC.OptionsBuilder.Indent(-10)
 	EC.OptionsBuilder.AddSpacerToPanel()
