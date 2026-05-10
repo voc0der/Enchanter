@@ -1,3 +1,8 @@
+## [2.1.91] - 2026-05-10
+
+### Changed
+- Grouped queue expiry and party-declined removal still hide stale orders at the configured timer, but now keep a hidden cache for three times that setting so a returning customer can whisper `inv` and have the remembered order restored before the fresh invite goes out
+
 ## [2.1.90] - 2026-05-08
 
 ### Added
