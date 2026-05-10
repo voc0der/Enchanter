@@ -4290,15 +4290,65 @@ local function IsGenericEnchanterRequest(parsedMessage)
 		and EC.EnchanterTagsNormalized[normalizedMessage] == true
 end
 
+function EC.IsInviteReplyMessage(message)
+	local normalizedMessage = NormalizePhrase(message)
+	local loweredMessage
+
+	if normalizedMessage == "inv" or normalizedMessage == "invite" then
+		return true
+	end
+
+	loweredMessage = tostring(message or ""):lower()
+	for token in string.gmatch(loweredMessage, "%w+") do
+		if token == "inv" or token == "invite" then
+			return true
+		end
+	end
+
+	return false
+end
+
+function EC.TryRestoreCachedWorkbenchOrderInviteReply(msg, name)
+	local order
+
+	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or EC.DBChar.Stop == true then
+		return false
+	end
+	if EC.IsBanned(name) or not EC.IsInviteReplyMessage(msg) then
+		return false
+	end
+	if not EC.Workbench or not EC.Workbench.RestoreCachedOrderForCustomer then
+		return false
+	end
+
+	order = EC.Workbench.RestoreCachedOrderForCustomer(name)
+	if not order then
+		return false
+	end
+
+	if EC.InviteCustomer then
+		EC.InviteCustomer(order.Customer or name, "[Workbench] cached invite")
+	end
+	return true
+end
+
 function EC.ParseMessage(msg, name, options)
 	local allowMissingPrefix = type(options) == "table" and options.AllowMissingPrefix == true
 	local hasRequestPrefix
 
-	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or (not allowMissingPrefix and string.len(msg) < 4) or EC.DBChar.Stop == true then
+	if EC.Initalized == false or not name or name == "" or not msg or msg == "" or EC.DBChar.Stop == true then
 		return
 	end
 
 	if EC.IsBanned(name) then
+		return
+	end
+
+	if EC.TryRestoreCachedWorkbenchOrderInviteReply(msg, name) then
+		return
+	end
+
+	if not allowMissingPrefix and string.len(msg) < 4 then
 		return
 	end
 
@@ -4555,7 +4605,13 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 end
 
 local function Event_CHAT_MSG_WHISPER(msg, name)
-	if not IsAddonActive() or not EC.IsWhisperListenMode(name) then
+	if not IsAddonActive() then
+		return
+	end
+	if EC.TryRestoreCachedWorkbenchOrderInviteReply(msg, name) then
+		return
+	end
+	if not EC.IsWhisperListenMode(name) then
 		return
 	end
 	EC.ParseMessage(msg, name, { AllowMissingPrefix = true })

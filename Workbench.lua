@@ -711,6 +711,26 @@ local function GetDeclinedInviteRemovalSeconds()
 	return math.max(0, math.floor(tonumber(configuredSeconds) or 0))
 end
 
+local function CopyTable(source, seen)
+	local copy
+
+	if type(source) ~= "table" then
+		return source
+	end
+
+	seen = seen or {}
+	if seen[source] then
+		return seen[source]
+	end
+
+	copy = {}
+	seen[source] = copy
+	for key, value in pairs(source) do
+		copy[CopyTable(key, seen)] = CopyTable(value, seen)
+	end
+	return copy
+end
+
 local function IsCustomerInCurrentGroup(customerName)
 	if TrimText(customerName) == "" then
 		return false
@@ -838,6 +858,118 @@ local function ClearDeclinedInviteExpiryRuntime(orderId)
 	if runtime.DeclinedInviteExpiry then
 		runtime.DeclinedInviteExpiry[orderId] = nil
 	end
+end
+
+local function GetHiddenOrderCache(createIfMissing)
+	local runtime = EnsureRuntime()
+	if not runtime.HiddenOrderCache and createIfMissing ~= false then
+		runtime.HiddenOrderCache = {}
+	end
+	return runtime.HiddenOrderCache
+end
+
+local function GetHiddenOrderCacheKey(customerName)
+	local shortName, fullName = NormalizeCustomerName(customerName)
+	if fullName ~= "" then
+		return fullName
+	end
+	return shortName
+end
+
+local function PruneHiddenOrderCache()
+	local cache = GetHiddenOrderCache(false)
+	local now = Now()
+	local changed = false
+
+	if not cache then
+		return false
+	end
+
+	for key, entry in pairs(cache) do
+		if not entry or not entry.Order or not entry.ExpiresAt or now >= (tonumber(entry.ExpiresAt) or 0) then
+			cache[key] = nil
+			changed = true
+		end
+	end
+
+	return changed
+end
+
+local function FindHiddenOrderCacheEntry(customerName)
+	local cache
+	local targetShort, targetFull = NormalizeCustomerName(customerName)
+	local directKey
+
+	if targetShort == "" then
+		return nil, nil
+	end
+
+	PruneHiddenOrderCache()
+	cache = GetHiddenOrderCache(false)
+	if not cache then
+		return nil, nil
+	end
+
+	directKey = GetHiddenOrderCacheKey(customerName)
+	if cache[directKey] and cache[directKey].Order and NamesMatch(cache[directKey].Order.Customer, customerName) then
+		return directKey, cache[directKey]
+	end
+
+	for key, entry in pairs(cache) do
+		if entry and entry.Order and NamesMatch(entry.Order.Customer, targetFull ~= "" and targetFull or targetShort) then
+			return key, entry
+		end
+	end
+
+	return nil, nil
+end
+
+local function ScheduleHiddenOrderCacheExpiry(cacheKey, expiresAt, token)
+	if not C_Timer or not C_Timer.After then
+		return
+	end
+
+	C_Timer.After(math.max(0, expiresAt - Now()) + ORDER_EXPIRY_TIMER_BUFFER, function()
+		local cache = GetHiddenOrderCache(false)
+		local entry = cache and cache[cacheKey] or nil
+		if not entry or entry.Token ~= token or entry.ExpiresAt ~= expiresAt then
+			return
+		end
+		if Now() + 0.001 < expiresAt then
+			return
+		end
+		cache[cacheKey] = nil
+	end)
+end
+
+local function CacheHiddenRemovedOrder(order, cacheSeconds, reason)
+	local cache
+	local cacheKey
+	local entry
+	local expiresAt
+
+	cacheSeconds = math.max(0, math.floor(tonumber(cacheSeconds) or 0))
+	if not order or not order.Customer or cacheSeconds <= 0 or IsMailboxItemOrder(order) then
+		return false
+	end
+
+	cacheKey = GetHiddenOrderCacheKey(order.Customer)
+	if cacheKey == "" then
+		return false
+	end
+
+	cache = GetHiddenOrderCache()
+	entry = cache[cacheKey] or {}
+	expiresAt = Now() + cacheSeconds
+	entry.Token = math.floor(tonumber(entry.Token) or 0) + 1
+	entry.ExpiresAt = expiresAt
+	entry.Reason = reason
+	entry.Order = CopyTable(order)
+	cache[cacheKey] = entry
+
+	ScheduleHiddenOrderCacheExpiry(cacheKey, expiresAt, entry.Token)
+	WorkbenchDebug("cached expired order for", order.Customer, "(" .. tostring(cacheSeconds) .. "s hidden retention)")
+	return true
 end
 
 local function FindOrderIndexById(orderId, state)
@@ -1294,7 +1426,7 @@ local function GetDeclinedInviteExpireAt(order)
 	return math.max(0, tonumber(order.InviteDeclinedAt) or 0) + removalSeconds
 end
 
-local function RemoveOrderByIndex(state, index, reasonPrefix)
+local function RemoveOrderByIndex(state, index, reasonPrefix, hiddenCacheSeconds, hiddenCacheReason)
 	local removedOrder = table.remove(state.Orders, index)
 	if not removedOrder then
 		return nil
@@ -1304,9 +1436,11 @@ local function RemoveOrderByIndex(state, index, reasonPrefix)
 	ClearDeclinedInviteExpiryRuntime(removedOrder.Id)
 	EC.PlayerList[removedOrder.Customer] = nil
 	EC.LfRecipeList[removedOrder.Customer] = nil
+	EC.LfRequestedRecipeCounts[removedOrder.Customer] = nil
 	if EC.ClearWhisperListenMode then
 		EC.ClearWhisperListenMode(removedOrder.Customer)
 	end
+	CacheHiddenRemovedOrder(removedOrder, hiddenCacheSeconds, hiddenCacheReason)
 	WorkbenchDebug(reasonPrefix or "removed order for", removedOrder.Customer, "(" .. tostring(#(removedOrder.Recipes or {})) .. " enchants)")
 	return removedOrder
 end
@@ -1366,7 +1500,16 @@ local function ScheduleGroupedOrderExpiry(order)
 				return
 			end
 			WorkbenchDebug("expired grouped order for", currentOrder.Customer, "(" .. tostring(GetGroupedQueueExpirySeconds()) .. "s without joining)")
-			Workbench.RemoveOrder(orderId)
+			do
+				local currentState = Workbench.EnsureState()
+				local currentIndex = FindOrderIndexById(orderId, currentState)
+				if currentIndex then
+					RemoveOrderByIndex(currentState, currentIndex, "expired grouped order for", GetGroupedQueueExpirySeconds() * 3, "grouped")
+					if currentState.SelectedOrderId == orderId then
+						currentState.SelectedOrderId = currentState.Orders[1] and currentState.Orders[1].Id or nil
+					end
+				end
+			end
 			if Workbench.Frame and Workbench.Frame.OrderRows then
 				for _, row in ipairs(Workbench.Frame.OrderRows) do
 					if row and row.OrderId == orderId and row.Hide then
@@ -1438,7 +1581,16 @@ local function ScheduleDeclinedInviteExpiry(order)
 				return
 			end
 			WorkbenchDebug("expired declined invite order for", currentOrder.Customer, "(" .. tostring(GetDeclinedInviteRemovalSeconds()) .. "s after decline)")
-			Workbench.RemoveOrder(orderId)
+			do
+				local currentState = Workbench.EnsureState()
+				local currentIndex = FindOrderIndexById(orderId, currentState)
+				if currentIndex then
+					RemoveOrderByIndex(currentState, currentIndex, "expired declined invite order for", GetDeclinedInviteRemovalSeconds() * 3, "declined")
+					if currentState.SelectedOrderId == orderId then
+						currentState.SelectedOrderId = currentState.Orders[1] and currentState.Orders[1].Id or nil
+					end
+				end
+			end
 			if Workbench.Frame and Workbench.Frame.OrderRows then
 				for _, row in ipairs(Workbench.Frame.OrderRows) do
 					if row and row.OrderId == orderId and row.Hide then
@@ -1470,7 +1622,7 @@ local function SyncGroupedOrdersInternal(state)
 			else
 				local expireAt = GetGroupedOrderExpireAt(order)
 				if expireAt and Now() >= expireAt then
-					RemoveOrderByIndex(state, index, "expired grouped order for")
+					RemoveOrderByIndex(state, index, "expired grouped order for", GetGroupedQueueExpirySeconds() * 3, "grouped")
 					changed = true
 				else
 					ScheduleGroupedOrderExpiry(order)
@@ -1505,7 +1657,7 @@ local function SyncDeclinedInviteOrders(state)
 			else
 				local expireAt = GetDeclinedInviteExpireAt(order)
 				if expireAt and Now() >= expireAt then
-					RemoveOrderByIndex(state, index, "expired declined invite order for")
+					RemoveOrderByIndex(state, index, "expired declined invite order for", removalSeconds * 3, "declined")
 					changed = true
 				else
 					ScheduleDeclinedInviteExpiry(order)
@@ -2887,6 +3039,47 @@ function Workbench.MarkOrderInviteDeclined(customerName)
 	return true
 end
 
+function Workbench.RestoreCachedOrderForCustomer(customerName)
+	local state = Workbench.EnsureState()
+	local cacheKey, entry = FindHiddenOrderCacheEntry(customerName)
+	local cache
+	local order
+	local existingOrder
+
+	if not entry or not entry.Order then
+		return nil
+	end
+
+	existingOrder = Workbench.GetOrderByCustomer(customerName)
+	cache = GetHiddenOrderCache(false)
+	if cache then
+		cache[cacheKey] = nil
+	end
+
+	if existingOrder then
+		return existingOrder
+	end
+
+	order = EnsureOrderFields(CopyTable(entry.Order))
+	ResetGroupedState(order)
+	ResetInviteDeclinedState(order)
+	if not order.Id or FindOrderIndexById(order.Id, state) then
+		order.Id = state.NextOrderId
+		state.NextOrderId = state.NextOrderId + 1
+	elseif order.Id >= state.NextOrderId then
+		state.NextOrderId = order.Id + 1
+	end
+	order.UpdatedAt = TimestampText()
+
+	state.Orders[#state.Orders + 1] = order
+	state.SelectedOrderId = order.Id
+	WorkbenchDebug("restored cached order for", order.Customer)
+	if Workbench.Frame then
+		Workbench.Refresh()
+	end
+	return order
+end
+
 OrderHasRecipe = function(order, recipeName)
 	if not order or not recipeName then
 		return false
@@ -4140,6 +4333,7 @@ function Workbench.ClearOrders()
 	runtime.PendingClosedTrades = nil
 	runtime.GroupedExpiry = nil
 	runtime.DeclinedInviteExpiry = nil
+	runtime.HiddenOrderCache = nil
 
 	WorkbenchDebug("cleared queue and totals (" .. tostring(removedCount) .. " orders)")
 	Workbench.Refresh()
@@ -4225,6 +4419,8 @@ function Workbench.AddOrUpdateOrder(customer, message, recipeMap, requestedRecip
 	if not customer or customer == "" or #recipeNames == 0 then
 		return nil
 	end
+
+	Workbench.RestoreCachedOrderForCustomer(customer)
 
 	for _, existing in ipairs(state.Orders) do
 		if existing.Kind ~= "disenchant" and existing.Customer == customer then

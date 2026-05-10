@@ -6761,6 +6761,50 @@ local function test_grouped_queue_auto_expires_when_customer_never_joins()
     assert_true(string.find(frame.QueueCountText.text or "", "0 orders", 1, true) ~= nil, "expiring grouped orders should refresh the open workbench summary immediately")
 end
 
+local function test_grouped_queue_hidden_cache_restores_inv_reply()
+    local addon, state = setup_env({
+        defer_timers = true,
+        db = {
+            AutoInvite = true,
+            GroupedFollowUp = false,
+            GroupedQueueExpireSeconds = 30,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Cache")
+    run_timer(state, 1)
+    addon.HandleInviteFailureMessage("Buyer-Cache is already in a group.")
+
+    state.current_time = 31
+    run_timer(state, 3)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "grouped expiry should still remove the order from the visible queue")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Cache"), "grouped expiry should hide the order until the customer returns")
+    assert_true(state.timer_delays[4] > 90, "hidden grouped-order cache should retain the remembered order for three times the configured expiry")
+
+    state.event_handlers["CHAT_MSG_WHISPER"]("inv", "Buyer-Cache")
+
+    local restoredOrder = addon.Workbench.GetOrderByCustomer("Buyer-Cache")
+    assert_not_nil(restoredOrder, "an invite reply should restore the hidden grouped order")
+    assert_equal(restoredOrder.Customer, "Buyer-Cache", "restored grouped orders should keep the original customer")
+    assert_equal(#restoredOrder.Recipes, 1, "restored grouped orders should keep their recipe rows")
+    assert_equal(restoredOrder.Recipes[1], "Enchant Weapon - Mongoose", "restored grouped orders should keep the requested recipe")
+    assert_true(not restoredOrder.AlreadyGrouped, "restored grouped orders should come back without the stale grouped flag")
+    assert_equal(#state.invites, 2, "an invite reply should send a fresh invite after restoring the cached order")
+    assert_equal(state.invites[2], "Buyer-Cache", "the restored grouped order should invite the returning customer")
+end
+
 local function test_declined_invite_order_auto_expires_when_timer_enabled()
     local addon, state = setup_env({
         defer_timers = true,
@@ -6800,6 +6844,43 @@ local function test_declined_invite_order_auto_expires_when_timer_enabled()
     assert_equal(#addon.Workbench.EnsureState().Orders, 0, "declined invite removal should remove queued customers after the timer expires")
     assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Declined"), "declined invite removal should clear the queued order")
     assert_nil(addon.PlayerList["Buyer-Declined"], "declined invite removal should clear the anti-spam player gate")
+end
+
+local function test_declined_invite_hidden_cache_expires_after_triple_timer()
+    local addon, state = setup_env({
+        defer_timers = true,
+        db = {
+            AutoInvite = true,
+            DeclinedInviteRemovalSeconds = 45,
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    addon.RefreshCompiledData()
+    addon.ParseMessage("LF mongoose pst", "Buyer-Declined-Cache")
+    run_timer(state, 1)
+    addon.HandleInviteFailureMessage("Buyer-Declined-Cache declines your group invitation.")
+
+    state.current_time = 46
+    run_timer(state, 3)
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "declined invite removal should still hide the order at the configured timer")
+    assert_true(state.timer_delays[4] > 135, "hidden declined-order cache should retain the remembered order for three times the configured timer")
+
+    state.current_time = 182
+    state.event_handlers["CHAT_MSG_WHISPER"]("inv", "Buyer-Declined-Cache")
+
+    assert_equal(#addon.Workbench.EnsureState().Orders, 0, "declined invite cache should not restore after the hidden retention expires")
+    assert_equal(#state.invites, 1, "expired hidden cache entries should not send another invite")
 end
 
 local function test_manual_reinvite_clears_declined_invite_timer()
@@ -7614,7 +7695,9 @@ test_grouped_customer_limit_auto_resumes_when_customer_leaves()
 test_grouped_customer_limit_does_not_auto_resume_after_manual_stop()
 test_player_afk_event_auto_stops_chat_scanning()
 test_grouped_queue_auto_expires_when_customer_never_joins()
+test_grouped_queue_hidden_cache_restores_inv_reply()
 test_declined_invite_order_auto_expires_when_timer_enabled()
+test_declined_invite_hidden_cache_expires_after_triple_timer()
 test_manual_reinvite_clears_declined_invite_timer()
 test_trade_with_unmatched_partner_does_not_complete_selected_order()
 test_order_only_turns_verified_when_all_recipes_are_checked()
