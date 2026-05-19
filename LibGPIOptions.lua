@@ -708,8 +708,9 @@ end
 ---@param isNumeric boolean?
 ---@param tooltip string? text to display in a tooltip when the mouse hovers over the edit box
 ---@param sampleText string? text to display in the edit box when it is empty
+---@param preserveText boolean? when true, string values keep casing and surrounding spaces
 ---@return EditBox|RegisteredFrameMixin
-function Options.AddEditBoxToCurrentPanel(dbTable,key,default,labelText,width,labelWidth,isNumeric,tooltip,sampleText)
+function Options.AddEditBoxToCurrentPanel(dbTable,key,default,labelText,width,labelWidth,isNumeric,tooltip,sampleText,preserveText)
 	width = width or 200
 	local frameIdx = Options.Frames.count + 1
 	local editBoxName = Options.Prefix..'EditBox'..frameIdx..key
@@ -745,6 +746,9 @@ function Options.AddEditBoxToCurrentPanel(dbTable,key,default,labelText,width,la
 		if dbTable[key] == nil then dbTable[key] = default end
 		local cleanupText = function(text)
 			if type(text) ~= "string" then
+				return text
+			end
+			if preserveText then
 				return text
 			end
 			return text:lower():gsub('%s+', ' '):trim()

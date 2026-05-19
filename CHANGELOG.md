@@ -1,3 +1,9 @@
+## [2.1.93] - 2026-05-19
+
+### Added
+- Added a workbench `Spam` button while chat matching is active, sending a configured one-line LFW enchant list to Trade chat.
+- Added `Spam Intro`, `Spam Preview`, and per-recipe `Spam Index` settings so each listed enchant can reuse a chosen Search phrase shorthand.
+
 ## [2.1.92] - 2026-05-17
 
 ### Changed

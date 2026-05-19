@@ -460,6 +460,26 @@ local function setup_env(opts)
         state.chat_messages[#state.chat_messages + 1] = entry
         state.whispers[#state.whispers + 1] = entry
     end
+    _G.GetChannelName = function(channel)
+        local channels = opts.channels
+        if channels == nil then
+            channels = {
+                ["Trade - City"] = 2,
+                Trade = 2,
+            }
+        end
+
+        if type(channel) == "number" then
+            for channel_name, channel_id in pairs(channels) do
+                if tonumber(channel_id) == channel then
+                    return channel, channel_name
+                end
+            end
+            return 0
+        end
+
+        return tonumber(channels[tostring(channel or "")]) or 0, tostring(channel or "")
+    end
     _G.DoEmote = function(token, target)
         state.emotes[#state.emotes + 1] = {
             token = token,
@@ -2877,6 +2897,7 @@ local function test_incomplete_order_settings_default_on()
     assert_true(addon.DB.UseEnchanterMessages == false, "enchanter party messages should default to disabled")
     assert_equal(addon.DB.DeclinedInviteRemovalSeconds, 0, "declined invite removal timer should default to disabled")
     assert_equal(addon.DB.MaxGroupedCustomers, 0, "max grouped customers should default to unlimited")
+    assert_equal(addon.DB.SpamIntro, "LFW Enchanter: ", "trade spam intro should default to the configured LFW prefix")
 end
 
 local function test_parse_message_invites_once_and_whispers_link()
@@ -5093,12 +5114,14 @@ local function test_workbench_header_button_scans_when_recipe_data_is_missing()
     local frame = addon.Workbench.CreateFrame()
 
     assert_equal(frame.ScanButton.text, "Scan", "header button should prompt for a scan when recipe data is missing")
+    assert_true(frame.SpamButton.shown == false, "spam button should stay hidden until scanned recipe data exists")
 
     frame.ScanButton.scripts["OnClick"]()
 
     assert_equal(state.last_cast, "Enchanting", "scan header button should perform a recipe scan")
     assert_true(addon.NeedsRecipeScan() == false, "successful scan should satisfy the missing-data check")
     assert_equal(frame.ScanButton.text, "Stop", "after scanning, the header button should fall back to the active scan-state toggle")
+    assert_true(frame.SpamButton.shown, "spam button should appear once matching is active with cached recipes")
 end
 
 local function test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
@@ -5119,14 +5142,72 @@ local function test_workbench_header_button_toggles_start_and_stop_after_scan_da
     local frame = addon.Workbench.CreateFrame()
 
     assert_equal(frame.ScanButton.text, "Stop", "header button should show Stop when chat matching is active and scan data exists")
+    assert_true(frame.SpamButton.shown, "spam button should show beside the active scan-state toggle")
 
     frame.ScanButton.scripts["OnClick"]()
     assert_true(addon.DBChar.Stop, "header stop button should pause chat matching")
     assert_equal(frame.ScanButton.text, "Start", "paused chat matching should flip the header button to Start")
+    assert_true(frame.SpamButton.shown == false, "spam button should hide when chat matching is paused")
 
     frame.ScanButton.scripts["OnClick"]()
     assert_true(addon.DBChar.Stop == false, "header start button should resume chat matching")
     assert_equal(frame.ScanButton.text, "Stop", "resumed chat matching should flip the header button back to Stop")
+    assert_true(frame.SpamButton.shown, "spam button should return when chat matching resumes")
+end
+
+local function test_trade_spam_message_uses_configured_search_phrase_indexes()
+    local addon = setup_env({
+        db = {
+            SpamIntro = "Enchanter LFW - ",
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Chest - Exceptional Health"] = 3,
+                    ["Enchant Weapon - Crusader"] = 2,
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Chest - Exceptional Health"] = { "enchant chest - exceptional health", "150 hp", "150hp" },
+                ["Enchant Weapon - Crusader"] = { "enchant weapon - crusader", "crusader" },
+                ["Enchant Weapon - Mongoose"] = { "enchant weapon - mongoose", "mongoose" },
+            },
+        },
+    })
+
+    local message, parts = addon.BuildSpamMessage()
+
+    assert_equal(message, "Enchanter LFW - 150hp | crusader", "trade spam should use the selected indexed search tags for known enchants")
+    assert_equal(#parts, 2, "trade spam should include only recipes with a configured spam index")
+end
+
+local function test_workbench_spam_button_sends_trade_channel_message()
+    local addon, state = setup_env({
+        db = {
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Chest - Exceptional Health"] = 3,
+                    ["Enchant Weapon - Crusader"] = 2,
+                },
+            },
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Chest - Exceptional Health"] = { "enchant chest - exceptional health", "150 hp", "150hp" },
+                ["Enchant Weapon - Crusader"] = { "enchant weapon - crusader", "crusader" },
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+
+    frame.SpamButton.scripts["OnClick"]()
+
+    local channelMessages = chat_messages_of_type(state, "CHANNEL")
+    assert_equal(#channelMessages, 1, "spam button should send one channel message")
+    assert_equal(channelMessages[1].message, "LFW Enchanter: 150hp | crusader", "spam button should send the preview text")
+    assert_equal(channelMessages[1].target, 2, "spam button should target the Trade channel")
 end
 
 local function test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
@@ -7648,6 +7729,8 @@ test_workbench_keeps_last_accepted_trade_material_snapshot_when_trade_slots_clea
 test_workbench_late_completion_signal_preserves_split_trade_progress_during_followup_trade()
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
+test_trade_spam_message_uses_configured_search_phrase_indexes()
+test_workbench_spam_button_sends_trade_channel_message()
 test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
 test_auction_search_button_only_shows_while_the_auction_house_is_open()
 test_auction_search_uses_formula_names_and_refreshes_live_enchanting_data()

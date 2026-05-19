@@ -9,6 +9,8 @@ EC.SessionGold = 0
 EC.DefaultMsg = "I can do "
 EC.DefaultLfWhisperMsg = "What you looking for?"
 EC.DefaultGroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.'
+EC.DefaultSpamIntro = "LFW Enchanter: "
+EC.RecipeSpamIndexKey = "RecipeSpamIndex"
 EC.EnchanterTags = EC.DefaultEnchanterTags or {}
 EC.PrefixTags = EC.DefaultPrefixTags or {}
 EC.RecipeTags = EC.DefaultRecipeTags or {}
@@ -2791,6 +2793,104 @@ function EC.GetMatchedRecipeNames(recipeMap)
 	return out
 end
 
+function EC.GetRecipeSpamIndex(recipeName)
+	local store = EC.DB and EC.DB.Custom and EC.DB.Custom[EC.RecipeSpamIndexKey]
+	local index = store and math.floor(tonumber(store[recipeName]) or 0) or 0
+	return index > 0 and index or nil
+end
+
+function EC.GetRecipeSpamLabel(recipeName)
+	local index = EC.GetRecipeSpamIndex(recipeName)
+	local recipeTags = EC.DBChar and EC.DBChar.RecipeList and EC.DBChar.RecipeList[recipeName]
+	local label
+
+	if not index or type(recipeTags) ~= "table" then
+		return nil
+	end
+
+	label = TrimText(recipeTags[index])
+	return label ~= "" and label or nil
+end
+
+function EC.GetTradeSpamChannelTarget()
+	if type(GetChannelName) ~= "function" then
+		return nil
+	end
+
+	for _, channelName in ipairs({ "Trade - City", "Trade" }) do
+		local channelId = GetChannelName(channelName)
+		if tonumber(channelId) and tonumber(channelId) > 0 then
+			return channelId
+		end
+	end
+
+	return nil
+end
+
+function EC.GetRecipeSpamParts()
+	local out = {}
+	local seen = {}
+	local recipeNames = {}
+
+	for recipeName in pairs(EC.DBChar and EC.DBChar.RecipeList or {}) do
+		if EC.GetRecipeSpamIndex(recipeName) then
+			recipeNames[#recipeNames + 1] = recipeName
+		end
+	end
+
+	table.sort(recipeNames)
+
+	for _, recipeName in ipairs(recipeNames) do
+		local label = EC.GetRecipeSpamLabel(recipeName)
+		local normalizedLabel = label and string.lower(label) or nil
+		if label and not seen[normalizedLabel] then
+			seen[normalizedLabel] = true
+			out[#out + 1] = label
+		end
+	end
+
+	return out
+end
+
+function EC.BuildSpamMessage()
+	local intro = EC.DB and EC.DB.SpamIntro
+	local parts = EC.GetRecipeSpamParts()
+
+	if intro == nil then
+		intro = EC.DefaultSpamIntro
+	end
+
+	return tostring(intro or "") .. table.concat(parts, " | "), parts
+end
+
+function EC.SendTradeSpam()
+	local message, parts = EC.BuildSpamMessage()
+	local channelTarget
+
+	if #parts == 0 then
+		print("|cFFFF1C1CEnchanter|r Set Spam Index values under /ec config > Recipe Customizations before using Spam.")
+		return false, message
+	end
+
+	channelTarget = EC.GetTradeSpamChannelTarget()
+	if not channelTarget then
+		print("|cFFFF1C1CEnchanter|r Join Trade chat before using Spam.")
+		return false, message
+	end
+
+	if EC.DBChar and EC.DBChar.Debug then
+		EC.DebugPrint("would trade spam:", message)
+		return true, message
+	end
+
+	if type(SendChatMessage) ~= "function" then
+		return false, message
+	end
+
+	SendChatMessage(message, "CHANNEL", nil, channelTarget)
+	return true, message
+end
+
 function EC.DebugPrint(...)
 	if not EC.DBChar or not EC.DBChar.Debug then
 		return
@@ -3611,6 +3711,7 @@ local function EnsureSavedVariables()
 	EC.DBChar = EnchanterDBChar
 
 	if not EC.DB.Custom then EC.DB.Custom = {} end
+	if not EC.DB.Custom[EC.RecipeSpamIndexKey] then EC.DB.Custom[EC.RecipeSpamIndexKey] = {} end
 	if not EC.DBChar.RecipeList then EC.DBChar.RecipeList = {} end
 	if not EC.DBChar.RecipeLinks then EC.DBChar.RecipeLinks = {} end
 	if not EC.DBChar.RecipeMats then EC.DBChar.RecipeMats = {} end
@@ -3640,6 +3741,7 @@ local function EnsureSavedVariables()
 	if not EC.DB.MsgPrefix or EC.DB.MsgPrefix == "" then EC.DB.MsgPrefix = EC.DefaultMsg end
 	if not EC.DB.LfWhisperMsg or EC.DB.LfWhisperMsg == "" then EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg end
 	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg end
+	if EC.DB.SpamIntro == nil then EC.DB.SpamIntro = EC.DefaultSpamIntro end
 	RefreshStoredRecipeMaterials()
 	if EC.Workbench and EC.Workbench.EnsureState then EC.Workbench.EnsureState() end
 end

@@ -4886,6 +4886,42 @@ local function UpdateScanButtonText()
 	end
 end
 
+function Workbench.UpdateHeaderTitleBounds()
+	local frame = Workbench.Frame
+	local rightAnchor
+
+	if not frame or not frame.TitleText then
+		return
+	end
+
+	rightAnchor = frame.ScanButton
+	if frame.SpamButton and IsRegionShown(frame.SpamButton) then
+		rightAnchor = frame.SpamButton
+	end
+	if frame.AuctionSearchButton and IsRegionShown(frame.AuctionSearchButton) then
+		rightAnchor = frame.AuctionSearchButton
+	end
+
+	frame.TitleText:ClearAllPoints()
+	frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
+	frame.TitleText:SetPoint("RIGHT", rightAnchor or frame.ScanButton, "LEFT", -10, 0)
+end
+
+function Workbench.UpdateSpamButton()
+	if not Workbench.Frame or not Workbench.Frame.SpamButton then
+		return
+	end
+
+	local shouldShow = EC
+		and EC.IsChatScanningEnabled
+		and EC.IsChatScanningEnabled()
+		and not (EC.NeedsRecipeScan and EC.NeedsRecipeScan())
+
+	SetRegionShown(Workbench.Frame.SpamButton, shouldShow)
+	Workbench.Frame.SpamButton:SetText("Spam")
+	Workbench.UpdateHeaderTitleBounds()
+end
+
 local function UpdateAuctionSearchButton()
 	if not Workbench.Frame or not Workbench.Frame.AuctionSearchButton then
 		return
@@ -4894,14 +4930,11 @@ local function UpdateAuctionSearchButton()
 	local frame = Workbench.Frame
 	local shouldShow = EC and EC.CanSearchMissingEnchantRecipes and EC.CanSearchMissingEnchantRecipes()
 
+	frame.AuctionSearchButton:ClearAllPoints()
+	frame.AuctionSearchButton:SetPoint("RIGHT", frame.SpamButton and IsRegionShown(frame.SpamButton) and frame.SpamButton or frame.ScanButton, "LEFT", -6, 0)
 	SetRegionShown(frame.AuctionSearchButton, shouldShow)
 	frame.AuctionSearchButton:SetText("Search AH")
-
-	if frame.TitleText then
-		frame.TitleText:ClearAllPoints()
-		frame.TitleText:SetPoint("LEFT", frame.Header, "LEFT", 10, 0)
-		frame.TitleText:SetPoint("RIGHT", shouldShow and frame.AuctionSearchButton or frame.ScanButton, "LEFT", -10, 0)
-	end
+	Workbench.UpdateHeaderTitleBounds()
 end
 
 local function CreateOrderRow(parent, index)
@@ -5286,9 +5319,24 @@ function Workbench.CreateFrame()
 		end
 	end)
 
+	frame.SpamButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
+	frame.SpamButton:SetSize(54, 20)
+	frame.SpamButton:SetPoint("RIGHT", frame.ScanButton, "LEFT", -6, 0)
+	frame.SpamButton:SetText("Spam")
+	if frame.SpamButton.SetFrameLevel and frame.Header.GetFrameLevel then
+		frame.SpamButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
+	end
+	ApplyElvUISkin(frame.SpamButton, "button")
+	frame.SpamButton:SetScript("OnClick", function()
+		if EC and EC.SendTradeSpam then
+			EC.SendTradeSpam()
+		end
+	end)
+	frame.SpamButton:Hide()
+
 	frame.AuctionSearchButton = CreateFrame("Button", nil, frame.Header, "UIPanelButtonTemplate")
 	frame.AuctionSearchButton:SetSize(82, 20)
-	frame.AuctionSearchButton:SetPoint("RIGHT", frame.ScanButton, "LEFT", -6, 0)
+	frame.AuctionSearchButton:SetPoint("RIGHT", frame.SpamButton, "LEFT", -6, 0)
 	if frame.AuctionSearchButton.SetFrameLevel and frame.Header.GetFrameLevel then
 		frame.AuctionSearchButton:SetFrameLevel(frame.Header:GetFrameLevel() + 2)
 	end
@@ -5524,6 +5572,7 @@ function Workbench.CreateFrame()
 	UpdateLockButtonVisual()
 	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
+	Workbench.UpdateSpamButton()
 	UpdateAuctionSearchButton()
 	if not Workbench.EnsureState().Visible then
 		frame:Hide()
@@ -5545,6 +5594,7 @@ function Workbench.Refresh()
 	UpdateLockButtonVisual()
 	UpdateSoundButtonVisual()
 	UpdateScanButtonText()
+	Workbench.UpdateSpamButton()
 	UpdateAuctionSearchButton()
 	ApplyFrameLayout(frame)
 	if frame.ListScroll and frame.ListChild and frame.ListScroll.GetWidth then

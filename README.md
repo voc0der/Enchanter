@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.92`
+Current version: `2.1.93`
 
 ## What It Does
 
@@ -30,6 +30,7 @@ Current version: `2.1.92`
 - Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
 - Auto-show the hidden workbench again when a queued customer newly joins your party or raid
 - Whisper the matching enchant links with a configurable delay and message prefix
+- Build a trade-chat `Spam` line from chosen per-recipe shorthand indexes and a configurable `Spam Intro`
 - Randomize recipe whisper prefixes by entering multiple `Message Prefix` choices separated with ` , ` in `/ec config`
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper, then keep listening in whispers for recipe follow-ups that should become normal queued orders
@@ -71,6 +72,7 @@ Current version: `2.1.92`
 - Use the small cog button beside the close `X` to jump straight into `/ec config` from the workbench header.
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
+- When matching is running, use the header `Spam` button to post your configured LFW enchant list to Trade chat.
 - Queued and updated timestamps now use your client-local clock while still following the game's 12-hour or 24-hour display preference.
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
@@ -98,6 +100,7 @@ Current version: `2.1.92`
 - In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them). Expired grouped orders are hidden from the queue but remembered for three times that setting, so an `inv` reply can restore the order and send a fresh invite.
 - In settings, you can set `Party declined removal timer` so customers who decline your group invite are removed from the queue after a chosen number of seconds (`0` leaves the timer disabled). Removed declined orders are also remembered for three times that timer for the same `inv` restore flow.
 - In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself and later auto-resumes once the group drops back under that limit, optionally send a direct `/thank` emote after receiving gold from a queued client, announce trade status, use Enchanter's grouped trade messages, and switch workbench sounds over to party-join alerts instead of first-queue-entry alerts.
+- In settings, `Spam Intro` controls the beginning of the Trade message, `Spam Preview` shows the one-line result, and each recipe's `Spam Index` picks which Search phrase should appear in that list. Leave `Spam Index` blank to omit that recipe.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing

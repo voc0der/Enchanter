@@ -5,6 +5,7 @@ if not EC.Options then
 end
 
 local RECIPE_BLACKLIST_KEY = "RecipeBlackList"
+local RECIPE_SPAM_INDEX_KEY = "RecipeSpamIndex"
 
 local function TrimText(value)
 	if value == nil then
@@ -81,6 +82,11 @@ local function GetRecipeBlacklistStore()
 	return EC.DB.Custom[RECIPE_BLACKLIST_KEY]
 end
 
+local function GetRecipeSpamIndexStore()
+	EC.DB.Custom[RECIPE_SPAM_INDEX_KEY] = EC.DB.Custom[RECIPE_SPAM_INDEX_KEY] or {}
+	return EC.DB.Custom[RECIPE_SPAM_INDEX_KEY]
+end
+
 local function GetRecipeSearchText(recipeName)
 	local customText = EC.DB and EC.DB.Custom and EC.DB.Custom[recipeName]
 	if type(customText) == "string" and customText ~= "" then
@@ -108,6 +114,17 @@ local function GetRecipeBlacklistText(recipeName)
 	return ""
 end
 
+local function GetRecipeSpamIndexText(recipeName)
+	local spamIndexStore = EC.DB and EC.DB.Custom and EC.DB.Custom[RECIPE_SPAM_INDEX_KEY]
+	local customValue = spamIndexStore and spamIndexStore[recipeName]
+	local index = math.floor(tonumber(customValue) or 0)
+
+	if index > 0 then
+		return tostring(index)
+	end
+	return ""
+end
+
 local function SetRecipeBlacklistText(recipeName, value)
 	value = NormalizeCSVText(value)
 	local blacklistStore = GetRecipeBlacklistStore()
@@ -115,6 +132,17 @@ local function SetRecipeBlacklistText(recipeName, value)
 		blacklistStore[recipeName] = nil
 	else
 		blacklistStore[recipeName] = value
+	end
+end
+
+local function SetRecipeSpamIndexText(recipeName, value)
+	local spamIndexStore = GetRecipeSpamIndexStore()
+	local index = math.floor(tonumber(TrimText(value)) or 0)
+
+	if index > 0 then
+		spamIndexStore[recipeName] = index
+	else
+		spamIndexStore[recipeName] = nil
 	end
 end
 
@@ -155,6 +183,7 @@ local function RecipeMatchesFilter(recipeName, filterText)
 		string.lower(recipeName or ""),
 		string.lower(GetRecipeSearchText(recipeName) or ""),
 		string.lower(GetRecipeBlacklistText(recipeName) or ""),
+		string.lower(GetRecipeSpamIndexText(recipeName) or ""),
 	}
 
 	for _, haystack in ipairs(haystacks) do
@@ -194,7 +223,9 @@ end
 
 local RefreshRecipeCustomizationUI
 local RefreshBanlistUI
+local RefreshSpamPreviewUI
 EC.RefreshBanlistUI = function() if RefreshBanlistUI then RefreshBanlistUI() end end
+EC.RefreshSpamPreviewUI = function() if RefreshSpamPreviewUI then RefreshSpamPreviewUI() end end
 
 local function CreateCSVEditBox(parent, name, sampleText, getter, setter)
 	local editBox = CreateFrame("EditBox", name, parent, "InputBoxInstructionsTemplate")
@@ -248,6 +279,78 @@ local function CreateCSVEditBox(parent, name, sampleText, getter, setter)
 	return editBox
 end
 
+local function CreatePlainEditBox(parent, name, sampleText, getter, setter, numeric)
+	local editBox = CreateFrame("EditBox", name, parent, "InputBoxInstructionsTemplate")
+	editBox:SetAutoFocus(false)
+	editBox:SetFontObject("ChatFontNormal")
+	editBox:SetHeight(20)
+	if editBox.SetNumeric then
+		editBox:SetNumeric(numeric and true or false)
+	end
+	if editBox.SetTextInsets then
+		editBox:SetTextInsets(6, 6, 0, 0)
+	end
+	if editBox.Instructions then
+		editBox.Instructions:SetFontObject("ChatFontNormal")
+		editBox.Instructions:SetText(sampleText or "")
+	end
+
+	local function syncFromSavedValue()
+		local value = getter()
+		if editBox:GetText() ~= value then
+			editBox:SetText(value)
+			if editBox.SetCursorPosition then
+				editBox:SetCursorPosition(0)
+			end
+		end
+	end
+
+	local function saveValue()
+		setter(editBox:GetText())
+		syncFromSavedValue()
+		EC.OptionsUpdate()
+		RefreshRecipeCustomizationUI(false)
+	end
+
+	editBox.SyncFromSavedValue = syncFromSavedValue
+	editBox:SetScript("OnEnterPressed", function(self)
+		self._savedOnEnter = true
+		saveValue()
+		self:ClearFocus()
+	end)
+	editBox:SetScript("OnEscapePressed", function(self)
+		syncFromSavedValue()
+		self:ClearFocus()
+	end)
+	editBox:SetScript("OnEditFocusLost", function(self)
+		if self._savedOnEnter then
+			self._savedOnEnter = nil
+			return
+		end
+		saveValue()
+	end)
+
+	syncFromSavedValue()
+	return editBox
+end
+
+RefreshSpamPreviewUI = function()
+	local editBox = EC.Options and EC.Options.SpamPreviewEditBox
+	local preview = EC.BuildSpamMessage and EC.BuildSpamMessage() or ""
+
+	if editBox and editBox.SetText then
+		if editBox.SetSavedValue then
+			editBox:SetSavedValue(preview)
+		end
+		if editBox:GetText() ~= preview then
+			editBox:SetText(preview)
+		end
+		if editBox.SetCursorPosition then
+			editBox:SetCursorPosition(0)
+		end
+	end
+end
+
 RefreshRecipeCustomizationUI = function(syncValues)
 	local ui = EC.Options.RecipeCustomizationUI
 	if not ui or not ui.Panel then
@@ -268,6 +371,7 @@ RefreshRecipeCustomizationUI = function(syncValues)
 		if syncValues then
 			row.SearchEdit:SyncFromSavedValue()
 			row.BlacklistEdit:SyncFromSavedValue()
+			row.SpamIndexEdit:SyncFromSavedValue()
 		end
 
 		local shouldShow = RecipeMatchesFilter(row.RecipeName, filterText)
@@ -306,7 +410,7 @@ local function BuildRecipeCustomizationPanel(panel)
 	intro:SetPoint("TOPRIGHT", -10, -44)
 	intro:SetJustifyH("LEFT")
 	intro:SetJustifyV("TOP")
-	intro:SetText('Search by recipe name, search phrase, or blacklist phrase. Clearing a search field restores the defaults; recipe blacklist entries add to the built-in blacklist defaults for that recipe. Use "," to separate phrases.')
+	intro:SetText('Search by recipe name, search phrase, blacklist phrase, or Spam Index. Clearing a search field restores the defaults; recipe blacklist entries add to the built-in blacklist defaults for that recipe. Use "," to separate phrases.')
 
 	local filterLabel = CreateTextLabel(panel, "Filter")
 	filterLabel:SetPoint("TOPLEFT", intro, "BOTTOMLEFT", 0, -18)
@@ -373,7 +477,7 @@ local function BuildRecipeCustomizationPanel(panel)
 	for _, recipeName in ipairs(GetSortedRecipeNames()) do
 		local row = CreateBackdropFrame(scrollChild, nil)
 		row.RecipeName = recipeName
-		row:SetHeight(82)
+		row:SetHeight(112)
 
 		local title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 		title:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -10)
@@ -421,6 +525,27 @@ local function BuildRecipeCustomizationPanel(panel)
 		blacklistEdit:SetPoint("LEFT", blacklistLabel, "RIGHT", 8, 0)
 		blacklistEdit:SetPoint("RIGHT", row, "RIGHT", -12, 0)
 		row.BlacklistEdit = blacklistEdit
+
+		local spamIndexLabel = CreateTextLabel(row, "Spam Index")
+		spamIndexLabel:SetPoint("TOPLEFT", blacklistLabel, "BOTTOMLEFT", 0, -14)
+		spamIndexLabel:SetWidth(72)
+		row.SpamIndexLabel = spamIndexLabel
+
+		local spamIndexEdit = CreatePlainEditBox(
+			row,
+			nil,
+			"search phrase number",
+			function()
+				return GetRecipeSpamIndexText(recipeName)
+			end,
+			function(value)
+				SetRecipeSpamIndexText(recipeName, value)
+			end,
+			true
+		)
+		spamIndexEdit:SetPoint("LEFT", spamIndexLabel, "RIGHT", 8, 0)
+		spamIndexEdit:SetWidth(80)
+		row.SpamIndexEdit = spamIndexEdit
 
 		ui.Rows[#ui.Rows + 1] = row
 	end
@@ -636,10 +761,12 @@ function EC.Default()
 	EC.DB.MsgPrefix = EC.DefaultMsg
 	EC.DB.LfWhisperMsg = EC.DefaultLfWhisperMsg
 	EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
+	EC.DB.SpamIntro = EC.DefaultSpamIntro
 	EC.DB.Custom.BlackList = ""
 	EC.DB.Custom.SearchPrefix = Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = Combine(EC.DefaultEnchanterTags)
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = {}
+	EC.DB.Custom[RECIPE_SPAM_INDEX_KEY] = {}
 	EC.DB.BanList = {}
 	EC.DefaultCustomTags()
 end
@@ -649,6 +776,7 @@ function EC.OptionsUpdate()
 	EC.DB.Custom.SearchPrefix = EC.DB.Custom.SearchPrefix or Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = EC.DB.Custom.GenericPrefix or Combine(EC.DefaultEnchanterTags)
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = EC.DB.Custom[RECIPE_BLACKLIST_KEY] or {}
+	EC.DB.Custom[RECIPE_SPAM_INDEX_KEY] = EC.DB.Custom[RECIPE_SPAM_INDEX_KEY] or {}
 	EC.DB.BanList = EC.DB.BanList or {}
 
 	if EC.DB.AutoReplaceEnchant == nil then
@@ -693,6 +821,9 @@ function EC.OptionsUpdate()
 	if not EC.DB.GroupedFollowUpMsg or EC.DB.GroupedFollowUpMsg == "" then
 		EC.DB.GroupedFollowUpMsg = EC.DefaultGroupedFollowUpMsg
 	end
+	if EC.DB.SpamIntro == nil then
+		EC.DB.SpamIntro = EC.DefaultSpamIntro
+	end
 
 	EC.BlackList = SplitCSV(EC.DB.Custom.BlackList)
 	EC.PrefixTags = SplitCSV(EC.DB.Custom.SearchPrefix)
@@ -705,6 +836,7 @@ function EC.OptionsUpdate()
 	if EC.Initalized and EC.EnforceMaxGroupedCustomerLimit then
 		EC.EnforceMaxGroupedCustomerLimit()
 	end
+	RefreshSpamPreviewUI()
 end
 
 function EC.Options.DoOk()
@@ -790,6 +922,53 @@ function EC.OptionsInit()
 		return editBox
 	end
 
+	local function MakeSavedRawEditBox(db, key, defaultValue, label, width, labelWidth)
+		local editBox = EC.OptionsBuilder.AddEditBoxToCurrentPanel(db, key, defaultValue, label, width, labelWidth, false, nil, nil, true)
+		local originalEnter = editBox:GetScript("OnEnterPressed")
+		local originalLost = editBox:GetScript("OnEditFocusLost")
+
+		editBox:SetScript("OnEnterPressed", function(self)
+			if originalEnter then
+				originalEnter(self)
+			else
+				self:ClearFocus()
+			end
+			EC.OptionsUpdate()
+		end)
+
+		editBox:SetScript("OnEditFocusLost", function(self)
+			self:SetSavedValue(self:GetText())
+			if originalLost then
+				originalLost(self)
+			end
+			EC.OptionsUpdate()
+		end)
+
+		return editBox
+	end
+
+	local function MakeSpamPreviewBox()
+		local previewStore = { Text = "" }
+		local editBox = EC.OptionsBuilder.AddEditBoxToCurrentPanel(previewStore, "Text", "", "Spam Preview", 445, 200, false, nil, nil, true)
+
+		editBox:SetScript("OnEnterPressed", function(self)
+			RefreshSpamPreviewUI()
+			self:ClearFocus()
+		end)
+		editBox:SetScript("OnEditFocusLost", function(self)
+			RefreshSpamPreviewUI()
+			self:ClearFocus()
+		end)
+		editBox:SetScript("OnEditFocusGained", function(self)
+			if self.HighlightText then
+				self:HighlightText()
+			end
+		end)
+		EC.Options.SpamPreviewEditBox = editBox
+		RefreshSpamPreviewUI()
+		return editBox
+	end
+
 	EC.OptionsBuilder.AddNewCategoryPanel("Enchanter", false, true)
 
 	EC.OptionsBuilder.AddHeaderToCurrentPanel("General Options")
@@ -834,6 +1013,8 @@ function EC.OptionsInit()
 	MakeSavedEditBox(EC.DB, "MsgPrefix", EC.DefaultMsg, "Message Prefix", 445, 200, false)
 	MakeSavedEditBox(EC.DB, "LfWhisperMsg", EC.DefaultLfWhisperMsg, "Generic request whisper", 445, 200, false)
 	MakeSavedEditBox(EC.DB, "GroupedFollowUpMsg", EC.DefaultGroupedFollowUpMsg, "Already grouped follow-up", 445, 200, false)
+	MakeSavedRawEditBox(EC.DB, "SpamIntro", EC.DefaultSpamIntro, "Spam Intro", 445, 200)
+	MakeSpamPreviewBox()
 	EC.OptionsBuilder.AddSpacerToPanel()
 
 	MakeSavedEditBox(EC.DB.Custom, "SearchPrefix", Combine(EC.PrefixTags), "Prefix to search for", 445, 200, false)
