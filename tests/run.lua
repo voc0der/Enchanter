@@ -5220,7 +5220,7 @@ local function test_workbench_spam_button_sends_trade_channel_message()
 
     local channelMessages = chat_messages_of_type(state, "CHANNEL")
     assert_equal(#channelMessages, 1, "spam button should send one channel message")
-    assert_equal(channelMessages[1].message, "LFW Enchanter: 150hp | crusader", "spam button should send the preview text")
+    assert_equal(channelMessages[1].message, "LFW Enchanter: 150hp || crusader", "spam button should escape literal pipe delimiters before calling SendChatMessage")
     assert_equal(channelMessages[1].target, 2, "spam button should target the Trade channel")
 end
 

@@ -1,3 +1,8 @@
+## [2.1.95] - 2026-05-19
+
+### Fixed
+- Escaped literal pipe delimiters before sending the Trade spam line so WoW's chat API no longer rejects the message as an invalid escape sequence.
+
 ## [2.1.94] - 2026-05-19
 
 ### Fixed

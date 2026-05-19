@@ -2894,6 +2894,12 @@ function EC.BuildSpamMessage()
 	return tostring(intro or "") .. table.concat(parts, " | "), parts
 end
 
+function EC.EscapeOutgoingChatMessage(message)
+	message = tostring(message or "")
+	message = message:gsub("|", "||")
+	return message
+end
+
 function EC.SendTradeSpam()
 	local message, parts = EC.BuildSpamMessage()
 	local channelTarget
@@ -2918,7 +2924,7 @@ function EC.SendTradeSpam()
 		return false, message
 	end
 
-	SendChatMessage(message, "CHANNEL", nil, channelTarget)
+	SendChatMessage(EC.EscapeOutgoingChatMessage(message), "CHANNEL", nil, channelTarget)
 	return true, message
 end
 
