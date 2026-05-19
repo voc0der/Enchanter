@@ -5181,6 +5181,20 @@ local function test_trade_spam_message_uses_configured_search_phrase_indexes()
     assert_equal(#parts, 2, "trade spam should include only recipes with a configured spam index")
 end
 
+local function test_trade_spam_index_accepts_numeric_text_on_first_save()
+    local addon = setup_env({
+        char_db = {
+            RecipeList = {
+                ["Enchant Boots - Minor Speed"] = { "enchant boots - minor speed", "minor speed" },
+            },
+        },
+    })
+
+    assert_true(addon.SetRecipeSpamIndex("Enchant Boots - Minor Speed", "2"), "spam index setter should accept numeric text")
+    assert_equal(addon.DB.Custom.RecipeSpamIndex["Enchant Boots - Minor Speed"], 2, "spam index should save as a positive number")
+    assert_equal(addon.GetRecipeSpamLabel("Enchant Boots - Minor Speed"), "minor speed", "spam label should use the indexed search phrase")
+end
+
 local function test_workbench_spam_button_sends_trade_channel_message()
     local addon, state = setup_env({
         db = {
@@ -7730,6 +7744,7 @@ test_workbench_late_completion_signal_preserves_split_trade_progress_during_foll
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_trade_spam_message_uses_configured_search_phrase_indexes()
+test_trade_spam_index_accepts_numeric_text_on_first_save()
 test_workbench_spam_button_sends_trade_channel_message()
 test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
 test_auction_search_button_only_shows_while_the_auction_house_is_open()

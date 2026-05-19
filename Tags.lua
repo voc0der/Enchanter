@@ -19,7 +19,9 @@ local function TrimText(value)
 	if type(value) ~= "string" then
 		return ""
 	end
-	return value:gsub("^%s+", ""):gsub("%s+$", "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
 end
 
 local function CopyNormalizedTags(values)

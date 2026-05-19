@@ -11,7 +11,9 @@ local function TrimText(value)
 	if value == nil then
 		return ""
 	end
-	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+	value = tostring(value):gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
 end
 
 local function Combine(values)
@@ -137,7 +139,15 @@ end
 
 local function SetRecipeSpamIndexText(recipeName, value)
 	local spamIndexStore = GetRecipeSpamIndexStore()
-	local index = math.floor(tonumber(TrimText(value)) or 0)
+	local cleanedValue = TrimText(value)
+	local index
+
+	if EC.SetRecipeSpamIndex then
+		EC.SetRecipeSpamIndex(recipeName, cleanedValue)
+		return
+	end
+
+	index = math.floor(tonumber(cleanedValue) or 0)
 
 	if index > 0 then
 		spamIndexStore[recipeName] = index

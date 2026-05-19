@@ -235,7 +235,9 @@ local function TrimText(value)
 	if not value then
 		return ""
 	end
-	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+	value = tostring(value):gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
 end
 
 local function Now()

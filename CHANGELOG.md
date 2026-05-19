@@ -1,3 +1,8 @@
+## [2.1.94] - 2026-05-19
+
+### Fixed
+- Fixed saving `Spam Index` numeric text on the first edit by preventing trimmed strings from leaking `gsub`'s replacement count into `tonumber` as a bogus base argument.
+
 ## [2.1.93] - 2026-05-19
 
 ### Added

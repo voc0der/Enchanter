@@ -312,7 +312,9 @@ local function NormalizeTextValue(value)
 	if type(value) ~= "string" then
 		return ""
 	end
-	return value:gsub("^%s+", ""):gsub("%s+$", "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
 end
 
 local function ExtractLinkedItemName(itemLink)
@@ -2035,7 +2037,9 @@ local function NormalizePhrase(value)
 	if not value then
 		return ""
 	end
-	return value:lower():gsub("[%W_]+", "")
+	value = value:lower()
+	value = value:gsub("[%W_]+", "")
+	return value
 end
 
 local function IsWordBoundaryCharacter(character)
@@ -2045,7 +2049,9 @@ local function IsWordBoundaryCharacter(character)
 end
 
 local function EscapeLuaPattern(value)
-	return (tostring(value or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+	value = tostring(value or "")
+	value = value:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+	return value
 end
 
 local function BuildLiteralWordBoundaryPattern(value)
@@ -2068,7 +2074,9 @@ local function TrimText(value)
 	if not value then
 		return ""
 	end
-	return tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+	value = tostring(value):gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
 end
 
 local function SplitStoredCSV(value)
@@ -2797,6 +2805,29 @@ function EC.GetRecipeSpamIndex(recipeName)
 	local store = EC.DB and EC.DB.Custom and EC.DB.Custom[EC.RecipeSpamIndexKey]
 	local index = store and math.floor(tonumber(store[recipeName]) or 0) or 0
 	return index > 0 and index or nil
+end
+
+function EC.SetRecipeSpamIndex(recipeName, value)
+	local index
+	local store
+
+	if type(recipeName) ~= "string" or recipeName == "" or not EC.DB then
+		return false
+	end
+
+	EC.DB.Custom = EC.DB.Custom or {}
+	EC.DB.Custom[EC.RecipeSpamIndexKey] = EC.DB.Custom[EC.RecipeSpamIndexKey] or {}
+	store = EC.DB.Custom[EC.RecipeSpamIndexKey]
+
+	value = TrimText(value)
+	index = math.floor(tonumber(value) or 0)
+	if index > 0 then
+		store[recipeName] = index
+	else
+		store[recipeName] = nil
+	end
+
+	return true
 end
 
 function EC.GetRecipeSpamLabel(recipeName)
