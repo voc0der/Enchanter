@@ -1553,6 +1553,41 @@ local function test_valid_request_matching_scenarios()
             requested = 2,
         },
         {
+            name = "do u have request variant matches a recipe",
+            message = "do u have mongoose?",
+            scanned = {
+                "Enchant Weapon - Mongoose",
+            },
+            expected = {
+                "Enchant Weapon - Mongoose",
+            },
+            requested = 1,
+        },
+        {
+            name = "able to do request variant matches a recipe",
+            message = "able to do boar speed?",
+            scanned = {
+                "Enchant Boots - Boar's Speed",
+            },
+            expected = {
+                "Enchant Boots - Boar's Speed",
+            },
+            requested = 1,
+        },
+        {
+            name = "lazy need phrasing matches multiple boot enchants",
+            message = "I need 12 stam to boots and 12 dex to boots",
+            scanned = {
+                "Enchant Boots - Fortitude",
+                "Enchant Boots - Dexterity",
+            },
+            expected = {
+                "Enchant Boots - Fortitude",
+                "Enchant Boots - Dexterity",
+            },
+            requested = 2,
+        },
+        {
             name = "glove and weapon healing stay separate by segment",
             message = "lf 35 heal gloves, 81 heal wep",
             scanned = {
@@ -5224,6 +5259,104 @@ local function test_workbench_spam_button_sends_trade_channel_message()
     assert_equal(channelMessages[1].target, 2, "spam button should target the Trade channel")
 end
 
+local function test_trade_spam_listens_for_public_recipe_replies_without_prefix()
+    local addon, state = setup_env({
+        db = {
+            InviteTimeDelay = 0,
+            WhisperTimeDelay = 0,
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Weapon - Mongoose"] = 2,
+                },
+            },
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "enchant weapon - mongoose", "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    local frame = addon.Workbench.CreateFrame()
+    frame.SpamButton.scripts["OnClick"]()
+
+    assert_true(addon.IsTradeSpamListenModeActive(), "spam should open the temporary public recipe-reply listener")
+
+    state.event_handlers["CHAT_MSG_CHANNEL"]("mongoose", "Buyer-SpamReply")
+
+    local order = addon.Workbench.GetOrderByCustomer("Buyer-SpamReply")
+    local whispers = chat_messages_of_type(state, "WHISPER")
+
+    assert_not_nil(order, "recipe-only public replies after spam should create a workbench order")
+    assert_equal(#order.Recipes, 1, "recipe-only public replies should queue the matched recipe")
+    assert_equal(order.Recipes[1], "Enchant Weapon - Mongoose", "the public reply should match the configured recipe alias")
+    assert_equal(#whispers, 1, "the public reply should still get the normal recipe confirmation whisper")
+    assert_whisper_contains_recipe(whispers[1].message, "Enchant Weapon - Mongoose", "public spam reply whisper")
+end
+
+local function test_trade_spam_public_recipe_listener_expires()
+    local addon, state = setup_env({
+        current_time = 100,
+        db = {
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Weapon - Mongoose"] = 2,
+                },
+            },
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "enchant weapon - mongoose", "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    assert_true(addon.SendTradeSpam(), "spam should send successfully before testing expiry")
+    state.current_time = 401
+
+    state.event_handlers["CHAT_MSG_CHANNEL"]("mongoose", "Buyer-Expired")
+
+    assert_true(not addon.IsTradeSpamListenModeActive(), "the public recipe listener should expire after five minutes")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Buyer-Expired"), "recipe-only public replies should not match after the spam listener expires")
+end
+
+local function test_trade_spam_public_recipe_listener_ignores_self_and_seller_ads()
+    local addon, state = setup_env({
+        db = {
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Weapon - Mongoose"] = 2,
+                },
+            },
+        },
+        char_db = {
+            Stop = false,
+            RecipeList = {
+                ["Enchant Weapon - Mongoose"] = { "enchant weapon - mongoose", "mongoose" },
+            },
+            RecipeLinks = {
+                ["Enchant Weapon - Mongoose"] = "[Enchant Weapon - Mongoose] ",
+            },
+        },
+    })
+
+    assert_true(addon.SendTradeSpam(), "spam should send successfully before testing public-listen filters")
+
+    state.event_handlers["CHAT_MSG_CHANNEL"]("LFW Enchanter: mongoose", state.player_name)
+    state.event_handlers["CHAT_MSG_CHANNEL"]("LFW Enchanter: mongoose", "Other-Enchanter")
+
+    assert_nil(addon.Workbench.GetOrderByCustomer(state.player_name), "the listener should not queue the player's own outgoing spam")
+    assert_nil(addon.Workbench.GetOrderByCustomer("Other-Enchanter"), "the listener should not queue other enchanters' seller ads")
+end
+
 local function test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
     local addon = setup_env({
         char_db = {
@@ -7746,6 +7879,9 @@ test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_trade_spam_message_uses_configured_search_phrase_indexes()
 test_trade_spam_index_accepts_numeric_text_on_first_save()
 test_workbench_spam_button_sends_trade_channel_message()
+test_trade_spam_listens_for_public_recipe_replies_without_prefix()
+test_trade_spam_public_recipe_listener_expires()
+test_trade_spam_public_recipe_listener_ignores_self_and_seller_ads()
 test_workbench_header_button_does_not_get_stuck_on_scan_when_only_mats_are_missing()
 test_auction_search_button_only_shows_while_the_auction_house_is_open()
 test_auction_search_uses_formula_names_and_refreshes_live_enchanting_data()

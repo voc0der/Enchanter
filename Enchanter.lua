@@ -30,6 +30,7 @@ EC.PendingInvites = {}
 EC.SimulatedPlayers = {}
 EC.Simulation = EC.Simulation or {}
 EC.WhisperListenMode = EC.WhisperListenMode or {}
+EC.TradeSpamListenUntil = EC.TradeSpamListenUntil or 0
 
 local pendingInviteWindow = 10
 local simulationInterval = 180
@@ -2070,6 +2071,48 @@ local function BuildLiteralWordBoundaryPattern(value)
 	return pattern
 end
 
+EC.SellerAdvertisementPhrases = EC.SellerAdvertisementPhrases or {
+	"lfw",
+	"wts",
+	"selling",
+	"i can do",
+	"i can make",
+	"i have all enchants",
+	"have all enchants",
+	"all enchants",
+	"offering enchants",
+	"enchanting services",
+}
+
+function EC.GetSellerAdvertisementPatterns()
+	if EC.SellerAdvertisementPatternsCompiled then
+		return EC.SellerAdvertisementPatternsCompiled
+	end
+
+	EC.SellerAdvertisementPatternsCompiled = {}
+	for _, phrase in ipairs(EC.SellerAdvertisementPhrases) do
+		local pattern = BuildLiteralWordBoundaryPattern(phrase)
+		if pattern then
+			EC.SellerAdvertisementPatternsCompiled[#EC.SellerAdvertisementPatternsCompiled + 1] = pattern
+		end
+	end
+	return EC.SellerAdvertisementPatternsCompiled
+end
+
+function EC.IsLikelyEnchantSellerAdvertisement(parsedMessage)
+	if type(parsedMessage) ~= "string" or parsedMessage == "" then
+		return false
+	end
+
+	for _, pattern in ipairs(EC.GetSellerAdvertisementPatterns()) do
+		if string.find(parsedMessage, pattern) then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function TrimText(value)
 	if not value then
 		return ""
@@ -2154,6 +2197,37 @@ function EC.ClearWhisperListenMode(name)
 	return EC.SetWhisperListenMode(name, false)
 end
 
+function EC.GetTradeSpamListenRemaining()
+	local expiresAt = tonumber(EC.TradeSpamListenUntil) or 0
+	local remaining = expiresAt - Now()
+
+	if remaining <= 0 then
+		EC.TradeSpamListenUntil = 0
+		return 0
+	end
+
+	return remaining
+end
+
+function EC.IsTradeSpamListenModeActive()
+	return EC.GetTradeSpamListenRemaining() > 0
+end
+
+function EC.StartTradeSpamListenMode(durationSeconds)
+	durationSeconds = math.floor(tonumber(durationSeconds) or 300)
+	if durationSeconds <= 0 then
+		return false
+	end
+
+	EC.TradeSpamListenUntil = Now() + durationSeconds
+	return true
+end
+
+function EC.ClearTradeSpamListenMode()
+	EC.TradeSpamListenUntil = 0
+	return true
+end
+
 local function GetComparableNameParts(name)
 	if not name then
 		return "", ""
@@ -2199,6 +2273,11 @@ local function GetNamedUnit(unitToken)
 	end
 
 	return unitName
+end
+
+function EC.IsPlayerChatMessage(name)
+	local playerName = GetNamedUnit("player")
+	return playerName ~= nil and playerName ~= "" and NamesMatch(name, playerName)
 end
 
 local function ResolveEmoteTargetUnitToken(name)
@@ -2917,6 +2996,7 @@ function EC.SendTradeSpam()
 
 	if EC.DBChar and EC.DBChar.Debug then
 		EC.DebugPrint("would trade spam:", message)
+		EC.StartTradeSpamListenMode()
 		return true, message
 	end
 
@@ -2925,6 +3005,7 @@ function EC.SendTradeSpam()
 	end
 
 	SendChatMessage(EC.EscapeOutgoingChatMessage(message), "CHANNEL", nil, channelTarget)
+	EC.StartTradeSpamListenMode()
 	return true, message
 end
 
@@ -4302,6 +4383,7 @@ function EC.DeactivateForNonEnchanter()
 	EC.LfRecipeList = {}
 	EC.LfRequestedRecipeCounts = {}
 	EC.PendingInvites = {}
+	EC.ClearTradeSpamListenMode()
 	if EC.Workbench and EC.Workbench.Hide then
 		EC.Workbench.Hide()
 	end
@@ -4479,6 +4561,10 @@ function EC.ParseMessage(msg, name, options)
 		return
 	end
 
+	if EC.IsPlayerChatMessage(name) then
+		return
+	end
+
 	if EC.IsBanned(name) then
 		return
 	end
@@ -4492,6 +4578,13 @@ function EC.ParseMessage(msg, name, options)
 	end
 
 	local parsedMessage = msg:lower()
+	if EC.IsLikelyEnchantSellerAdvertisement(parsedMessage) then
+		if EC.DBChar.Debug then
+			EC.DebugPrint("Request:", msg, "looks like an enchant seller advertisement")
+		end
+		return
+	end
+
 	hasRequestPrefix = MessageHasRequestPrefix(parsedMessage)
 	if not hasRequestPrefix and not allowMissingPrefix then
 		return
@@ -4740,7 +4833,7 @@ local function Event_CHAT_MSG_CHANNEL(msg, name)
 	if not IsAddonActive() then
 		return
 	end
-	EC.ParseMessage(msg, name)
+	EC.ParseMessage(msg, name, { AllowMissingPrefix = EC.IsTradeSpamListenModeActive and EC.IsTradeSpamListenModeActive() })
 end
 
 local function Event_CHAT_MSG_WHISPER(msg, name)

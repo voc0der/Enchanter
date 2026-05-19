@@ -6,6 +6,8 @@ end
 
 local RECIPE_BLACKLIST_KEY = "RecipeBlackList"
 local RECIPE_SPAM_INDEX_KEY = "RecipeSpamIndex"
+local LEGACY_DEFAULT_PREFIX_TAGS = {"lf", "wtb", "looking for"}
+local LEGACY_DEFAULT_ENCHANTER_TAGS = {"lf enchanter", "looking for enchanter", "any enchanters online", "need enchanter"}
 
 local function TrimText(value)
 	if value == nil then
@@ -50,6 +52,13 @@ end
 
 local function NormalizeCSVText(value)
 	return Combine(SplitCSV(value))
+end
+
+local function MigrateLegacyDefaultCSV(value, legacyValues, defaultValues)
+	if value ~= nil and NormalizeCSVText(value) == Combine(legacyValues) then
+		return Combine(defaultValues)
+	end
+	return value
 end
 
 local function EnsureRecipeSearchTextIncludesExactName(recipeName, value)
@@ -783,6 +792,8 @@ end
 
 function EC.OptionsUpdate()
 	EC.DB.Custom.BlackList = EC.DB.Custom.BlackList or ""
+	EC.DB.Custom.SearchPrefix = MigrateLegacyDefaultCSV(EC.DB.Custom.SearchPrefix, LEGACY_DEFAULT_PREFIX_TAGS, EC.DefaultPrefixTags)
+	EC.DB.Custom.GenericPrefix = MigrateLegacyDefaultCSV(EC.DB.Custom.GenericPrefix, LEGACY_DEFAULT_ENCHANTER_TAGS, EC.DefaultEnchanterTags)
 	EC.DB.Custom.SearchPrefix = EC.DB.Custom.SearchPrefix or Combine(EC.DefaultPrefixTags)
 	EC.DB.Custom.GenericPrefix = EC.DB.Custom.GenericPrefix or Combine(EC.DefaultEnchanterTags)
 	EC.DB.Custom[RECIPE_BLACKLIST_KEY] = EC.DB.Custom[RECIPE_BLACKLIST_KEY] or {}

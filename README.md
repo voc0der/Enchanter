@@ -14,13 +14,14 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.95`
+Current version: `2.1.96`
 
 ## What It Does
 
 - Run `/ec scan` once after learning recipes to build your known-enchant list
 - Stay dormant on characters that do not know Enchanting, so mailbox, chat, and workbench actions do not run on alts
 - Match trade-chat requests against configured recipe tags
+- Recognize common casual request phrasing like `need`, `do u have`, `got`, and `able to do` before recipe aliases
 - Avoid starting shorthand matches in the middle of unrelated tokens, so posts like `1815 resto druid LF 2's partner` do not trip `15 res`
 - Tolerate official full enchant names even when callers omit the separator dash in messages like `Enchant Shield Major Stamina`
 - Give scanned enchants outside the built-in shorthand table specific slot/effect fallback aliases, so old-world formulas can still match typed requests without broadening into generic asks
@@ -30,7 +31,7 @@ Current version: `2.1.95`
 - Mark yourself with a star raid icon as soon as a queued customer newly joins your party or raid, so they can find you quickly
 - Auto-show the hidden workbench again when a queued customer newly joins your party or raid
 - Whisper the matching enchant links with a configurable delay and message prefix
-- Build a trade-chat `Spam` line from chosen per-recipe shorthand indexes and a configurable `Spam Intro`
+- Build a trade-chat `Spam` line from chosen per-recipe shorthand indexes and a configurable `Spam Intro`, then listen for recipe-only public replies for five minutes
 - Randomize recipe whisper prefixes by entering multiple `Message Prefix` choices separated with ` , ` in `/ec config`
 - Optionally append `X/Y` to recipe whispers for incomplete orders, and optionally skip auto-handling those partial matches
 - Optionally reply to generic `LF enchanter` requests with a custom whisper, then keep listening in whispers for recipe follow-ups that should become normal queued orders
@@ -73,6 +74,7 @@ Current version: `2.1.95`
 - Use the padlock icon next to `X` to control whether the workbench frame can be dragged. A gold padlock means it is locked; the green-checked padlock means it is unlocked.
 - Use the header `Scan`, `Start`, or `Stop` button to keep the addon ready without leaving the workbench.
 - When matching is running, use the header `Spam` button to post your configured LFW enchant list to Trade chat.
+- After `Spam` posts successfully, Enchanter temporarily accepts recipe-only public replies from customers who saw the ad, so messages like `mongoose` or `12 stam to boots` can queue like normal requests.
 - Queued and updated timestamps now use your client-local clock while still following the game's 12-hour or 24-hour display preference.
 - If Auctionator is loaded and the Auction House is open, a `Search AH` button appears beside the header controls and bulk-searches your missing enchant formulas by exact `Formula: ...` item names; if your enchanting window is open too, Enchanter refreshes the scan first so the list stays current.
 - Use the speaker icon beside `Clear` to decide whether workbench alerts should play a WoW-native sound. Sound waves mean normal alerts, sound waves with a gold `!` mean loud alerts, the muted speaker means alerts are off, and each enabled state plays a short preview through the `Master` channel so muted sound effects do not suppress the queue ping.
