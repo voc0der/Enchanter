@@ -5216,6 +5216,113 @@ local function test_trade_spam_message_uses_configured_search_phrase_indexes()
     assert_equal(#parts, 2, "trade spam should include only recipes with a configured spam index")
 end
 
+local function test_trade_spam_message_compacts_delimiter_when_normal_delimiter_is_too_long()
+    local label_a = string.rep("a", 84)
+    local label_b = string.rep("b", 84)
+    local label_c = string.rep("c", 84)
+    local addon = setup_env({
+        db = {
+            SpamIntro = "",
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Test - A"] = 1,
+                    ["Enchant Test - B"] = 1,
+                    ["Enchant Test - C"] = 1,
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Test - A"] = { label_a },
+                ["Enchant Test - B"] = { label_b },
+                ["Enchant Test - C"] = { label_c },
+            },
+        },
+    })
+
+    local message, parts = addon.BuildSpamMessage()
+
+    assert_equal(#parts, 3, "trade spam should include each indexed recipe before compacting")
+    assert_equal(message, label_a .. "|" .. label_b .. "|" .. label_c, "trade spam should use compact delimiters when spaced delimiters exceed chat length")
+    assert_equal(string.len(message), 254, "compact trade spam should fit inside the chat message limit")
+end
+
+local function test_trade_spam_message_reports_clean_error_when_compact_message_is_too_long()
+    local label_a = string.rep("a", 85)
+    local label_b = string.rep("b", 85)
+    local label_c = string.rep("c", 85)
+    local addon, state = setup_env({
+        db = {
+            SpamIntro = "",
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Test - A"] = 1,
+                    ["Enchant Test - B"] = 1,
+                    ["Enchant Test - C"] = 1,
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Test - A"] = { label_a },
+                ["Enchant Test - B"] = { label_b },
+                ["Enchant Test - C"] = { label_c },
+            },
+        },
+    })
+
+    local ok, message = addon.SendTradeSpam()
+    local found_error = false
+
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Spam message is 257 characters, but chat allows 255", 1, true) ~= nil then
+            found_error = true
+            break
+        end
+    end
+
+    assert_true(not ok, "oversized compact trade spam should not send")
+    assert_equal(string.len(message), 257, "oversized trade spam should report the compact message length")
+    assert_equal(#chat_messages_of_type(state, "CHANNEL"), 0, "oversized trade spam should not call SendChatMessage")
+    assert_true(found_error, "oversized trade spam should print a clean Enchanter error")
+    assert_true(not addon.IsTradeSpamListenModeActive(), "failed trade spam should not open the public recipe listener")
+end
+
+local function test_trade_spam_message_catches_chat_api_length_error()
+    local addon, state = setup_env({
+        db = {
+            Custom = {
+                RecipeSpamIndex = {
+                    ["Enchant Weapon - Crusader"] = 2,
+                },
+            },
+        },
+        char_db = {
+            RecipeList = {
+                ["Enchant Weapon - Crusader"] = { "enchant weapon - crusader", "crusader" },
+            },
+        },
+    })
+
+    _G.SendChatMessage = function()
+        error("Chat API message is too long")
+    end
+
+    local ok = addon.SendTradeSpam()
+    local found_error = false
+
+    for _, line in ipairs(state.prints) do
+        if string.find(line, "Could not send Spam message", 1, true) ~= nil then
+            found_error = true
+            break
+        end
+    end
+
+    assert_true(not ok, "chat API length errors should not escape as Lua errors")
+    assert_true(found_error, "chat API length errors should print a clean Enchanter error")
+    assert_true(not addon.IsTradeSpamListenModeActive(), "failed chat API sends should not open the public recipe listener")
+end
+
 local function test_trade_spam_index_accepts_numeric_text_on_first_save()
     local addon = setup_env({
         char_db = {
@@ -7877,6 +7984,9 @@ test_workbench_late_completion_signal_preserves_split_trade_progress_during_foll
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_trade_spam_message_uses_configured_search_phrase_indexes()
+test_trade_spam_message_compacts_delimiter_when_normal_delimiter_is_too_long()
+test_trade_spam_message_reports_clean_error_when_compact_message_is_too_long()
+test_trade_spam_message_catches_chat_api_length_error()
 test_trade_spam_index_accepts_numeric_text_on_first_save()
 test_workbench_spam_button_sends_trade_channel_message()
 test_trade_spam_listens_for_public_recipe_replies_without_prefix()

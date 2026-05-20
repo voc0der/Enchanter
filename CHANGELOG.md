@@ -1,3 +1,8 @@
+## [2.1.97] - 2026-05-20
+
+### Fixed
+- Trade spam now retries oversized previews with compact pipe delimiters and prints a clean Enchanter error when the compact message is still too long for chat.
+
 ## [2.1.95] - 2026-05-19
 
 ### Fixed

@@ -11,6 +11,7 @@ EC.DefaultLfWhisperMsg = "What you looking for?"
 EC.DefaultGroupedFollowUpMsg = 'You were in a group, but if you still need, please whisper "inv"! Thanks.'
 EC.DefaultSpamIntro = "LFW Enchanter: "
 EC.RecipeSpamIndexKey = "RecipeSpamIndex"
+EC.TradeSpamChatLimit = 255
 EC.EnchanterTags = EC.DefaultEnchanterTags or {}
 EC.PrefixTags = EC.DefaultPrefixTags or {}
 EC.RecipeTags = EC.DefaultRecipeTags or {}
@@ -2965,12 +2966,18 @@ end
 function EC.BuildSpamMessage()
 	local intro = EC.DB and EC.DB.SpamIntro
 	local parts = EC.GetRecipeSpamParts()
+	local message
 
 	if intro == nil then
 		intro = EC.DefaultSpamIntro
 	end
 
-	return tostring(intro or "") .. table.concat(parts, " | "), parts
+	message = tostring(intro or "") .. table.concat(parts, " | ")
+	if string.len(message) > EC.TradeSpamChatLimit then
+		message = tostring(intro or "") .. table.concat(parts, "|")
+	end
+
+	return message, parts
 end
 
 function EC.EscapeOutgoingChatMessage(message)
@@ -2982,6 +2989,7 @@ end
 function EC.SendTradeSpam()
 	local message, parts = EC.BuildSpamMessage()
 	local channelTarget
+	local ok
 
 	if #parts == 0 then
 		print("|cFFFF1C1CEnchanter|r Set Spam Index values under /ec config > Recipe Customizations before using Spam.")
@@ -2991,6 +2999,11 @@ function EC.SendTradeSpam()
 	channelTarget = EC.GetTradeSpamChannelTarget()
 	if not channelTarget then
 		print("|cFFFF1C1CEnchanter|r Join Trade chat before using Spam.")
+		return false, message
+	end
+
+	if string.len(message) > EC.TradeSpamChatLimit then
+		print(string.format("|cFFFF1C1CEnchanter|r Spam message is %d characters, but chat allows %d. Shorten Spam Intro or clear some Spam Index values.", string.len(message), EC.TradeSpamChatLimit))
 		return false, message
 	end
 
@@ -3004,7 +3017,12 @@ function EC.SendTradeSpam()
 		return false, message
 	end
 
-	SendChatMessage(EC.EscapeOutgoingChatMessage(message), "CHANNEL", nil, channelTarget)
+	ok = pcall(SendChatMessage, EC.EscapeOutgoingChatMessage(message), "CHANNEL", nil, channelTarget)
+	if not ok then
+		print("|cFFFF1C1CEnchanter|r Could not send Spam message. Shorten Spam Intro or clear some Spam Index values.")
+		return false, message
+	end
+
 	EC.StartTradeSpamListenMode()
 	return true, message
 end
