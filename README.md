@@ -14,7 +14,7 @@
 - Adds a manual workbench queue so matched orders do not disappear once trade chat gets noisy
 - Includes an Anniversary-oriented settings panel and packaging workflow for fork maintenance
 
-Current version: `2.1.97`
+Current version: `2.1.98`
 
 ## What It Does
 
@@ -102,7 +102,7 @@ Current version: `2.1.97`
 - In settings, you can enable an automatic follow-up whisper for customers who were already in a group, set its delay and message, and optionally auto-expire those grouped queue entries after a chosen number of seconds (`0` keeps them until you clear them). Expired grouped orders are hidden from the queue but remembered for three times that setting, so an `inv` reply can restore the order and send a fresh invite.
 - In settings, you can set `Party declined removal timer` so customers who decline your group invite are removed from the queue after a chosen number of seconds (`0` leaves the timer disabled). Removed declined orders are also remembered for three times that timer for the same `inv` restore flow.
 - In settings, you can also cap how many queued customers are allowed in your current group before Enchanter pauses itself and later auto-resumes once the group drops back under that limit, optionally send a direct `/thank` emote after receiving gold from a queued client, announce trade status, use Enchanter's grouped trade messages, and switch workbench sounds over to party-join alerts instead of first-queue-entry alerts.
-- In settings, `Spam Intro` controls the beginning of the Trade message, `Spam Preview` shows the one-line result, and each recipe's `Spam Index` picks which Search phrase should appear in that list. If the normal spaced delimiter would exceed chat length, the preview and sent message switch to compact pipes. Leave `Spam Index` blank to omit that recipe.
+- In settings, `Spam Intro` controls the beginning of the Trade message, `Spam Preview` shows the one-line result, and each recipe's `Spam Index` picks which Search phrase should appear in that list. If the normal spaced delimiter would exceed outgoing chat length, the preview and sent message switch to compact pipes. Leave `Spam Index` blank to omit that recipe.
 - If ElvUI is loaded, the workbench adopts ElvUI frame, button, checkbox, and scrollbar styling automatically.
 
 ## Contributing

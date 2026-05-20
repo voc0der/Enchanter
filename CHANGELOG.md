@@ -1,3 +1,8 @@
+## [2.1.98] - 2026-05-20
+
+### Fixed
+- Trade spam now decides when to compact delimiters using the escaped chat payload length, so messages that only overflow after literal pipes become `||` still retry with compact pipes before failing.
+
 ## [2.1.97] - 2026-05-20
 
 ### Fixed

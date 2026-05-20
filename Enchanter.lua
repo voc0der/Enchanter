@@ -2973,7 +2973,7 @@ function EC.BuildSpamMessage()
 	end
 
 	message = tostring(intro or "") .. table.concat(parts, " | ")
-	if string.len(message) > EC.TradeSpamChatLimit then
+	if string.len(EC.EscapeOutgoingChatMessage(message)) > EC.TradeSpamChatLimit then
 		message = tostring(intro or "") .. table.concat(parts, "|")
 	end
 
@@ -3002,8 +3002,8 @@ function EC.SendTradeSpam()
 		return false, message
 	end
 
-	if string.len(message) > EC.TradeSpamChatLimit then
-		print(string.format("|cFFFF1C1CEnchanter|r Spam message is %d characters, but chat allows %d. Shorten Spam Intro or clear some Spam Index values.", string.len(message), EC.TradeSpamChatLimit))
+	if string.len(EC.EscapeOutgoingChatMessage(message)) > EC.TradeSpamChatLimit then
+		print(string.format("|cFFFF1C1CEnchanter|r Spam message is too long for chat even with compact pipes (%d/%d). Shorten Spam Intro or clear some Spam Index values.", string.len(EC.EscapeOutgoingChatMessage(message)), EC.TradeSpamChatLimit))
 		return false, message
 	end
 

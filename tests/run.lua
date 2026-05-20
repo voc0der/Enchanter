@@ -5216,10 +5216,10 @@ local function test_trade_spam_message_uses_configured_search_phrase_indexes()
     assert_equal(#parts, 2, "trade spam should include only recipes with a configured spam index")
 end
 
-local function test_trade_spam_message_compacts_delimiter_when_normal_delimiter_is_too_long()
-    local label_a = string.rep("a", 84)
-    local label_b = string.rep("b", 84)
-    local label_c = string.rep("c", 84)
+local function test_trade_spam_message_compacts_delimiter_when_escaped_normal_delimiter_is_too_long()
+    local label_a = string.rep("a", 83)
+    local label_b = string.rep("b", 83)
+    local label_c = string.rep("c", 83)
     local addon = setup_env({
         db = {
             SpamIntro = "",
@@ -5243,14 +5243,14 @@ local function test_trade_spam_message_compacts_delimiter_when_normal_delimiter_
     local message, parts = addon.BuildSpamMessage()
 
     assert_equal(#parts, 3, "trade spam should include each indexed recipe before compacting")
-    assert_equal(message, label_a .. "|" .. label_b .. "|" .. label_c, "trade spam should use compact delimiters when spaced delimiters exceed chat length")
-    assert_equal(string.len(message), 254, "compact trade spam should fit inside the chat message limit")
+    assert_equal(message, label_a .. "|" .. label_b .. "|" .. label_c, "trade spam should use compact delimiters when escaped spaced delimiters exceed chat length")
+    assert_equal(string.len(addon.EscapeOutgoingChatMessage(message)), 253, "compact trade spam should fit inside the escaped chat message limit")
 end
 
 local function test_trade_spam_message_reports_clean_error_when_compact_message_is_too_long()
-    local label_a = string.rep("a", 85)
-    local label_b = string.rep("b", 85)
-    local label_c = string.rep("c", 85)
+    local label_a = string.rep("a", 84)
+    local label_b = string.rep("b", 84)
+    local label_c = string.rep("c", 84)
     local addon, state = setup_env({
         db = {
             SpamIntro = "",
@@ -5275,14 +5275,14 @@ local function test_trade_spam_message_reports_clean_error_when_compact_message_
     local found_error = false
 
     for _, line in ipairs(state.prints) do
-        if string.find(line, "Spam message is 257 characters, but chat allows 255", 1, true) ~= nil then
+        if string.find(line, "Spam message is too long for chat even with compact pipes (256/255)", 1, true) ~= nil then
             found_error = true
             break
         end
     end
 
     assert_true(not ok, "oversized compact trade spam should not send")
-    assert_equal(string.len(message), 257, "oversized trade spam should report the compact message length")
+    assert_equal(string.len(addon.EscapeOutgoingChatMessage(message)), 256, "oversized trade spam should report the escaped compact message length")
     assert_equal(#chat_messages_of_type(state, "CHANNEL"), 0, "oversized trade spam should not call SendChatMessage")
     assert_true(found_error, "oversized trade spam should print a clean Enchanter error")
     assert_true(not addon.IsTradeSpamListenModeActive(), "failed trade spam should not open the public recipe listener")
@@ -7984,7 +7984,7 @@ test_workbench_late_completion_signal_preserves_split_trade_progress_during_foll
 test_workbench_header_button_scans_when_recipe_data_is_missing()
 test_workbench_header_button_toggles_start_and_stop_after_scan_data_exists()
 test_trade_spam_message_uses_configured_search_phrase_indexes()
-test_trade_spam_message_compacts_delimiter_when_normal_delimiter_is_too_long()
+test_trade_spam_message_compacts_delimiter_when_escaped_normal_delimiter_is_too_long()
 test_trade_spam_message_reports_clean_error_when_compact_message_is_too_long()
 test_trade_spam_message_catches_chat_api_length_error()
 test_trade_spam_index_accepts_numeric_text_on_first_save()
